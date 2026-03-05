@@ -1,0 +1,45 @@
+<idea-plugin>
+    <id>com.cursorj</id>
+    <name>CursorJ</name>
+    <vendor>CursorJ</vendor>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="CursorJ"
+                    anchor="right"
+                    factoryClass="com.cursorj.ui.toolwindow.CursorToolWindowFactory"
+                    icon="/icons/cursorj.svg"/>
+
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.cursorj.settings.CursorJConfigurable"
+                id="com.cursorj.settings"
+                displayName="CursorJ"/>
+
+        <applicationService
+                serviceImplementation="com.cursorj.settings.CursorJSettings"/>
+
+        <statusBarWidgetFactory
+                id="CursorJStatusBar"
+                implementation="com.cursorj.ui.statusbar.CursorJStatusBarWidgetFactory"/>
+    </extensions>
+
+    <actions>
+        <action id="CursorJ.SendSelection"
+                class="com.cursorj.actions.SendToCursorAction"
+                text="Send to CursorJ"
+                description="Send the current selection to CursorJ">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift J"/>
+        </action>
+
+        <action id="CursorJ.FocusToolWindow"
+                class="com.cursorj.actions.FocusToolWindowAction"
+                text="Focus CursorJ"
+                description="Focus the CursorJ tool window">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt C"/>
+        </action>
+    </actions>
+</idea-plugin>
