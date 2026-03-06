@@ -266,6 +266,12 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         }
     }
 
+    fun clearHandlers() {
+        notificationHandlers.clear()
+        serverRequestHandlers.clear()
+        disconnectListeners.clear()
+    }
+
     fun disconnect() {
         readJob?.cancel()
         scope?.cancel()

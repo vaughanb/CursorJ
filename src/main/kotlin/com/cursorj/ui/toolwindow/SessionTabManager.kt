@@ -1,16 +1,25 @@
 package com.cursorj.ui.toolwindow
 
 import com.cursorj.CursorJBundle
+import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
-import com.cursorj.acp.messages.ConfigOption
-import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.chat.ChatPanel
+import com.cursorj.ui.statusbar.CursorJConnectionStatus
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
-import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentFactory
+import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
-import javax.swing.SwingUtilities
+import java.awt.BorderLayout
+import java.awt.Dimension
+import java.awt.FlowLayout
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.*
+import javax.swing.event.ChangeListener
 
 class SessionTabManager(
     private val service: CursorJService,
@@ -19,108 +28,193 @@ class SessionTabManager(
     private val log = Logger.getInstance(SessionTabManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private data class TabEntry(
-        val content: Content,
+    private class TabEntry(
         val chatPanel: ChatPanel,
+        var connection: AgentConnection? = null,
         var session: AcpSession? = null,
-    )
+        var title: String = CursorJBundle.message("chat.tab.new"),
+    ) : Disposable {
+        override fun dispose() {
+            connection?.let { Disposer.dispose(it) }
+        }
+    }
 
     private val tabs = mutableListOf<TabEntry>()
+    private val tabbedPane = JTabbedPane(JTabbedPane.TOP)
+    private val rootPanel = JPanel(BorderLayout())
+    private val addTabPlaceholder = JPanel()
+    private var suppressTabChange = false
+
+    init {
+        rootPanel.add(tabbedPane, BorderLayout.CENTER)
+
+        tabbedPane.addChangeListener(ChangeListener {
+            if (suppressTabChange) return@ChangeListener
+            val idx = tabbedPane.selectedIndex
+            val plusIdx = tabbedPane.tabCount - 1
+            if (idx >= 0 && idx == plusIdx && tabbedPane.tabCount > 1) {
+                SwingUtilities.invokeLater { addNewTab() }
+            } else {
+                updateStatusBar()
+            }
+        })
+    }
+
+    private fun appendPlusTab() {
+        tabbedPane.addTab("", AllIcons.General.Add, addTabPlaceholder, "New chat")
+    }
 
     fun addInitialTab() {
-        val chatPanel = addNewTab()
-        chatPanel.showStatus("Connecting to Cursor agent...")
-
-        service.addConnectionListener { success ->
-            if (success) {
-                chatPanel.showStatus("Connected. Type a message to start.")
-            } else {
-                chatPanel.showError(
-                    service.lastError ?: CursorJBundle.message("error.agent.not.found"),
-                )
-            }
-        }
+        val content = ContentFactory.getInstance().createContent(rootPanel, "", false)
+        content.isCloseable = false
+        toolWindow.contentManager.addContent(content)
+        appendPlusTab()
+        addNewTab()
     }
 
     fun addNewTab(): ChatPanel {
         val chatPanel = ChatPanel(service)
-
-        val content = ContentFactory.getInstance().createContent(
-            chatPanel.component,
-            CursorJBundle.message("chat.tab.new"),
-            false,
-        )
-        content.isCloseable = tabs.isNotEmpty()
-
-        val entry = TabEntry(content = content, chatPanel = chatPanel)
+        val entry = TabEntry(chatPanel = chatPanel)
+        Disposer.register(toolWindow.disposable, entry)
         tabs.add(entry)
-        toolWindow.contentManager.addContent(content)
-        toolWindow.contentManager.setSelectedContent(content)
+
+        suppressTabChange = true
+        val insertIndex = tabbedPane.tabCount - 1
+        tabbedPane.insertTab(entry.title, null, chatPanel.component, null, insertIndex)
+        tabbedPane.setTabComponentAt(insertIndex, createTabComponent(entry))
+        tabbedPane.selectedIndex = insertIndex
+        suppressTabChange = false
 
         chatPanel.onFirstPrompt = { prompt ->
-            ensureSessionAndSend(entry, prompt)
+            ensureConnectionAndSend(entry, prompt)
         }
 
-        val modelConfig = service.buildModelConfigOption()
-        if (modelConfig.isNotEmpty()) {
-            chatPanel.updateConfigOptions(modelConfig)
-        }
+        connectEagerly(entry)
 
         return chatPanel
     }
 
-    fun closeTab(index: Int) {
-        if (index < 0 || index >= tabs.size) return
-        if (tabs.size <= 1) return
+    private fun createTabComponent(entry: TabEntry): JPanel {
+        val panel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+        }
 
-        val entry = tabs.removeAt(index)
-        toolWindow.contentManager.removeContent(entry.content, true)
+        val label = JLabel(entry.title).apply {
+            border = JBUI.Borders.emptyRight(6)
+        }
+
+        val closeButton = JLabel(AllIcons.Actions.Close).apply {
+            toolTipText = "Close tab"
+            border = JBUI.Borders.empty(1)
+            preferredSize = Dimension(16, 16)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    closeTab(entry)
+                }
+                override fun mouseEntered(e: MouseEvent) {
+                    icon = AllIcons.Actions.CloseHovered
+                }
+                override fun mouseExited(e: MouseEvent) {
+                    icon = AllIcons.Actions.Close
+                }
+            })
+        }
+
+        panel.add(label)
+        panel.add(closeButton)
+
+        entry.chatPanel.tabLabel = label
+
+        return panel
     }
 
-    fun getActiveSession(): AcpSession? {
-        val selectedContent = toolWindow.contentManager.selectedContent ?: return null
-        return tabs.find { it.content == selectedContent }?.session
+    private fun closeTab(entry: TabEntry) {
+        val index = tabs.indexOf(entry)
+        if (index < 0) return
+
+        suppressTabChange = true
+        tabs.removeAt(index)
+        tabbedPane.removeTabAt(index)
+
+        if (tabs.isEmpty()) {
+            suppressTabChange = false
+            addNewTab()
+        } else {
+            val selectIdx = index.coerceAtMost(tabs.size - 1)
+            tabbedPane.selectedIndex = selectIdx
+            suppressTabChange = false
+        }
+
+        scope.launch(Dispatchers.IO) {
+            Disposer.dispose(entry)
+        }
+        updateStatusBar()
     }
 
-    fun saveSessionIds() {
-        val sessionIds = tabs.mapNotNull { it.session?.sessionId }
-        CursorJSettings.instance.savedSessionIds = sessionIds.toMutableList()
-    }
+    private fun connectEagerly(entry: TabEntry) {
+        entry.chatPanel.showStatus("Connecting to Cursor agent...")
 
-    fun broadcastStatus(message: String) {
-        for (tab in tabs) {
-            tab.chatPanel.showStatus(message)
+        scope.launch {
+            val conn = service.createAgentConnection(entry)
+            entry.connection = conn
+
+            conn.onStatusChanged = { msg ->
+                entry.chatPanel.showStatus(msg)
+            }
+            conn.onConnectionChanged = { _ ->
+                updateStatusBar()
+            }
+
+            entry.chatPanel.bindConnection(conn)
+
+            conn.connect()
+
+            if (conn.isConnected) {
+                entry.chatPanel.showStatus("Connected. Type a message to start.")
+            } else {
+                entry.chatPanel.showError(
+                    conn.lastError ?: CursorJBundle.message("error.agent.not.found"),
+                )
+            }
+            updateStatusBar()
+
+            service.onModelsReady {
+                conn.updateModelInfos(service.availableModelInfos)
+                val modelConfig = conn.buildModelConfigOption()
+                if (modelConfig.isNotEmpty()) {
+                    entry.chatPanel.updateConfigOptions(modelConfig)
+                }
+            }
         }
     }
 
-    fun broadcastConfigOptions(options: List<ConfigOption>) {
-        for (tab in tabs) {
-            tab.chatPanel.updateConfigOptions(options)
-        }
+    private fun getActiveTab(): TabEntry? {
+        val index = tabbedPane.selectedIndex
+        return tabs.getOrNull(index)
     }
 
-    private fun ensureSessionAndSend(entry: TabEntry, prompt: String) {
+    fun getActiveSession(): AcpSession? = getActiveTab()?.session
+
+    fun getActiveConnection(): AgentConnection? = getActiveTab()?.connection
+
+    private fun ensureConnectionAndSend(entry: TabEntry, prompt: String) {
         scope.launch {
             try {
-                if (!service.isInitialized) {
-                    val ready = CompletableDeferred<Boolean>()
-                    service.addConnectionListener { ready.complete(it) }
-                    if (!ready.await()) {
-                        entry.chatPanel.showError(
-                            service.lastError ?: CursorJBundle.message("error.agent.not.found"),
-                        )
-                        return@launch
-                    }
+                val conn = entry.connection
+                if (conn == null || !conn.isConnected) {
+                    entry.chatPanel.showError("Not connected. Please wait for the connection or open a new tab.")
+                    return@launch
                 }
 
                 if (entry.session == null) {
-                    entry.session = service.createSession()
+                    entry.session = conn.createSession()
                     entry.chatPanel.bindSession(entry.session!!)
                 }
 
                 val title = prompt.take(30).let { if (prompt.length > 30) "$it..." else it }
+                entry.title = title
                 SwingUtilities.invokeLater {
-                    entry.content.displayName = title
+                    entry.chatPanel.tabLabel?.text = title
                 }
 
                 entry.chatPanel.sendPrompt(prompt)
@@ -130,6 +224,20 @@ class SessionTabManager(
                 log.error("Failed to create session or send prompt", e)
                 entry.chatPanel.showError(e.message ?: "Unknown error")
             }
+        }
+    }
+
+    private fun updateStatusBar() {
+        val active = getActiveTab()
+        val conn = active?.connection
+        if (conn == null) {
+            CursorJConnectionStatus.update(false, "Connecting...")
+        } else if (conn.isConnected) {
+            val model = conn.selectedModel
+            val detail = if (model != null) "Connected ($model)" else null
+            CursorJConnectionStatus.update(true, detail)
+        } else {
+            CursorJConnectionStatus.update(false)
         }
     }
 }

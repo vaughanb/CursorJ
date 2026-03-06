@@ -1,5 +1,6 @@
 package com.cursorj.ui.chat
 
+import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.SessionMode
 import com.cursorj.acp.messages.ConfigOption
@@ -15,6 +16,7 @@ import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
@@ -26,10 +28,12 @@ class ChatPanel(private val service: CursorJService) {
     private val messageListPanel = MessageListPanel()
     private val inputPanel = InputPanel()
 
+    private var connection: AgentConnection? = null
     private var session: AcpSession? = null
     private val attachedFiles = mutableListOf<ResourceLinkContent>()
 
     var onFirstPrompt: ((String) -> Unit)? = null
+    var tabLabel: JLabel? = null
 
     val component: JComponent get() = rootPanel
 
@@ -63,6 +67,10 @@ class ChatPanel(private val service: CursorJService) {
         SwingUtilities.invokeLater {
             inputPanel.updateConfigOptions(options)
         }
+    }
+
+    fun bindConnection(connection: AgentConnection) {
+        this.connection = connection
     }
 
     fun bindSession(session: AcpSession) {
@@ -150,7 +158,8 @@ class ChatPanel(private val service: CursorJService) {
 
     private fun handleConfigOptionChange(configId: String, value: String) {
         if (configId == "model") {
-            service.changeModel(value)
+            val conn = connection ?: return
+            conn.changeModel(value)
             session = null
         }
     }
