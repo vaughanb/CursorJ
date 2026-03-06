@@ -132,8 +132,39 @@ data class SessionNewParams(
 )
 
 @Serializable
+data class ConfigOptionValue(
+    val value: String,
+    val name: String? = null,
+    val description: String? = null,
+)
+
+@Serializable
+data class ConfigOption(
+    val id: String,
+    val name: String? = null,
+    val description: String? = null,
+    val category: String? = null,
+    val type: String = "select",
+    val currentValue: String? = null,
+    val options: List<ConfigOptionValue> = emptyList(),
+)
+
+@Serializable
 data class SessionNewResult(
     val sessionId: String,
+    val configOptions: List<ConfigOption> = emptyList(),
+)
+
+@Serializable
+data class SetConfigOptionParams(
+    val sessionId: String,
+    val configId: String,
+    val value: String,
+)
+
+@Serializable
+data class SetConfigOptionResult(
+    val configOptions: List<ConfigOption> = emptyList(),
 )
 
 @Serializable

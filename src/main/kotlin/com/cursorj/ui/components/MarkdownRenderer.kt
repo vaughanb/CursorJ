@@ -6,7 +6,7 @@ object MarkdownRenderer {
     fun renderToHtml(markdown: String): String {
         val lines = markdown.lines()
         val sb = StringBuilder()
-        sb.append("<html><body style='font-family: sans-serif; font-size: 10pt; margin: 0; padding: 0;'>")
+        sb.append("<html><body style='font-family: sans-serif; font-size: 13pt; margin: 0; padding: 0;'>")
 
         var inCodeBlock = false
         var codeLanguage = ""
@@ -61,8 +61,8 @@ object MarkdownRenderer {
         val bgColor = if (JBColor.isBright()) "#f6f8fa" else "#1e1e1e"
         val textColor = if (JBColor.isBright()) "#24292e" else "#d4d4d4"
         return """
-            <div style='background: $bgColor; border-radius: 4px; padding: 8px; margin: 4px 0; overflow-x: auto;'>
-                <pre style='font-family: monospace; font-size: 9pt; color: $textColor; margin: 0; white-space: pre-wrap;'>${escapeHtml(code)}</pre>
+            <div style='background: $bgColor; padding: 8px; margin: 4px 0;'>
+                <pre style='font-family: monospace; font-size: 12pt; color: $textColor; margin: 0;'>${escapeHtml(code)}</pre>
             </div>
         """.trimIndent()
     }
@@ -72,7 +72,7 @@ object MarkdownRenderer {
 
         result = Regex("`([^`]+)`").replace(result) { match ->
             val bgColor = if (JBColor.isBright()) "#f0f0f0" else "#3c3c3c"
-            "<code style='background: $bgColor; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 9pt;'>${match.groupValues[1]}</code>"
+            "<code style='background: $bgColor; padding: 1px 4px; font-family: monospace; font-size: 12pt;'>${match.groupValues[1]}</code>"
         }
 
         result = Regex("\\*\\*(.+?)\\*\\*").replace(result) { match ->

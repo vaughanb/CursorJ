@@ -1,7 +1,7 @@
 package com.cursorj.settings
 
 import com.cursorj.CursorJBundle
-import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBCheckBox
@@ -22,12 +22,10 @@ class CursorJConfigurable : Configurable {
 
     override fun createComponent(): JComponent {
         agentPathField = TextFieldWithBrowseButton().apply {
-            addBrowseFolderListener(
-                "Select Cursor Agent Binary",
-                CursorJBundle.message("settings.agent.path.tooltip"),
-                null,
-                FileChooserDescriptorFactory.createSingleFileDescriptor(),
-            )
+            val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
+                .withTitle("Select Cursor Agent Binary")
+                .withDescription(CursorJBundle.message("settings.agent.path.tooltip"))
+            addBrowseFolderListener(null, descriptor)
         }
         apiKeyField = JBTextField()
         defaultModelField = JBTextField()

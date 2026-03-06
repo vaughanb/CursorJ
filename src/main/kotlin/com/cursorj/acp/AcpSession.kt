@@ -2,9 +2,7 @@ package com.cursorj.acp
 
 import com.cursorj.acp.messages.*
 import com.intellij.openapi.diagnostic.Logger
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.*
 
 enum class SessionMode(val value: String) {
     AGENT("agent"),
@@ -26,6 +24,7 @@ data class ChatMessage(
 class AcpSession(
     val sessionId: String,
     private val client: AcpClient,
+    initialConfigOptions: List<ConfigOption> = emptyList(),
 ) {
     private val log = Logger.getInstance(AcpSession::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -37,11 +36,15 @@ class AcpSession(
     var isProcessing: Boolean = false
         private set
 
+    private val _configOptions = mutableListOf<ConfigOption>().apply { addAll(initialConfigOptions) }
+    val configOptions: List<ConfigOption> get() = _configOptions.toList()
+
     private val _messages = mutableListOf<ChatMessage>()
     val messages: List<ChatMessage> get() = _messages.toList()
 
     private val updateListeners = mutableListOf<(SessionUpdate) -> Unit>()
     private val messageListeners = mutableListOf<(ChatMessage) -> Unit>()
+    private val configListeners = mutableListOf<(List<ConfigOption>) -> Unit>()
 
     private val _currentAgentText = StringBuilder()
 
@@ -53,16 +56,25 @@ class AcpSession(
         messageListeners.add(listener)
     }
 
+    fun addConfigListener(listener: (List<ConfigOption>) -> Unit) {
+        configListeners.add(listener)
+    }
+
+    fun getConfigOption(category: String): ConfigOption? {
+        return _configOptions.firstOrNull { it.category == category }
+    }
+
     fun handleSessionUpdate(params: JsonElement) {
         try {
-            val update = json.decodeFromJsonElement<SessionUpdate>(params)
-            for (listener in updateListeners) {
-                listener(update)
-            }
+            val updateElement = params.jsonObject["update"] ?: params
+            val obj = updateElement.jsonObject
+            val updateType = obj["sessionUpdate"]?.jsonPrimitive?.contentOrNull ?: return
 
-            when (update.sessionUpdate) {
+            log.debug("Session update: $updateType")
+
+            when (updateType) {
                 "agent_message_chunk" -> {
-                    val text = update.content?.text ?: return
+                    val text = extractTextFromContent(obj["content"]) ?: return
                     _currentAgentText.append(text)
                     val streamingMessage = ChatMessage(
                         role = "assistant",
@@ -72,19 +84,15 @@ class AcpSession(
                     notifyMessageListeners(streamingMessage)
                 }
                 "agent_message_end" -> {
-                    if (_currentAgentText.isNotEmpty()) {
-                        val finalMessage = ChatMessage(
-                            role = "assistant",
-                            content = _currentAgentText.toString(),
-                            isStreaming = false,
-                        )
-                        _messages.add(finalMessage)
-                        notifyMessageListeners(finalMessage)
-                        _currentAgentText.clear()
-                    }
+                    finalizeCurrentText()
                 }
                 "tool_call" -> {
-                    update.toolCall?.let { tc ->
+                    finalizeCurrentText()
+
+                    val toolCall = obj["toolCall"]?.let {
+                        try { json.decodeFromJsonElement<ToolCallUpdate>(it) } catch (_: Exception) { null }
+                    }
+                    toolCall?.let { tc ->
                         val msg = ChatMessage(
                             role = "tool",
                             content = "Calling ${tc.toolName ?: "tool"}...",
@@ -94,12 +102,65 @@ class AcpSession(
                     }
                 }
                 "mode_change" -> {
-                    update.mode?.let { mode = SessionMode.fromValue(it) }
+                    val newMode = obj["mode"]?.jsonPrimitive?.contentOrNull
+                    newMode?.let { mode = SessionMode.fromValue(it) }
+                }
+                "config_options_update" -> {
+                    val options = obj["configOptions"]?.let {
+                        try { json.decodeFromJsonElement<List<ConfigOption>>(it) } catch (_: Exception) { null }
+                    }
+                    if (options != null) {
+                        updateConfigOptions(options)
+                    }
                 }
             }
+
+            try {
+                val update = json.decodeFromJsonElement<SessionUpdate>(updateElement)
+                for (listener in updateListeners) {
+                    listener(update)
+                }
+            } catch (_: Exception) { }
         } catch (e: Exception) {
             log.warn("Failed to handle session update", e)
         }
+    }
+
+    private fun finalizeCurrentText() {
+        if (_currentAgentText.isNotEmpty()) {
+            val finalMessage = ChatMessage(
+                role = "assistant",
+                content = _currentAgentText.toString(),
+                isStreaming = false,
+            )
+            _messages.add(finalMessage)
+            notifyMessageListeners(finalMessage)
+            _currentAgentText.clear()
+        }
+    }
+
+    private fun extractTextFromContent(contentElement: JsonElement?): String? {
+        if (contentElement == null || contentElement is JsonNull) return null
+
+        if (contentElement is JsonObject) {
+            return contentElement["text"]?.jsonPrimitive?.contentOrNull
+        }
+
+        if (contentElement is JsonArray) {
+            val sb = StringBuilder()
+            for (block in contentElement) {
+                if (block is JsonObject) {
+                    block["text"]?.jsonPrimitive?.contentOrNull?.let { sb.append(it) }
+                }
+            }
+            return sb.toString().ifEmpty { null }
+        }
+
+        if (contentElement is JsonPrimitive) {
+            return contentElement.contentOrNull
+        }
+
+        return null
     }
 
     suspend fun sendPrompt(content: List<ContentBlock>): SessionPromptResult {
@@ -118,16 +179,7 @@ class AcpSession(
             client.sessionPrompt(sessionId, content)
         } finally {
             isProcessing = false
-            if (_currentAgentText.isNotEmpty()) {
-                val finalMessage = ChatMessage(
-                    role = "assistant",
-                    content = _currentAgentText.toString(),
-                    isStreaming = false,
-                )
-                _messages.add(finalMessage)
-                notifyMessageListeners(finalMessage)
-                _currentAgentText.clear()
-            }
+            finalizeCurrentText()
         }
     }
 
@@ -141,6 +193,34 @@ class AcpSession(
     suspend fun setMode(newMode: SessionMode) {
         client.sessionSetMode(sessionId, newMode.value)
         mode = newMode
+    }
+
+    suspend fun setConfigOption(configId: String, value: String) {
+        try {
+            val result = client.sessionSetConfigOption(sessionId, configId, value)
+            if (result.configOptions.isNotEmpty()) {
+                updateConfigOptions(result.configOptions)
+                return
+            }
+        } catch (e: Exception) {
+            log.info("session/set_config_option not supported by agent, updating locally: ${e.message}")
+        }
+        val updated = _configOptions.map { option ->
+            if (option.id == configId) option.copy(currentValue = value) else option
+        }
+        updateConfigOptions(updated)
+    }
+
+    private fun updateConfigOptions(options: List<ConfigOption>) {
+        _configOptions.clear()
+        _configOptions.addAll(options)
+        for (listener in configListeners) {
+            try {
+                listener(options)
+            } catch (e: Exception) {
+                log.warn("Config listener error", e)
+            }
+        }
     }
 
     private fun notifyMessageListeners(message: ChatMessage) {

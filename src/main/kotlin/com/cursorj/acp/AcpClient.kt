@@ -10,10 +10,12 @@ import kotlinx.serialization.json.*
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 typealias NotificationHandler = (method: String, params: JsonElement) -> Unit
 typealias ServerRequestHandler = (method: String, params: JsonElement) -> JsonElement?
+typealias DisconnectListener = () -> Unit
 
 class AcpClient(private val parentDisposable: Disposable) : Disposable {
     private val log = Logger.getInstance(AcpClient::class.java)
@@ -27,6 +29,11 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     private val pendingRequests = ConcurrentHashMap<Int, CompletableDeferred<JsonElement>>()
     private val notificationHandlers = mutableListOf<NotificationHandler>()
     private val serverRequestHandlers = mutableListOf<ServerRequestHandler>()
+    private val disconnectListeners = mutableListOf<DisconnectListener>()
+
+    private val serverRequestExecutor = Executors.newCachedThreadPool { r ->
+        Thread(r, "CursorJ-ServerReq-${nextId.get()}").apply { isDaemon = true }
+    }
 
     private var scope: CoroutineScope? = null
     private var readJob: Job? = null
@@ -49,6 +56,10 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
 
     fun addServerRequestHandler(handler: ServerRequestHandler) {
         serverRequestHandlers.add(handler)
+    }
+
+    fun addDisconnectListener(listener: DisconnectListener) {
+        disconnectListeners.add(listener)
     }
 
     fun connect(reader: BufferedReader, writer: BufferedWriter) {
@@ -75,6 +86,7 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     suspend fun sessionNew(cwd: String): SessionNewResult {
         val params = SessionNewParams(cwd = cwd)
         val result = sendRequest("session/new", json.encodeToJsonElement(params))
+        log.info("session/new response: $result")
         return json.decodeFromJsonElement(result)
     }
 
@@ -98,6 +110,12 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     suspend fun sessionSetMode(sessionId: String, mode: String) {
         val params = SessionSetModeParams(sessionId = sessionId, mode = mode)
         sendRequest("session/setMode", json.encodeToJsonElement(params))
+    }
+
+    suspend fun sessionSetConfigOption(sessionId: String, configId: String, value: String): SetConfigOptionResult {
+        val params = SetConfigOptionParams(sessionId = sessionId, configId = configId, value = value)
+        val result = sendRequest("session/set_config_option", json.encodeToJsonElement(params))
+        return json.decodeFromJsonElement(result)
     }
 
     private suspend fun sendRequest(method: String, params: JsonElement): JsonElement {
@@ -170,6 +188,10 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
             log.warn("ACP read loop error", e)
         } finally {
             isConnected = false
+            cancelAllPending("Agent connection lost")
+            for (listener in disconnectListeners) {
+                try { listener() } catch (e: Exception) { log.warn("Disconnect listener error", e) }
+            }
         }
     }
 
@@ -224,35 +246,44 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         val method = obj["method"]?.jsonPrimitive?.contentOrNull ?: return
         val params = obj["params"] ?: JsonObject(emptyMap())
 
-        for (handler in serverRequestHandlers) {
-            try {
-                val result = handler(method, params)
-                if (result != null) {
-                    respondToServerRequest(id, result)
-                    return
+        serverRequestExecutor.submit {
+            for (handler in serverRequestHandlers) {
+                try {
+                    val result = handler(method, params)
+                    if (result != null) {
+                        respondToServerRequest(id, result)
+                        return@submit
+                    }
+                } catch (e: Exception) {
+                    log.warn("Server request handler error for $method", e)
+                    respondToServerRequestWithError(id, -32603, e.message ?: "Internal error")
+                    return@submit
                 }
-            } catch (e: Exception) {
-                log.warn("Server request handler error for $method", e)
-                respondToServerRequestWithError(id, -32603, e.message ?: "Internal error")
-                return
             }
-        }
 
-        respondToServerRequestWithError(id, -32601, "Method not found: $method")
+            log.warn("Unhandled ACP server request: $method (id=$id)")
+            respondToServerRequestWithError(id, -32601, "Method not found: $method")
+        }
     }
 
     fun disconnect() {
         readJob?.cancel()
         scope?.cancel()
-        pendingRequests.values.forEach {
-            it.completeExceptionally(AcpException(-1, "Disconnected"))
-        }
-        pendingRequests.clear()
+        cancelAllPending("Disconnected")
         isConnected = false
+    }
+
+    private fun cancelAllPending(reason: String) {
+        val pending = pendingRequests.values.toList()
+        pendingRequests.clear()
+        for (deferred in pending) {
+            deferred.completeExceptionally(AcpException(-1, reason))
+        }
     }
 
     override fun dispose() {
         disconnect()
+        serverRequestExecutor.shutdownNow()
     }
 }
 

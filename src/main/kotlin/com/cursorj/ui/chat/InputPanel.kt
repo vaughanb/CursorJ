@@ -2,39 +2,82 @@ package com.cursorj.ui.chat
 
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.SessionMode
+import com.cursorj.acp.messages.ConfigOption
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.*
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.geom.RoundRectangle2D
 import javax.swing.*
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
+import javax.swing.text.View
 
 class InputPanel {
+    private val borderColor = JBColor(Color(0xCCCCCC), Color(0x4A4A4A))
+    private val containerBg = JBColor(Color(0xFFFFFF), Color(0x2B2B2B))
+    private val arcSize = 12
+
     private val rootPanel = JPanel(BorderLayout()).apply {
-        border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0),
-            JBUI.Borders.empty(8),
-        )
+        border = JBUI.Borders.empty(6, 8, 8, 8)
+        isOpaque = false
     }
 
+    private val container = object : JPanel(BorderLayout()) {
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = containerBg
+            g2.fill(RoundRectangle2D.Float(0f, 0f, width.toFloat(), height.toFloat(), arcSize.toFloat(), arcSize.toFloat()))
+            g2.dispose()
+        }
+
+        override fun paintBorder(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = borderColor
+            g2.stroke = BasicStroke(1f)
+            g2.draw(RoundRectangle2D.Float(0.5f, 0.5f, width - 1f, height - 1f, arcSize.toFloat(), arcSize.toFloat()))
+            g2.dispose()
+        }
+    }.apply {
+        isOpaque = false
+        border = JBUI.Borders.empty(0)
+    }
+
+    private val minRows = 2
+    private val maxRows = 12
+
     private val textArea = JBTextArea().apply {
-        rows = 3
+        rows = minRows
         lineWrap = true
         wrapStyleWord = true
-        border = JBUI.Borders.empty(4)
+        border = JBUI.Borders.empty(10, 12, 4, 12)
+        isOpaque = false
         emptyText.text = CursorJBundle.message("chat.input.placeholder")
     }
 
     private val sendButton = JButton(AllIcons.Actions.Execute).apply {
         toolTipText = CursorJBundle.message("chat.input.send")
         isFocusable = false
+        isContentAreaFilled = false
+        isBorderPainted = false
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        preferredSize = Dimension(28, 28)
     }
 
     private val cancelButton = JButton(AllIcons.Actions.Suspend).apply {
         toolTipText = CursorJBundle.message("chat.input.cancel")
         isFocusable = false
+        isContentAreaFilled = false
+        isBorderPainted = false
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        preferredSize = Dimension(28, 28)
         isVisible = false
     }
 
@@ -43,43 +86,67 @@ class InputPanel {
         CursorJBundle.message("chat.mode.plan"),
         CursorJBundle.message("chat.mode.ask"),
     )).apply {
-        preferredSize = Dimension(80, preferredSize.height)
+        minimumSize = Dimension(90, 26)
+        preferredSize = Dimension(90, 26)
+        prototypeDisplayValue = CursorJBundle.message("chat.mode.agent") + "  "
+        font = font.deriveFont(font.size2D - 1)
     }
 
-    private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+    private val modelCombo = JComboBox<String>().apply {
+        minimumSize = Dimension(100, 26)
+        preferredSize = Dimension(130, 26)
+        font = font.deriveFont(font.size2D - 1)
+        isVisible = false
+    }
+
+    private var modelValues: List<String> = emptyList()
+    private var updatingModelCombo = false
+
+    private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
     }
 
     var onSend: ((String) -> Unit)? = null
     var onCancel: (() -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
+    var onModelChanged: ((configId: String, value: String) -> Unit)? = null
 
     val component: JComponent get() = rootPanel
 
     init {
         val scrollPane = JScrollPane(textArea).apply {
-            border = JBUI.Borders.customLine(JBColor.border(), 1)
+            border = BorderFactory.createEmptyBorder()
+            isOpaque = false
+            viewport.isOpaque = false
             verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
 
-        val buttonPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            add(sendButton)
-            add(Box.createVerticalStrut(4))
-            add(cancelButton)
-        }
-
         val bottomBar = JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(modeCombo, BorderLayout.WEST)
-            add(fileChipsPanel, BorderLayout.CENTER)
+            border = JBUI.Borders.empty(2, 8, 6, 8)
+
+            val leftControls = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+                isOpaque = false
+                add(modeCombo)
+                add(modelCombo)
+                add(fileChipsPanel)
+            }
+
+            val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
+                isOpaque = false
+                add(sendButton)
+                add(cancelButton)
+            }
+
+            add(leftControls, BorderLayout.WEST)
+            add(rightControls, BorderLayout.EAST)
         }
 
-        rootPanel.add(scrollPane, BorderLayout.CENTER)
-        rootPanel.add(buttonPanel, BorderLayout.EAST)
-        rootPanel.add(bottomBar, BorderLayout.SOUTH)
+        container.add(scrollPane, BorderLayout.CENTER)
+        container.add(bottomBar, BorderLayout.SOUTH)
+
+        rootPanel.add(container, BorderLayout.CENTER)
 
         textArea.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
@@ -88,6 +155,16 @@ class InputPanel {
                     doSend()
                 }
             }
+        })
+
+        textArea.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = adjustTextAreaHeight()
+            override fun removeUpdate(e: DocumentEvent) = adjustTextAreaHeight()
+            override fun changedUpdate(e: DocumentEvent) = adjustTextAreaHeight()
+        })
+
+        rootPanel.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) = adjustTextAreaHeight()
         })
 
         sendButton.addActionListener { doSend() }
@@ -101,6 +178,40 @@ class InputPanel {
             }
             onModeChanged?.invoke(mode)
         }
+
+        modelCombo.addActionListener {
+            if (updatingModelCombo) return@addActionListener
+            val idx = modelCombo.selectedIndex
+            if (idx in modelValues.indices) {
+                val modelConfigId = configOptions.firstOrNull { it.category == "model" }?.id ?: "model"
+                onModelChanged?.invoke(modelConfigId, modelValues[idx])
+            }
+        }
+    }
+
+    private var configOptions: List<ConfigOption> = emptyList()
+
+    fun updateConfigOptions(options: List<ConfigOption>) {
+        configOptions = options
+        val modelOption = options.firstOrNull { it.category == "model" }
+        if (modelOption != null && modelOption.options.isNotEmpty()) {
+            updatingModelCombo = true
+            modelCombo.removeAllItems()
+            modelValues = modelOption.options.map { it.value }
+            modelOption.options.forEach { opt ->
+                modelCombo.addItem(opt.name ?: opt.value)
+            }
+            val selectedIdx = modelValues.indexOf(modelOption.currentValue).coerceAtLeast(0)
+            modelCombo.selectedIndex = selectedIdx
+            val longestName = modelOption.options.maxOf { (it.name ?: it.value).length }
+            modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 200), 26)
+            modelCombo.isVisible = true
+            updatingModelCombo = false
+        } else {
+            modelCombo.isVisible = false
+        }
+        rootPanel.revalidate()
+        rootPanel.repaint()
     }
 
     fun setProcessing(processing: Boolean) {
@@ -148,7 +259,32 @@ class InputPanel {
     private fun doSend() {
         val text = textArea.text.trim()
         if (text.isNotEmpty()) {
+            textArea.text = ""
+            adjustTextAreaHeight()
             onSend?.invoke(text)
+        }
+    }
+
+    private fun adjustTextAreaHeight() {
+        val scrollPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, textArea) as? JScrollPane
+            ?: return
+        val fm = textArea.getFontMetrics(textArea.font)
+        val lineHeight = fm.height
+        val insets = textArea.insets
+        val minHeight = minRows * lineHeight + insets.top + insets.bottom
+        val maxHeight = maxRows * lineHeight + insets.top + insets.bottom
+
+        val viewportWidth = scrollPane.viewport.width.coerceAtLeast(100)
+        val root = textArea.ui?.getRootView(textArea) ?: return
+        root.setSize(viewportWidth.toFloat(), Float.MAX_VALUE)
+        val contentHeight = root.getPreferredSpan(View.Y_AXIS).toInt() + insets.top + insets.bottom
+        val targetHeight = contentHeight.coerceIn(minHeight, maxHeight)
+
+        val currentHeight = scrollPane.preferredSize.height
+        if (targetHeight != currentHeight) {
+            scrollPane.preferredSize = Dimension(scrollPane.preferredSize.width, targetHeight)
+            rootPanel.revalidate()
+            rootPanel.repaint()
         }
     }
 }

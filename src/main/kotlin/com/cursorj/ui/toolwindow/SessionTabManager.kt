@@ -2,6 +2,7 @@ package com.cursorj.ui.toolwindow
 
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AcpSession
+import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.chat.ChatPanel
 import com.intellij.openapi.diagnostic.Logger
@@ -9,6 +10,7 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentFactory
 import kotlinx.coroutines.*
+import javax.swing.SwingUtilities
 
 class SessionTabManager(
     private val service: CursorJService,
@@ -26,7 +28,18 @@ class SessionTabManager(
     private val tabs = mutableListOf<TabEntry>()
 
     fun addInitialTab() {
-        addNewTab()
+        val chatPanel = addNewTab()
+        chatPanel.showStatus("Connecting to Cursor agent...")
+
+        service.addConnectionListener { success ->
+            if (success) {
+                chatPanel.showStatus("Connected. Type a message to start.")
+            } else {
+                chatPanel.showError(
+                    service.lastError ?: CursorJBundle.message("error.agent.not.found"),
+                )
+            }
+        }
     }
 
     fun addNewTab(): ChatPanel {
@@ -46,6 +59,11 @@ class SessionTabManager(
 
         chatPanel.onFirstPrompt = { prompt ->
             ensureSessionAndSend(entry, prompt)
+        }
+
+        val modelConfig = service.buildModelConfigOption()
+        if (modelConfig.isNotEmpty()) {
+            chatPanel.updateConfigOptions(modelConfig)
         }
 
         return chatPanel
@@ -69,17 +87,27 @@ class SessionTabManager(
         CursorJSettings.instance.savedSessionIds = sessionIds.toMutableList()
     }
 
+    fun broadcastStatus(message: String) {
+        for (tab in tabs) {
+            tab.chatPanel.showStatus(message)
+        }
+    }
+
+    fun broadcastConfigOptions(options: List<ConfigOption>) {
+        for (tab in tabs) {
+            tab.chatPanel.updateConfigOptions(options)
+        }
+    }
+
     private fun ensureSessionAndSend(entry: TabEntry, prompt: String) {
         scope.launch {
             try {
                 if (!service.isInitialized) {
                     val ready = CompletableDeferred<Boolean>()
-                    withContext(Dispatchers.Main) {
-                        service.connectAndInit { ready.complete(it) }
-                    }
+                    service.addConnectionListener { ready.complete(it) }
                     if (!ready.await()) {
                         entry.chatPanel.showError(
-                            CursorJBundle.message("error.agent.not.found"),
+                            service.lastError ?: CursorJBundle.message("error.agent.not.found"),
                         )
                         return@launch
                     }
@@ -90,9 +118,8 @@ class SessionTabManager(
                     entry.chatPanel.bindSession(entry.session!!)
                 }
 
-                val session = entry.session!!
                 val title = prompt.take(30).let { if (prompt.length > 30) "$it..." else it }
-                withContext(Dispatchers.Main) {
+                SwingUtilities.invokeLater {
                     entry.content.displayName = title
                 }
 

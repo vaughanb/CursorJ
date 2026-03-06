@@ -1,18 +1,15 @@
 package com.cursorj.ui.chat
 
-import com.cursorj.CursorJBundle
 import com.cursorj.acp.AcpSession
-import com.cursorj.acp.ChatMessage
 import com.cursorj.acp.SessionMode
+import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ContentBlock
 import com.cursorj.acp.messages.ResourceLinkContent
 import com.cursorj.acp.messages.TextContent
 import com.cursorj.context.DragDropProvider
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.toolwindow.CursorJService
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
@@ -49,6 +46,7 @@ class ChatPanel(private val service: CursorJService) {
         inputPanel.onSend = { text -> handleSend(text) }
         inputPanel.onCancel = { handleCancel() }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
+        inputPanel.onModelChanged = { configId, value -> handleConfigOptionChange(configId, value) }
 
         val dragDrop = DragDropProvider { blocks ->
             for (block in blocks) {
@@ -61,12 +59,28 @@ class ChatPanel(private val service: CursorJService) {
         dragDrop.install(rootPanel)
     }
 
+    fun updateConfigOptions(options: List<ConfigOption>) {
+        SwingUtilities.invokeLater {
+            inputPanel.updateConfigOptions(options)
+        }
+    }
+
     fun bindSession(session: AcpSession) {
         this.session = session
         session.addMessageListener { message ->
             SwingUtilities.invokeLater {
                 messageListPanel.updateOrAddMessage(message)
+                if (!message.isStreaming && session.isProcessing) {
+                    messageListPanel.showProgress()
+                }
             }
+        }
+
+        if (session.configOptions.isNotEmpty()) {
+            updateConfigOptions(session.configOptions)
+        }
+        session.addConfigListener { options ->
+            updateConfigOptions(options)
         }
     }
 
@@ -74,7 +88,9 @@ class ChatPanel(private val service: CursorJService) {
         scope.launch {
             try {
                 val contentBlocks = buildContentBlocks(text)
-                inputPanel.setProcessing(true)
+                SwingUtilities.invokeLater {
+                    inputPanel.setProcessing(true)
+                }
                 session?.sendPrompt(contentBlocks)
             } catch (e: CancellationException) {
                 throw e
@@ -82,7 +98,8 @@ class ChatPanel(private val service: CursorJService) {
                 log.warn("Error sending prompt", e)
                 showError(e.message ?: "Failed to send prompt")
             } finally {
-                withContext(Dispatchers.Main) {
+                SwingUtilities.invokeLater {
+                    messageListPanel.hideProgress()
                     inputPanel.setProcessing(false)
                     attachedFiles.clear()
                     inputPanel.clearFileChips()
@@ -94,6 +111,12 @@ class ChatPanel(private val service: CursorJService) {
     fun showError(message: String) {
         SwingUtilities.invokeLater {
             messageListPanel.addErrorMessage(message)
+        }
+    }
+
+    fun showStatus(message: String) {
+        SwingUtilities.invokeLater {
+            messageListPanel.addStatusMessage(message)
         }
     }
 
@@ -109,7 +132,7 @@ class ChatPanel(private val service: CursorJService) {
     private fun handleCancel() {
         scope.launch {
             session?.cancel()
-            withContext(Dispatchers.Main) {
+            SwingUtilities.invokeLater {
                 inputPanel.setProcessing(false)
             }
         }
@@ -122,6 +145,13 @@ class ChatPanel(private val service: CursorJService) {
             } catch (e: Exception) {
                 log.warn("Failed to change mode", e)
             }
+        }
+    }
+
+    private fun handleConfigOptionChange(configId: String, value: String) {
+        if (configId == "model") {
+            service.changeModel(value)
+            session = null
         }
     }
 

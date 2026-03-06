@@ -36,13 +36,15 @@ class TerminalHandler(private val project: Project) {
     private fun handleCreate(params: JsonElement): JsonElement {
         val request = json.decodeFromJsonElement<TerminalCreateParams>(params)
         val terminalId = "term-${nextTerminalId.getAndIncrement()}"
+        log.info("terminal/create: command='${request.command}', cwd=${request.cwd}")
 
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
         val shell = if (isWindows) listOf("cmd.exe", "/c") else listOf("/bin/sh", "-c")
 
         val pb = ProcessBuilder(shell + request.command)
-        request.cwd?.let { pb.directory(java.io.File(it)) }
-            ?: project.basePath?.let { pb.directory(java.io.File(it)) }
+        val workDir = request.cwd?.let { java.io.File(it) }
+            ?: project.basePath?.let { java.io.File(it) }
+        workDir?.let { pb.directory(it) }
         pb.redirectErrorStream(true)
 
         val process = pb.start()
