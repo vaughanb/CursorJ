@@ -11,6 +11,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import javax.swing.SwingUtilities
 
 class AgentConnection(
@@ -45,6 +48,18 @@ class AgentConnection(
     var onStatusChanged: ((String) -> Unit)? = null
     var onConnectionChanged: ((Boolean) -> Unit)? = null
 
+    private val visibleSessionUpdateHandler: NotificationHandler = { method, params ->
+        if (method == "session/update") {
+            val visible = session
+            if (visible != null) {
+                val updateSessionId = extractSessionId(params)
+                if (updateSessionId == null || updateSessionId == visible.sessionId) {
+                    visible.handleSessionUpdate(params)
+                }
+            }
+        }
+    }
+
     init {
         Disposer.register(parentDisposable, this)
         processManager.workingDirectory = project.basePath
@@ -76,6 +91,7 @@ class AgentConnection(
 
             registerHandlers()
             client.addDisconnectListener { handleDisconnect() }
+            client.addNotificationHandler(visibleSessionUpdateHandler)
 
             log.info("Sending ACP initialize...")
             client.initialize()
@@ -115,12 +131,6 @@ class AgentConnection(
 
         val newSession = AcpSession(result.sessionId, client, configOptions)
         session = newSession
-
-        client.addNotificationHandler { method, params ->
-            if (method == "session/update") {
-                newSession.handleSessionUpdate(params)
-            }
-        }
 
         return newSession
     }
@@ -223,6 +233,7 @@ class AgentConnection(
 
                 registerHandlers()
                 client.addDisconnectListener { handleDisconnect() }
+                client.addNotificationHandler(visibleSessionUpdateHandler)
 
                 client.initialize()
                 client.authenticate()
@@ -232,14 +243,6 @@ class AgentConnection(
                 notifyConnectionChanged(true)
                 log.info("Reconnected successfully")
                 broadcastStatus("Reconnected. You may need to resend your last message.")
-
-                session?.let { s ->
-                    client.addNotificationHandler { method, params ->
-                        if (method == "session/update") {
-                            s.handleSessionUpdate(params)
-                        }
-                    }
-                }
 
                 monitorProcess()
                 return
@@ -267,6 +270,16 @@ class AgentConnection(
         SwingUtilities.invokeLater {
             onConnectionChanged?.invoke(connected)
         }
+    }
+
+    private fun extractSessionId(params: kotlinx.serialization.json.JsonElement): String? {
+        val obj = params as? JsonObject ?: return null
+        obj["sessionId"]?.jsonPrimitive?.contentOrNull?.let { return it }
+        obj["session_id"]?.jsonPrimitive?.contentOrNull?.let { return it }
+        val updateObj = obj["update"]?.jsonObject
+        updateObj?.get("sessionId")?.jsonPrimitive?.contentOrNull?.let { return it }
+        updateObj?.get("session_id")?.jsonPrimitive?.contentOrNull?.let { return it }
+        return null
     }
 
     override fun dispose() {

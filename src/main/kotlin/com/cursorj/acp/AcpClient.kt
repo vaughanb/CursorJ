@@ -10,6 +10,7 @@ import kotlinx.serialization.json.*
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -27,9 +28,9 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
 
     private val nextId = AtomicInteger(1)
     private val pendingRequests = ConcurrentHashMap<Int, CompletableDeferred<JsonElement>>()
-    private val notificationHandlers = mutableListOf<NotificationHandler>()
-    private val serverRequestHandlers = mutableListOf<ServerRequestHandler>()
-    private val disconnectListeners = mutableListOf<DisconnectListener>()
+    private val notificationHandlers = CopyOnWriteArrayList<NotificationHandler>()
+    private val serverRequestHandlers = CopyOnWriteArrayList<ServerRequestHandler>()
+    private val disconnectListeners = CopyOnWriteArrayList<DisconnectListener>()
 
     private val serverRequestExecutor = Executors.newCachedThreadPool { r ->
         Thread(r, "CursorJ-ServerReq-${nextId.get()}").apply { isDaemon = true }

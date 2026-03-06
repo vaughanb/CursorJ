@@ -74,16 +74,20 @@ class AcpSession(
 
             when (updateType) {
                 "agent_message_chunk" -> {
-                    val text = extractTextFromContent(obj["content"]) ?: return
+                    val text = extractUpdateText(obj) ?: return
                     _currentAgentText.append(text)
-                    val streamingMessage = ChatMessage(
-                        role = "assistant",
-                        content = _currentAgentText.toString(),
-                        isStreaming = true,
-                    )
-                    notifyMessageListeners(streamingMessage)
+                    val accumulated = _currentAgentText.toString()
+                    if (accumulated.isNotBlank()) {
+                        val streamingMessage = ChatMessage(
+                            role = "assistant",
+                            content = accumulated,
+                            isStreaming = true,
+                        )
+                        notifyMessageListeners(streamingMessage)
+                    }
                 }
                 "agent_message_end" -> {
+                    extractUpdateText(obj)?.let { _currentAgentText.append(it) }
                     finalizeCurrentText()
                 }
                 "tool_call" -> {
@@ -127,40 +131,23 @@ class AcpSession(
     }
 
     private fun finalizeCurrentText() {
-        if (_currentAgentText.isNotEmpty()) {
+        val finalText = _currentAgentText.toString()
+        if (finalText.isNotBlank()) {
             val finalMessage = ChatMessage(
                 role = "assistant",
-                content = _currentAgentText.toString(),
+                content = finalText,
                 isStreaming = false,
             )
             _messages.add(finalMessage)
             notifyMessageListeners(finalMessage)
-            _currentAgentText.clear()
         }
+        _currentAgentText.clear()
     }
 
-    private fun extractTextFromContent(contentElement: JsonElement?): String? {
-        if (contentElement == null || contentElement is JsonNull) return null
-
-        if (contentElement is JsonObject) {
-            return contentElement["text"]?.jsonPrimitive?.contentOrNull
-        }
-
-        if (contentElement is JsonArray) {
-            val sb = StringBuilder()
-            for (block in contentElement) {
-                if (block is JsonObject) {
-                    block["text"]?.jsonPrimitive?.contentOrNull?.let { sb.append(it) }
-                }
-            }
-            return sb.toString().ifEmpty { null }
-        }
-
-        if (contentElement is JsonPrimitive) {
-            return contentElement.contentOrNull
-        }
-
-        return null
+    private fun extractUpdateText(updateObj: JsonObject): String? {
+        return AcpContentExtractor.extractTextFromContent(updateObj["content"])
+            ?: updateObj["text"]?.jsonPrimitive?.contentOrNull
+            ?: AcpContentExtractor.extractTextFromContent(updateObj["message"])
     }
 
     suspend fun sendPrompt(content: List<ContentBlock>): SessionPromptResult {

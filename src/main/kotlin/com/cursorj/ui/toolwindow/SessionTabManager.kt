@@ -33,8 +33,10 @@ class SessionTabManager(
         var connection: AgentConnection? = null,
         var session: AcpSession? = null,
         var title: String = CursorJBundle.message("chat.tab.new"),
+        var isDisposed: Boolean = false,
     ) : Disposable {
         override fun dispose() {
+            isDisposed = true
             connection?.let { Disposer.dispose(it) }
         }
     }
@@ -207,14 +209,9 @@ class SessionTabManager(
                 }
 
                 if (entry.session == null) {
+                    applyTabTitle(entry, buildHeuristicTitle(prompt))
                     entry.session = conn.createSession()
                     entry.chatPanel.bindSession(entry.session!!)
-                }
-
-                val title = prompt.take(30).let { if (prompt.length > 30) "$it..." else it }
-                entry.title = title
-                SwingUtilities.invokeLater {
-                    entry.chatPanel.tabLabel?.text = title
                 }
 
                 entry.chatPanel.sendPrompt(prompt)
@@ -223,6 +220,59 @@ class SessionTabManager(
             } catch (e: Exception) {
                 log.error("Failed to create session or send prompt", e)
                 entry.chatPanel.showError(e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    private fun buildHeuristicTitle(prompt: String): String {
+        val cleaned = prompt
+            .lineSequence()
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?: CursorJBundle.message("chat.tab.new")
+
+        val normalized = cleaned
+            .replace("`", "")
+            .replace("\"", "")
+            .replace("'", "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+        val withoutPrefix = normalized.replace(
+            Regex("""^(please|can you|could you|would you|i need|i want|help me|let's|lets)\s+""", RegexOption.IGNORE_CASE),
+            "",
+        )
+
+        val stopWords = setOf(
+            "a", "an", "the", "to", "for", "of", "in", "on", "with", "and", "or",
+            "by", "from", "this", "that", "these", "those", "please", "can", "could",
+            "would", "should", "you", "me", "my", "our", "we", "i", "need", "want",
+            "like", "help",
+        )
+
+        val tokens = Regex("""[A-Za-z0-9+#./_-]+""")
+            .findAll(withoutPrefix)
+            .map { it.value }
+            .filter { it.length > 1 && it.lowercase() !in stopWords }
+            .toList()
+
+        val core = if (tokens.isNotEmpty()) {
+            tokens.take(4).joinToString(" ") { token ->
+                if (token.all { it.isUpperCase() } || token.any { it.isDigit() }) token
+                else token.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            }
+        } else {
+            withoutPrefix.take(30).trim()
+        }
+
+        return core.take(32).let { if (core.length > 32) "$it..." else it }
+    }
+
+    private fun applyTabTitle(entry: TabEntry, title: String) {
+        entry.title = title
+        SwingUtilities.invokeLater {
+            if (!entry.isDisposed) {
+                entry.chatPanel.tabLabel?.text = title
             }
         }
     }
