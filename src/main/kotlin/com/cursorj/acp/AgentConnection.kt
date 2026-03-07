@@ -177,8 +177,13 @@ class AgentConnection(
         fileSystemHandler.register(client)
         terminalHandler.register(client)
         permissionHandler.register(client)
-        client.addServerRequestHandler { method, _ ->
+        client.addServerRequestHandler { method, params ->
             when (method) {
+                "_cursor/create_plan" -> {
+                    log.info("_cursor/create_plan received, params keys: ${(params as? JsonObject)?.keys}")
+                    session?.handleCreatePlan(params)
+                    JsonObject(emptyMap())
+                }
                 "fs/find_text_in_files",
                 "editor/apply_edit",
                 "editor/get_open_files" -> {

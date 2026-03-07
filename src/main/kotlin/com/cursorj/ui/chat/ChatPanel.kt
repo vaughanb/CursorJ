@@ -3,18 +3,21 @@ package com.cursorj.ui.chat
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.SessionMode
-import com.cursorj.acp.messages.ConfigOption
-import com.cursorj.acp.messages.ContentBlock
-import com.cursorj.acp.messages.ResourceLinkContent
-import com.cursorj.acp.messages.TextContent
+import com.cursorj.acp.ToolActivity
+import com.cursorj.acp.messages.*
 import com.cursorj.context.DragDropProvider
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.toolwindow.CursorJService
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
+import java.awt.Color
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -31,6 +34,18 @@ class ChatPanel(private val service: CursorJService) {
     private var connection: AgentConnection? = null
     private var session: AcpSession? = null
     private val attachedFiles = mutableListOf<ResourceLinkContent>()
+    private var pendingToolCall: Pair<String, ToolActivity>? = null
+    private var desiredMode: SessionMode = SessionMode.AGENT
+
+    private val agentProgressColor = JBColor(Color(0x6B9BD2), Color(0x6B9BD2))
+    private val planProgressColor = JBColor(Color(0xD4A017), Color(0xD4A017))
+    private val askProgressColor = JBColor(Color(0x4CAF50), Color(0x6BC46D))
+
+    private fun modeProgressColor(): Color = when (desiredMode) {
+        SessionMode.PLAN -> planProgressColor
+        SessionMode.ASK -> askProgressColor
+        SessionMode.AGENT -> agentProgressColor
+    }
 
     var onFirstPrompt: ((String) -> Unit)? = null
     var tabLabel: JLabel? = null
@@ -61,6 +76,10 @@ class ChatPanel(private val service: CursorJService) {
             }
         }
         dragDrop.install(rootPanel)
+
+        messageListPanel.onToolCallFileClick = { path ->
+            openFileInEditor(path)
+        }
     }
 
     fun updateConfigOptions(options: List<ConfigOption>) {
@@ -77,10 +96,34 @@ class ChatPanel(private val service: CursorJService) {
         this.session = session
         session.addMessageListener { message ->
             SwingUtilities.invokeLater {
+                if (message.isStreaming) {
+                    commitPendingToolCall()
+                }
                 messageListPanel.updateOrAddMessage(message)
                 if (!message.isStreaming && session.isProcessing) {
-                    messageListPanel.showProgress()
+                    messageListPanel.showProgress(color = modeProgressColor())
                 }
+            }
+        }
+
+        session.addActivityListener { activity ->
+            SwingUtilities.invokeLater {
+                messageListPanel.updateProgressText(activity)
+                messageListPanel.updateProgressColor(modeProgressColor())
+            }
+        }
+
+        session.addToolCallListener { id, activity ->
+            SwingUtilities.invokeLater {
+                val pending = pendingToolCall
+                if (pending != null && pending.first != id) {
+                    messageListPanel.addOrUpdateToolCallLine(
+                        pending.first,
+                        pending.second.text,
+                        pending.second.path,
+                    )
+                }
+                pendingToolCall = id to activity
             }
         }
 
@@ -95,22 +138,38 @@ class ChatPanel(private val service: CursorJService) {
     fun sendPrompt(text: String) {
         scope.launch {
             try {
+                val s = session ?: return@launch
+                if (s.mode != desiredMode) {
+                    try {
+                        s.setMode(desiredMode)
+                    } catch (e: Exception) {
+                        log.warn("Failed to set mode before prompt", e)
+                    }
+                }
                 val contentBlocks = buildContentBlocks(text)
                 SwingUtilities.invokeLater {
                     inputPanel.setProcessing(true)
                 }
-                session?.sendPrompt(contentBlocks)
+                s.sendPrompt(contentBlocks)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 log.warn("Error sending prompt", e)
                 showError(e.message ?: "Failed to send prompt")
             } finally {
+                refreshProjectTree()
                 SwingUtilities.invokeLater {
+                    commitPendingToolCall()
                     messageListPanel.hideProgress()
                     inputPanel.setProcessing(false)
                     attachedFiles.clear()
                     inputPanel.clearFileChips()
+                    if (desiredMode == SessionMode.PLAN && session?.planCreated == true) {
+                        messageListPanel.showBuildButton(
+                            onBuild = { handleBuild() },
+                            onViewPlan = { handleViewPlan() },
+                        )
+                    }
                 }
             }
         }
@@ -146,7 +205,93 @@ class ChatPanel(private val service: CursorJService) {
         }
     }
 
+    private fun commitPendingToolCall() {
+        pendingToolCall?.let { (id, activity) ->
+            messageListPanel.addOrUpdateToolCallLine(id, activity.text, activity.path)
+        }
+        pendingToolCall = null
+    }
+
+    private fun handleBuild() {
+        messageListPanel.hideBuildButton()
+        desiredMode = SessionMode.AGENT
+        inputPanel.setMode(SessionMode.AGENT)
+        sendPrompt("Implement the plan above.")
+    }
+
+    private fun handleViewPlan() {
+        val s = session ?: return
+        val basePath = service.project.basePath ?: return
+
+        log.info("View Plan: planContent=${s.planContent.length} chars, thought=${s.thoughtContent.length} chars, toolCallContents=${s.toolCallContents.size}, planEntries=${s.planEntries.size}, messages=${s.messages.size}")
+
+        val planDir = java.io.File(basePath, ".cursorj/plans")
+        planDir.mkdirs()
+        val planFile = java.io.File(planDir, "plan.md")
+        planFile.writeText(buildPlanMarkdown(s))
+
+        val normalizedPath = planFile.absolutePath.replace('\\', '/')
+        ApplicationManager.getApplication().invokeLater {
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
+            if (vf != null) {
+                FileEditorManager.getInstance(service.project).openFile(vf, true)
+            }
+        }
+    }
+
+    private fun buildPlanMarkdown(session: AcpSession): String {
+        val sb = StringBuilder()
+        sb.appendLine("# Plan\n")
+
+        // Primary: plan content from _cursor/create_plan
+        val planContent = session.planContent.trim()
+        if (planContent.isNotEmpty()) {
+            sb.appendLine(planContent)
+            sb.appendLine()
+        }
+
+        // Secondary: agent's thinking (detailed reasoning)
+        val thought = session.thoughtContent.trim()
+        if (thought.isNotEmpty() && planContent.isEmpty()) {
+            sb.appendLine(thought)
+            sb.appendLine()
+        }
+
+        // Tertiary: tool call content
+        val toolContent = session.toolCallContents.values.joinToString("\n\n").trim()
+        if (toolContent.isNotEmpty() && planContent.isEmpty() && thought.isEmpty()) {
+            sb.appendLine(toolContent)
+            sb.appendLine()
+        }
+
+        // Final fallback: assistant messages
+        if (planContent.isEmpty() && thought.isEmpty() && toolContent.isEmpty()) {
+            val assistantText = session.messages
+                .filter { it.role == "assistant" }
+                .joinToString("\n\n") { it.content.trim() }
+            if (assistantText.isNotEmpty()) {
+                sb.appendLine(assistantText)
+                sb.appendLine()
+            }
+        }
+
+        // Plan entries as tasks
+        val entries = session.planEntries
+        if (entries.isNotEmpty()) {
+            sb.appendLine("## Tasks\n")
+            for (entry in entries) {
+                val checkbox = if (entry.status == "completed") "[x]" else "[ ]"
+                val priority = if (entry.priority != "medium") " _(${entry.priority})_" else ""
+                sb.appendLine("- $checkbox ${entry.content}$priority")
+            }
+            sb.appendLine()
+        }
+
+        return sb.toString()
+    }
+
     private fun handleModeChange(mode: SessionMode) {
+        desiredMode = mode
         scope.launch {
             try {
                 session?.setMode(mode)
@@ -161,6 +306,28 @@ class ChatPanel(private val service: CursorJService) {
             val conn = connection ?: return
             conn.changeModel(value)
             session = null
+        }
+    }
+
+    private fun refreshProjectTree() {
+        ApplicationManager.getApplication().invokeLater {
+            service.project.basePath?.let { basePath ->
+                LocalFileSystem.getInstance().findFileByPath(basePath.replace('\\', '/'))
+                    ?.refresh(false, true)
+            }
+        }
+    }
+
+    private fun openFileInEditor(path: String) {
+        val basePath = service.project.basePath ?: return
+        val candidate = java.io.File(path)
+        val resolved = if (candidate.isAbsolute) candidate else java.io.File(basePath, path)
+        val normalizedPath = resolved.absolutePath.replace('\\', '/')
+        ApplicationManager.getApplication().invokeLater {
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
+            if (vf != null) {
+                FileEditorManager.getInstance(service.project).openFile(vf, true)
+            }
         }
     }
 

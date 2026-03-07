@@ -21,6 +21,11 @@ data class ChatMessage(
     val isStreaming: Boolean = false,
 )
 
+data class ToolActivity(
+    val text: String,
+    val path: String? = null,
+)
+
 class AcpSession(
     val sessionId: String,
     private val client: AcpClient,
@@ -42,9 +47,28 @@ class AcpSession(
     private val _messages = mutableListOf<ChatMessage>()
     val messages: List<ChatMessage> get() = _messages.toList()
 
+    private val _planEntries = mutableListOf<PlanEntry>()
+    val planEntries: List<PlanEntry> get() = _planEntries.toList()
+
+    private val _toolCallContents = mutableMapOf<String, StringBuilder>()
+    val toolCallContents: Map<String, String>
+        get() = _toolCallContents.mapValues { it.value.toString() }
+
+    private val _planContent = StringBuilder()
+    val planContent: String get() = _planContent.toString()
+
+    var planCreated: Boolean = false
+        private set
+
+    private val _thoughtContent = StringBuilder()
+    val thoughtContent: String get() = _thoughtContent.toString()
+
     private val updateListeners = mutableListOf<(SessionUpdate) -> Unit>()
     private val messageListeners = mutableListOf<(ChatMessage) -> Unit>()
     private val configListeners = mutableListOf<(List<ConfigOption>) -> Unit>()
+    private val activityListeners = mutableListOf<(String) -> Unit>()
+    private val toolCallListeners = mutableListOf<(String, ToolActivity) -> Unit>()
+    private val planListeners = mutableListOf<(List<PlanEntry>) -> Unit>()
 
     private val _currentAgentText = StringBuilder()
 
@@ -60,6 +84,18 @@ class AcpSession(
         configListeners.add(listener)
     }
 
+    fun addActivityListener(listener: (String) -> Unit) {
+        activityListeners.add(listener)
+    }
+
+    fun addToolCallListener(listener: (id: String, activity: ToolActivity) -> Unit) {
+        toolCallListeners.add(listener)
+    }
+
+    fun addPlanListener(listener: (List<PlanEntry>) -> Unit) {
+        planListeners.add(listener)
+    }
+
     fun getConfigOption(category: String): ConfigOption? {
         return _configOptions.firstOrNull { it.category == category }
     }
@@ -70,7 +106,7 @@ class AcpSession(
             val obj = updateElement.jsonObject
             val updateType = obj["sessionUpdate"]?.jsonPrimitive?.contentOrNull ?: return
 
-            log.debug("Session update: $updateType")
+            log.info("Session update type: $updateType, keys: ${obj.keys}")
 
             when (updateType) {
                 "agent_message_chunk" -> {
@@ -90,23 +126,52 @@ class AcpSession(
                     extractUpdateText(obj)?.let { _currentAgentText.append(it) }
                     finalizeCurrentText()
                 }
+                "agent_thought_chunk" -> {
+                    val text = extractUpdateText(obj)
+                    if (text != null) _thoughtContent.append(text)
+                }
                 "tool_call" -> {
                     finalizeCurrentText()
-
-                    val toolCall = obj["toolCall"]?.let {
-                        try { json.decodeFromJsonElement<ToolCallUpdate>(it) } catch (_: Exception) { null }
-                    }
-                    toolCall?.let { tc ->
-                        val msg = ChatMessage(
-                            role = "tool",
-                            content = "Calling ${tc.toolName ?: "tool"}...",
-                            toolCalls = listOf(tc),
-                        )
-                        notifyMessageListeners(msg)
+                    val toolCallId = obj["toolCallId"]?.jsonPrimitive?.contentOrNull ?: "unknown"
+                    val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
+                    val status = obj["status"]?.jsonPrimitive?.contentOrNull
+                    log.info("tool_call: id=$toolCallId kind=$kind status=$status hasContent=${obj.containsKey("content")} hasRawOutput=${obj.containsKey("rawOutput")}")
+                    captureToolCallContent(toolCallId, obj)
+                    formatToolActivity(obj)?.let { activity ->
+                        notifyActivityListeners(activity.text)
+                        notifyToolCallListeners(toolCallId, activity)
                     }
                 }
-                "mode_change" -> {
-                    val newMode = obj["mode"]?.jsonPrimitive?.contentOrNull
+                "tool_call_update" -> {
+                    val toolCallId = obj["toolCallId"]?.jsonPrimitive?.contentOrNull ?: return
+                    val status = obj["status"]?.jsonPrimitive?.contentOrNull
+                    log.info("tool_call_update: id=$toolCallId status=$status hasContent=${obj.containsKey("content")} hasRawOutput=${obj.containsKey("rawOutput")}")
+                    captureToolCallContent(toolCallId, obj)
+                    formatToolActivity(obj)?.let { activity ->
+                        notifyActivityListeners(activity.text)
+                        notifyToolCallListeners(toolCallId, activity)
+                    }
+                }
+                "tool_result" -> {
+                    notifyActivityListeners("Processing results...")
+                }
+                "plan" -> {
+                    log.info("plan update: entries key exists=${obj.containsKey("entries")}, raw=${obj["entries"]?.toString()?.take(200)}")
+                    val entries = obj["entries"]?.let {
+                        try { json.decodeFromJsonElement<List<PlanEntry>>(it) } catch (e: Exception) {
+                            log.warn("Failed to decode plan entries", e)
+                            null
+                        }
+                    }
+                    if (entries != null) {
+                        log.info("Decoded ${entries.size} plan entries")
+                        _planEntries.clear()
+                        _planEntries.addAll(entries)
+                        notifyPlanListeners(entries)
+                    }
+                }
+                "current_mode_update" -> {
+                    val newMode = obj["modeId"]?.jsonPrimitive?.contentOrNull
                     newMode?.let { mode = SessionMode.fromValue(it) }
                 }
                 "config_options_update" -> {
@@ -116,6 +181,9 @@ class AcpSession(
                     if (options != null) {
                         updateConfigOptions(options)
                     }
+                }
+                else -> {
+                    log.info("Unhandled session update type: $updateType, keys: ${obj.keys}")
                 }
             }
 
@@ -127,6 +195,50 @@ class AcpSession(
             } catch (_: Exception) { }
         } catch (e: Exception) {
             log.warn("Failed to handle session update", e)
+        }
+    }
+
+    fun handleCreatePlan(params: JsonElement) {
+        planCreated = true
+        try {
+            val obj = params.jsonObject
+            log.info("handleCreatePlan keys: ${obj.keys}, full: ${params.toString().take(1000)}")
+
+            // Try all possible fields where plan content might live
+            val content = AcpContentExtractor.extractTextFromContent(obj["content"])
+                ?: obj["text"]?.jsonPrimitive?.contentOrNull
+                ?: obj["description"]?.jsonPrimitive?.contentOrNull
+                ?: obj["plan"]?.let { AcpContentExtractor.extractTextFromContent(it) }
+                ?: obj["markdown"]?.jsonPrimitive?.contentOrNull
+            if (content != null) {
+                log.info("Captured plan content (${content.length} chars)")
+                _planContent.append(content)
+            }
+
+            // Try to extract plan entries
+            val entriesKey = obj["entries"] ?: obj["steps"] ?: obj["items"]
+            if (entriesKey != null) {
+                try {
+                    val entries = json.decodeFromJsonElement<List<PlanEntry>>(entriesKey)
+                    log.info("Captured ${entries.size} plan entries from create_plan")
+                    _planEntries.clear()
+                    _planEntries.addAll(entries)
+                    notifyPlanListeners(entries)
+                } catch (e: Exception) {
+                    log.info("Could not decode plan entries: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("Error handling create_plan", e)
+        }
+    }
+
+    private fun captureToolCallContent(toolCallId: String, obj: JsonObject) {
+        val text = AcpContentExtractor.extractTextFromContent(obj["content"])
+            ?: obj["rawOutput"]?.jsonPrimitive?.contentOrNull
+        if (text != null) {
+            log.info("Captured tool call content for $toolCallId (${text.length} chars)")
+            _toolCallContents.getOrPut(toolCallId) { StringBuilder() }.append(text)
         }
     }
 
@@ -142,6 +254,66 @@ class AcpSession(
             notifyMessageListeners(finalMessage)
         }
         _currentAgentText.clear()
+    }
+
+    private fun formatToolActivity(obj: JsonObject): ToolActivity? {
+        val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
+        val title = obj["title"]?.jsonPrimitive?.contentOrNull?.replace("`", "")?.trim()
+        val rawInput = try { obj["rawInput"]?.jsonObject } catch (_: Exception) { null }
+
+        val detail: String? = when (kind) {
+            "edit" -> {
+                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
+                    ?.substringAfterLast('/')?.substringAfterLast('\\')
+                    ?: title?.removePrefix("Edit")?.trim()?.takeIf { it.isNotBlank() }
+            }
+            "execute" -> {
+                rawInput?.get("command")?.jsonPrimitive?.contentOrNull
+                    ?: title?.takeIf { it != "Terminal" }
+            }
+            "read" -> {
+                title?.removePrefix("Read")?.trim()?.takeIf { it.isNotBlank() }
+            }
+            else -> title
+        }
+
+        val truncatedDetail = detail
+            ?.let { if (it.length > 50) it.take(47) + "..." else it }
+
+        val verb = when (kind) {
+            "edit" -> "Editing"
+            "execute" -> "Executing"
+            "read" -> "Reading"
+            "write" -> "Writing"
+            "search" -> "Searching"
+            "delete" -> "Deleting"
+            else -> null
+        }
+
+        val text = when {
+            verb != null && truncatedDetail != null -> "$verb $truncatedDetail..."
+            verb != null -> "$verb..."
+            title != null -> "$title..."
+            else -> return null
+        }
+
+        val path: String? = when (kind) {
+            "edit", "write", "read", "delete" -> {
+                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
+                    ?: rawInput?.get("filePath")?.jsonPrimitive?.contentOrNull
+            }
+            "move" -> {
+                rawInput?.get("toPath")?.jsonPrimitive?.contentOrNull
+                    ?: rawInput?.get("newPath")?.jsonPrimitive?.contentOrNull
+                    ?: rawInput?.get("path")?.jsonPrimitive?.contentOrNull
+            }
+            else -> {
+                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
+                    ?: rawInput?.get("filePath")?.jsonPrimitive?.contentOrNull
+            }
+        }
+
+        return ToolActivity(text = text, path = path)
     }
 
     private fun extractUpdateText(updateObj: JsonObject): String? {
@@ -162,6 +334,10 @@ class AcpSession(
 
         isProcessing = true
         _currentAgentText.clear()
+        _toolCallContents.clear()
+        _planContent.setLength(0)
+        _thoughtContent.setLength(0)
+        planCreated = false
         return try {
             client.sessionPrompt(sessionId, content)
         } finally {
@@ -216,6 +392,36 @@ class AcpSession(
                 listener(message)
             } catch (e: Exception) {
                 log.warn("Message listener error", e)
+            }
+        }
+    }
+
+    private fun notifyToolCallListeners(id: String, activity: ToolActivity) {
+        for (listener in toolCallListeners) {
+            try {
+                listener(id, activity)
+            } catch (e: Exception) {
+                log.warn("Tool call listener error", e)
+            }
+        }
+    }
+
+    private fun notifyPlanListeners(entries: List<PlanEntry>) {
+        for (listener in planListeners) {
+            try {
+                listener(entries)
+            } catch (e: Exception) {
+                log.warn("Plan listener error", e)
+            }
+        }
+    }
+
+    private fun notifyActivityListeners(activity: String) {
+        for (listener in activityListeners) {
+            try {
+                listener(activity)
+            } catch (e: Exception) {
+                log.warn("Activity listener error", e)
             }
         }
     }

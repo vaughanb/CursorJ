@@ -67,14 +67,7 @@ class FileSystemHandler(private val project: Project) {
         ioFile.parentFile?.mkdirs()
         ioFile.writeText(request.content, Charsets.UTF_8)
 
-        VfsUtil.markDirtyAndRefresh(false, true, true, ioFile, ioFile.parentFile)
-
-        ApplicationManager.getApplication().invokeLater {
-            LocalFileSystem.getInstance().refreshAndFindFileByPath(toVfsPath(resolvedPath))
-            val projectDir = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
-            projectDir?.refresh(true, true)
-        }
-
+        refreshAfterFileChange(ioFile)
         return JsonObject(emptyMap())
     }
 
@@ -155,9 +148,30 @@ class FileSystemHandler(private val project: Project) {
         val dir = File(resolvedPath)
         dir.mkdirs()
 
-        VfsUtil.markDirtyAndRefresh(false, true, true, dir)
-
+        refreshAfterFileChange(dir)
         return JsonObject(emptyMap())
+    }
+
+    private fun refreshAfterFileChange(ioFile: File) {
+        val filesToRefresh = listOfNotNull(ioFile, ioFile.parentFile)
+        LocalFileSystem.getInstance().refreshIoFiles(filesToRefresh, false, true, null)
+
+        ApplicationManager.getApplication().invokeLater {
+            LocalFileSystem.getInstance().refreshAndFindFileByPath(toVfsPath(ioFile.absolutePath))
+            project.basePath?.let { basePath ->
+                LocalFileSystem.getInstance().findFileByPath(basePath.replace('\\', '/'))
+                    ?.refresh(false, true)
+            }
+        }
+    }
+
+    fun refreshProjectTree() {
+        ApplicationManager.getApplication().invokeLater {
+            project.basePath?.let { basePath ->
+                LocalFileSystem.getInstance().findFileByPath(basePath.replace('\\', '/'))
+                    ?.refresh(false, true)
+            }
+        }
     }
 
     private fun searchFilesRecursive(dir: File, pattern: Regex, results: MutableList<String>, maxResults: Int) {

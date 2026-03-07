@@ -14,6 +14,7 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
+import javax.swing.DefaultListCellRenderer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.text.View
@@ -81,15 +82,34 @@ class InputPanel {
         isVisible = false
     }
 
+    private val planLabel = CursorJBundle.message("chat.mode.plan")
+    private val askLabel = CursorJBundle.message("chat.mode.ask")
+    private val defaultFg = UIManager.getColor("ComboBox.foreground") ?: JBColor.foreground()
+
+    private val planColor = JBColor(Color(0xD4A017), Color(0xD4A017))
+    private val askColor = JBColor(Color(0x4CAF50), Color(0x6BC46D))
+
     private val modeCombo = JComboBox(arrayOf(
         CursorJBundle.message("chat.mode.agent"),
-        CursorJBundle.message("chat.mode.plan"),
-        CursorJBundle.message("chat.mode.ask"),
+        planLabel,
+        askLabel,
     )).apply {
         minimumSize = Dimension(90, 26)
         preferredSize = Dimension(90, 26)
         prototypeDisplayValue = CursorJBundle.message("chat.mode.agent") + "  "
         font = font.deriveFont(font.size2D - 1)
+        renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?, value: Any?, index: Int,
+                isSelected: Boolean, cellHasFocus: Boolean
+            ): Component {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                if (!isSelected || index == -1) {
+                    foreground = modeColorFor(value)
+                }
+                return this
+            }
+        }
     }
 
     private val modelCombo = JComboBox<String>().apply {
@@ -171,6 +191,8 @@ class InputPanel {
         cancelButton.addActionListener { onCancel?.invoke() }
 
         modeCombo.addActionListener {
+            updateModeColor()
+            if (updatingMode) return@addActionListener
             val mode = when (modeCombo.selectedIndex) {
                 1 -> SessionMode.PLAN
                 2 -> SessionMode.ASK
@@ -187,6 +209,30 @@ class InputPanel {
                 onModelChanged?.invoke(modelConfigId, modelValues[idx])
             }
         }
+    }
+
+    private var updatingMode = false
+
+    fun setMode(mode: SessionMode) {
+        updatingMode = true
+        modeCombo.selectedIndex = when (mode) {
+            SessionMode.PLAN -> 1
+            SessionMode.ASK -> 2
+            SessionMode.AGENT -> 0
+        }
+        updateModeColor()
+        updatingMode = false
+    }
+
+    private fun modeColorFor(value: Any?): Color = when (value) {
+        planLabel -> planColor
+        askLabel -> askColor
+        else -> defaultFg
+    }
+
+    private fun updateModeColor() {
+        modeCombo.foreground = modeColorFor(modeCombo.selectedItem)
+        modeCombo.repaint()
     }
 
     private var configOptions: List<ConfigOption> = emptyList()

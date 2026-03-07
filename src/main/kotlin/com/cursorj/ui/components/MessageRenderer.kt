@@ -6,6 +6,7 @@ import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.Dimension
 import javax.swing.*
 
@@ -21,6 +22,7 @@ class MessageRenderer(private var message: ChatMessage) {
         layout = BorderLayout()
         border = JBUI.Borders.empty(6, 0)
         isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
     }
 
     private val contentArea = JTextPane().apply {

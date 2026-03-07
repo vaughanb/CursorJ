@@ -108,9 +108,9 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         sendNotification("session/cancel", json.encodeToJsonElement(params))
     }
 
-    suspend fun sessionSetMode(sessionId: String, mode: String) {
-        val params = SessionSetModeParams(sessionId = sessionId, mode = mode)
-        sendRequest("session/setMode", json.encodeToJsonElement(params))
+    suspend fun sessionSetMode(sessionId: String, modeId: String) {
+        val params = SessionSetModeParams(sessionId = sessionId, modeId = modeId)
+        sendRequest("session/set_mode", json.encodeToJsonElement(params))
     }
 
     suspend fun sessionSetConfigOption(sessionId: String, configId: String, value: String): SetConfigOptionResult {

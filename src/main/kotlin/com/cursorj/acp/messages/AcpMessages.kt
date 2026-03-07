@@ -231,7 +231,7 @@ data class SessionCancelParams(
 @Serializable
 data class SessionSetModeParams(
     val sessionId: String,
-    val mode: String,
+    val modeId: String,
 )
 
 @Serializable
@@ -249,9 +249,9 @@ data class ToolCallUpdate(
 )
 
 @Serializable
-data class PlanStep(
-    val id: String,
+data class PlanEntry(
     val content: String,
+    val priority: String = "medium",
     val status: String = "pending",
 )
 
@@ -267,9 +267,9 @@ data class SessionUpdate(
     val sessionUpdate: String,
     val content: SessionUpdateContent? = null,
     val toolCall: ToolCallUpdate? = null,
-    val plan: List<PlanStep>? = null,
+    val entries: List<PlanEntry>? = null,
     val todos: List<TodoItem>? = null,
-    val mode: String? = null,
+    val modeId: String? = null,
 )
 
 @Serializable
