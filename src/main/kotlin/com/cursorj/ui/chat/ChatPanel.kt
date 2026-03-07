@@ -36,6 +36,8 @@ class ChatPanel(private val service: CursorJService) {
     private val attachedFiles = mutableListOf<ResourceLinkContent>()
     private var pendingToolCall: Pair<String, ToolActivity>? = null
     private var desiredMode: SessionMode = SessionMode.AGENT
+    private var lastProjectTreeRefreshAt = 0L
+    private val minRefreshIntervalMs = 750L
 
     private val agentProgressColor = JBColor(Color(0x6B9BD2), Color(0x6B9BD2))
     private val planProgressColor = JBColor(Color(0xD4A017), Color(0xD4A017))
@@ -124,6 +126,9 @@ class ChatPanel(private val service: CursorJService) {
                     )
                 }
                 pendingToolCall = id to activity
+                if (activity.path != null) {
+                    refreshProjectTreeThrottled()
+                }
             }
         }
 
@@ -157,7 +162,7 @@ class ChatPanel(private val service: CursorJService) {
                 log.warn("Error sending prompt", e)
                 showError(e.message ?: "Failed to send prompt")
             } finally {
-                refreshProjectTree()
+                refreshProjectTreeThrottled(force = true)
                 SwingUtilities.invokeLater {
                     commitPendingToolCall()
                     messageListPanel.hideProgress()
@@ -316,6 +321,13 @@ class ChatPanel(private val service: CursorJService) {
                     ?.refresh(false, true)
             }
         }
+    }
+
+    private fun refreshProjectTreeThrottled(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastProjectTreeRefreshAt) < minRefreshIntervalMs) return
+        lastProjectTreeRefreshAt = now
+        refreshProjectTree()
     }
 
     private fun openFileInEditor(path: String) {

@@ -86,7 +86,7 @@ class MessageListPanel {
     var onToolCallFileClick: ((String) -> Unit)? = null
 
     private data class ToolCallLine(
-        val label: JLabel,
+        val panel: JPanel,
         var path: String?,
     )
 
@@ -96,43 +96,73 @@ class MessageListPanel {
         val existing = toolCallLabels[id]
         if (existing != null) {
             if (path != null) existing.path = path
-            updateToolCallLabel(existing.label, text, existing.path)
+            updateToolCallLine(existing, text)
         } else {
             val line = ToolCallLine(
-                label = object : JLabel() {
+                panel = object : JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)) {
                     override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
                 }.apply {
                     alignmentX = Component.LEFT_ALIGNMENT
                     border = JBUI.Borders.empty(1, 12)
                     name = "tool-call-line"
-                    font = font.deriveFont(font.size2D - 1)
+                    isOpaque = false
                 },
                 path = path,
             )
-            line.label.addMouseListener(object : java.awt.event.MouseAdapter() {
-                override fun mouseClicked(e: java.awt.event.MouseEvent) {
-                    line.path?.let { onToolCallFileClick?.invoke(it) }
-                }
-            })
-            updateToolCallLabel(line.label, text, line.path)
+            updateToolCallLine(line, text)
             toolCallLabels[id] = line
-            innerPanel.add(line.label)
+            innerPanel.add(line.panel)
         }
         innerPanel.revalidate()
         innerPanel.repaint()
         scrollToBottom()
     }
 
-    private fun updateToolCallLabel(label: JLabel, text: String, path: String?) {
-        val escapedText = text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        val color = if (path != null) "#6B9BD2" else "#7A8A99"
-        val decoratedText = if (path != null) "<u>▸ $escapedText</u>" else "▸ $escapedText"
-        label.text = "<html><span style='color: $color;'>$decoratedText</span></html>"
-        label.cursor = if (path != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor()
-        label.toolTipText = path
+    private fun updateToolCallLine(line: ToolCallLine, text: String) {
+        val path = line.path
+        val panel = line.panel
+        panel.removeAll()
+
+        val textColor = JBColor(Color(0x7A8A99), Color(0x7A8A99))
+        val linkColor = JBColor(Color(0x6B9BD2), Color(0x6B9BD2))
+        val baseFont = panel.font.deriveFont(panel.font.size2D - 1)
+
+        fun textLabel(value: String): JLabel = JLabel(value).apply {
+            foreground = textColor
+            font = baseFont
+        }
+
+        val filename = path
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.takeIf { it.isNotBlank() }
+
+        if (path != null && filename != null) {
+            val idx = text.indexOf(filename)
+            val prefix = if (idx >= 0) "▸ ${text.substring(0, idx)}" else "▸ $text "
+            val suffix = if (idx >= 0) text.substring(idx + filename.length) else ""
+
+            if (prefix.isNotEmpty()) panel.add(textLabel(prefix))
+
+            val fileLabel = JLabel(filename).apply {
+                foreground = linkColor
+                font = baseFont
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                this.text = "<html><u>${filename.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")}</u></html>"
+                addMouseListener(object : java.awt.event.MouseAdapter() {
+                    override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                        onToolCallFileClick?.invoke(path)
+                    }
+                })
+            }
+            panel.add(fileLabel)
+
+            if (suffix.isNotEmpty()) panel.add(textLabel(suffix))
+        } else {
+            panel.add(textLabel("▸ $text"))
+        }
+
+        panel.toolTipText = path
     }
 
     private var buildButtonPanel: JComponent? = null
