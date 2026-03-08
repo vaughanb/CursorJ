@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TurnRollbackManagerTest {
@@ -70,12 +71,95 @@ class TurnRollbackManagerTest {
         assertTrue(manager.canRollback("session-d", isProcessing = false))
     }
 
+    @Test
+    fun `begin turn failure does not create checkpoint`() {
+        val gateway = FakeLocalHistoryGateway(failPut = true)
+        val manager = TurnRollbackManager(gateway)
+
+        val turnId = manager.beginTurn("session-e", "Should fail")
+        assertNull(turnId)
+        assertFalse(manager.canRollback("session-e", isProcessing = false))
+        assertEquals(RollbackStatus.NO_CHECKPOINT, manager.rollbackLastTurn("session-e", isProcessing = false).status)
+    }
+
+    @Test
+    fun `multiple completed turns rollback in LIFO order`() {
+        val gateway = FakeLocalHistoryGateway()
+        val manager = TurnRollbackManager(gateway)
+
+        val turn1 = manager.beginTurn("session-f", "First")
+        manager.completeTurn("session-f", turn1, interrupted = false)
+        val turn2 = manager.beginTurn("session-f", "Second")
+        manager.completeTurn("session-f", turn2, interrupted = false)
+
+        assertEquals(RollbackStatus.SUCCESS, manager.rollbackLastTurn("session-f", isProcessing = false).status)
+        assertEquals(RollbackStatus.SUCCESS, manager.rollbackLastTurn("session-f", isProcessing = false).status)
+        assertEquals(RollbackStatus.NO_CHECKPOINT, manager.rollbackLastTurn("session-f", isProcessing = false).status)
+        assertEquals(
+            listOf(gateway.createdLabels[1], gateway.createdLabels[0]),
+            gateway.revertedLabels,
+        )
+    }
+
+    @Test
+    fun `rollback checkpoints are isolated per session`() {
+        val gateway = FakeLocalHistoryGateway()
+        val manager = TurnRollbackManager(gateway)
+
+        val turnA = manager.beginTurn("session-g-a", "Session A")
+        manager.completeTurn("session-g-a", turnA, interrupted = false)
+        val turnB = manager.beginTurn("session-g-b", "Session B")
+        manager.completeTurn("session-g-b", turnB, interrupted = false)
+
+        assertEquals(RollbackStatus.SUCCESS, manager.rollbackLastTurn("session-g-a", isProcessing = false).status)
+        assertTrue(manager.canRollback("session-g-b", isProcessing = false))
+        assertEquals(RollbackStatus.SUCCESS, manager.rollbackLastTurn("session-g-b", isProcessing = false).status)
+    }
+
+    @Test
+    fun `max entries keeps newest checkpoints only`() {
+        val gateway = FakeLocalHistoryGateway()
+        val manager = TurnRollbackManager(gateway, maxEntriesPerSession = 2)
+
+        val turn1 = manager.beginTurn("session-h", "One")
+        manager.completeTurn("session-h", turn1, interrupted = false)
+        val turn2 = manager.beginTurn("session-h", "Two")
+        manager.completeTurn("session-h", turn2, interrupted = false)
+        val turn3 = manager.beginTurn("session-h", "Three")
+        manager.completeTurn("session-h", turn3, interrupted = false)
+
+        assertEquals(RollbackStatus.SUCCESS, manager.rollbackLastTurn("session-h", isProcessing = false).status)
+        assertEquals(RollbackStatus.SUCCESS, manager.rollbackLastTurn("session-h", isProcessing = false).status)
+        assertEquals(RollbackStatus.NO_CHECKPOINT, manager.rollbackLastTurn("session-h", isProcessing = false).status)
+        assertEquals(
+            listOf(gateway.createdLabels[2], gateway.createdLabels[1]),
+            gateway.revertedLabels,
+        )
+    }
+
+    @Test
+    fun `mark active turn interrupted blocks rollback`() {
+        val gateway = FakeLocalHistoryGateway()
+        val manager = TurnRollbackManager(gateway)
+
+        val turnId = manager.beginTurn("session-i", "Interrupted turn")
+        assertNotNull(turnId)
+        manager.markActiveTurnInterrupted("session-i")
+
+        assertEquals(RollbackStatus.INTERRUPTED, manager.rollbackLastTurn("session-i", isProcessing = false).status)
+        assertFalse(manager.canRollback("session-i", isProcessing = false))
+    }
+
     private class FakeLocalHistoryGateway(
+        private val failPut: Boolean = false,
         private val failRevert: Boolean = false,
     ) : LocalHistoryGateway {
+        val createdLabels = mutableListOf<String>()
         val revertedLabels = mutableListOf<String>()
 
         override fun putSystemLabel(name: String): Label {
+            if (failPut) throw IllegalStateException("put failed")
+            createdLabels.add(name)
             return FakeLabel(name)
         }
 
