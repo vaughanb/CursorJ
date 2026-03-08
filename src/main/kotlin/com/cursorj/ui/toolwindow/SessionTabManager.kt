@@ -3,6 +3,7 @@ package com.cursorj.ui.toolwindow
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
+import com.cursorj.acp.messages.ContentBlock
 import com.cursorj.ui.chat.ChatPanel
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.icons.AllIcons
@@ -198,6 +199,17 @@ class SessionTabManager(
     fun getActiveSession(): AcpSession? = getActiveTab()?.session
 
     fun getActiveConnection(): AgentConnection? = getActiveTab()?.connection
+
+    fun addSelectionToActiveChat(label: String, blocks: List<ContentBlock>): Boolean {
+        if (blocks.isEmpty()) return false
+        var entry = getActiveTab()
+        if (entry == null) {
+            addNewTab()
+            entry = getActiveTab()
+        }
+        entry?.chatPanel?.queueSelectionContext(label, blocks) ?: return false
+        return true
+    }
 
     private fun ensureConnectionAndSend(entry: TabEntry, prompt: String) {
         scope.launch {

@@ -142,16 +142,26 @@ class InputPanel {
     private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
     }
+    private val selectionChipPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+        isOpaque = false
+    }
+    private val chipsStack = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+        add(fileChipsPanel)
+        add(selectionChipPanel)
+    }
     private val fileChipsWrapper = JPanel(BorderLayout()).apply {
         isOpaque = false
         border = JBUI.Borders.empty(8, 12, 0, 12)
         isVisible = false
-        add(fileChipsPanel, BorderLayout.CENTER)
+        add(chipsStack, BorderLayout.CENTER)
     }
 
     var onSend: ((String) -> Unit)? = null
     var onCancel: (() -> Unit)? = null
     var onRollback: (() -> Unit)? = null
+    var onSelectionChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
     var onModelChanged: ((configId: String, value: String) -> Unit)? = null
 
@@ -315,27 +325,23 @@ class InputPanel {
     }
 
     fun addFileChip(name: String) {
-        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
-            border = JBUI.Borders.compound(
-                JBUI.Borders.customLine(JBColor.border(), 1),
-                JBUI.Borders.empty(1, 4),
-            )
-            val label = JLabel(name).apply {
-                font = font.deriveFont(font.size2D - 1)
-            }
-            val removeBtn = JLabel(AllIcons.Actions.Close).apply {
-                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-            }
-            removeBtn.addMouseListener(object : java.awt.event.MouseAdapter() {
-                override fun mouseClicked(e: java.awt.event.MouseEvent) {
-                    fileChipsPanel.remove(this@apply)
-                    updateFileChipsVisibility()
-                }
-            })
-            add(label)
-            add(removeBtn)
+        val chip = createChip(name, removable = true) {
+            fileChipsPanel.remove(it)
+            updateFileChipsVisibility()
         }
         fileChipsPanel.add(chip)
+        updateFileChipsVisibility()
+    }
+
+    fun addSelectionChip(id: String, label: String) {
+        val chip = createChip(label, removable = true) {
+            val chipId = it.name ?: return@createChip
+            selectionChipPanel.remove(it)
+            updateFileChipsVisibility()
+            onSelectionChipRemoved?.invoke(chipId)
+        }
+        chip.name = id
+        selectionChipPanel.add(chip)
         updateFileChipsVisibility()
     }
 
@@ -344,10 +350,49 @@ class InputPanel {
         updateFileChipsVisibility()
     }
 
+    fun clearSelectionChip() {
+        selectionChipPanel.removeAll()
+        updateFileChipsVisibility()
+    }
+
+    private fun createChip(
+        text: String,
+        removable: Boolean,
+        onRemove: ((JPanel) -> Unit)?,
+    ): JPanel {
+        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(JBColor.border(), 1),
+                JBUI.Borders.empty(1, 4),
+            )
+            isOpaque = false
+        }
+        val label = JLabel(text).apply {
+            font = font.deriveFont(font.size2D - 1)
+        }
+        chip.add(label)
+
+        if (removable) {
+            val removeBtn = JLabel(AllIcons.Actions.Close).apply {
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            }
+            removeBtn.addMouseListener(object : java.awt.event.MouseAdapter() {
+                override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                    onRemove?.invoke(chip)
+                }
+            })
+            chip.add(removeBtn)
+        }
+
+        return chip
+    }
+
     private fun updateFileChipsVisibility() {
-        fileChipsWrapper.isVisible = fileChipsPanel.componentCount > 0
+        fileChipsWrapper.isVisible = fileChipsPanel.componentCount > 0 || selectionChipPanel.componentCount > 0
         fileChipsPanel.revalidate()
         fileChipsPanel.repaint()
+        selectionChipPanel.revalidate()
+        selectionChipPanel.repaint()
         fileChipsWrapper.revalidate()
         fileChipsWrapper.repaint()
         rootPanel.revalidate()

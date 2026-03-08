@@ -37,6 +37,7 @@ class ChatPanel(private val service: CursorJService) {
     private var connection: AgentConnection? = null
     private var session: AcpSession? = null
     private val attachedFiles = mutableListOf<ResourceLinkContent>()
+    private val pendingSelectionQueue = PendingSelectionQueue()
     private var pendingToolCall: Pair<String, ToolActivity>? = null
     private var desiredMode: SessionMode = SessionMode.AGENT
     private var lastProjectTreeRefreshAt = 0L
@@ -70,6 +71,7 @@ class ChatPanel(private val service: CursorJService) {
         inputPanel.onSend = { text -> handleSend(text) }
         inputPanel.onCancel = { handleCancel() }
         inputPanel.onRollback = { handleRollback() }
+        inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onModelChanged = { configId, value -> handleConfigOptionChange(configId, value) }
 
@@ -181,6 +183,7 @@ class ChatPanel(private val service: CursorJService) {
                     refreshRollbackAvailability()
                     attachedFiles.clear()
                     inputPanel.clearFileChips()
+                    clearQueuedSelectionContext()
                     if (desiredMode == SessionMode.PLAN && session?.planCreated == true) {
                         messageListPanel.showBuildButton(
                             onBuild = { handleBuild() },
@@ -217,10 +220,22 @@ class ChatPanel(private val service: CursorJService) {
         scope.launch {
             session?.cancel()
             SwingUtilities.invokeLater {
+                clearQueuedSelectionContext()
                 inputPanel.setProcessing(false)
                 refreshRollbackAvailability()
             }
         }
+    }
+
+    fun queueSelectionContext(label: String, blocks: List<ContentBlock>) {
+        val selection = pendingSelectionQueue.add(label, blocks) ?: return
+        inputPanel.addSelectionChip(selection.id, selection.label)
+        showStatus("${selection.label} added to CursorJ chat context.")
+    }
+
+    private fun handleSelectionChipRemoved(selectionId: String) {
+        val removed = pendingSelectionQueue.remove(selectionId) ?: return
+        showStatus("${removed.label} removed from CursorJ chat context.")
     }
 
     private fun handleRollback() {
@@ -410,7 +425,13 @@ class ChatPanel(private val service: CursorJService) {
         for (file in attachedFiles) {
             blocks.add(file)
         }
+        blocks.addAll(pendingSelectionQueue.flattenBlocks())
 
         return blocks
+    }
+
+    private fun clearQueuedSelectionContext() {
+        pendingSelectionQueue.clear()
+        inputPanel.clearSelectionChip()
     }
 }

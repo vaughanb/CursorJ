@@ -12,6 +12,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import kotlinx.coroutines.*
+import java.util.concurrent.ConcurrentHashMap
 
 class CursorToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -25,6 +26,12 @@ class CursorJService(
     val project: Project,
     private val toolWindow: ToolWindow,
 ) : Disposable {
+    companion object {
+        private val instances = ConcurrentHashMap<Project, CursorJService>()
+
+        fun getInstance(project: Project): CursorJService? = instances[project]
+    }
+
     private val log = Logger.getInstance(CursorJService::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -42,6 +49,7 @@ class CursorJService(
     private val modelReadyListeners = mutableListOf<() -> Unit>()
 
     fun initialize() {
+        instances[project] = this
         tabManager = SessionTabManager(this, toolWindow)
         tabManager.addInitialTab()
         fetchModelsAsync()
@@ -79,6 +87,7 @@ class CursorJService(
     }
 
     override fun dispose() {
+        instances.remove(project, this)
         scope.cancel()
     }
 }

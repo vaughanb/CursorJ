@@ -29,9 +29,11 @@
     <actions>
         <action id="CursorJ.SendSelection"
                 class="com.cursorj.actions.SendToCursorAction"
-                text="Send to CursorJ"
-                description="Send the current selection to CursorJ">
+                text="Add to CursorJ Chat"
+                description="Add selected text to CursorJ chat context"
+                icon="/icons/cursorj.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="Floating.CodeToolbar" anchor="first"/>
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift J"/>
         </action>
 
