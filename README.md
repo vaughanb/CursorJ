@@ -11,6 +11,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Native IntelliJ UI**: Consistent look and feel with syntax-highlighted code blocks and diff rendering
 - **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs
 - **Mode Switching**: Switch between Agent, Plan, and Ask modes
+- **Rollback Last Turn**: Revert files to the state before the most recent agent turn using Local History
 
 ## Prerequisites
 
@@ -58,7 +59,7 @@ Or configure an API key in **Settings > Tools > CursorJ**.
 CursorJ communicates with Cursor's agent via the Agent Client Protocol (ACP). It spawns `agent acp` as a subprocess and exchanges JSON-RPC 2.0 messages over stdio.
 
 The plugin declares client capabilities for:
-- **File system**: Read/write files through IntelliJ's Virtual File System (with undo support)
+- **File system**: Read/write files through CursorJ filesystem handlers, with Local History labels for per-turn rollback
 - **Terminal**: Execute shell commands
 
 ## Building

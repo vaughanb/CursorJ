@@ -29,6 +29,12 @@ class InputPanel {
         isOpaque = false
     }
 
+    private val topActionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+        isOpaque = false
+        border = JBUI.Borders.empty(0, 0, 6, 0)
+        isVisible = false
+    }
+
     private val container = object : JPanel(BorderLayout()) {
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
@@ -119,8 +125,19 @@ class InputPanel {
         isVisible = false
     }
 
+    private val rollbackButton = JButton(CursorJBundle.message("chat.rollback.action")).apply {
+        minimumSize = Dimension(100, 26)
+        preferredSize = Dimension(100, 26)
+        isFocusable = false
+        isEnabled = false
+        isVisible = false
+        toolTipText = CursorJBundle.message("chat.rollback.action")
+    }
+
     private var modelValues: List<String> = emptyList()
     private var updatingModelCombo = false
+    private var rollbackAvailable = false
+    private var isProcessing = false
 
     private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
@@ -134,6 +151,7 @@ class InputPanel {
 
     var onSend: ((String) -> Unit)? = null
     var onCancel: (() -> Unit)? = null
+    var onRollback: (() -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
     var onModelChanged: ((configId: String, value: String) -> Unit)? = null
 
@@ -178,6 +196,8 @@ class InputPanel {
         container.add(editorArea, BorderLayout.CENTER)
         container.add(bottomBar, BorderLayout.SOUTH)
 
+        topActionsPanel.add(rollbackButton)
+        rootPanel.add(topActionsPanel, BorderLayout.NORTH)
         rootPanel.add(container, BorderLayout.CENTER)
 
         textArea.addKeyListener(object : KeyAdapter() {
@@ -201,6 +221,7 @@ class InputPanel {
 
         sendButton.addActionListener { doSend() }
         cancelButton.addActionListener { onCancel?.invoke() }
+        rollbackButton.addActionListener { onRollback?.invoke() }
 
         modeCombo.addActionListener {
             updateModeColor()
@@ -273,13 +294,24 @@ class InputPanel {
     }
 
     fun setProcessing(processing: Boolean) {
+        isProcessing = processing
         sendButton.isVisible = !processing
         cancelButton.isVisible = processing
+        rollbackButton.isEnabled = rollbackAvailable && !processing
         textArea.isEditable = !processing
         if (!processing) {
             textArea.text = ""
             textArea.requestFocusInWindow()
         }
+    }
+
+    fun setRollbackEnabled(enabled: Boolean) {
+        rollbackAvailable = enabled
+        rollbackButton.isVisible = enabled
+        topActionsPanel.isVisible = enabled
+        rollbackButton.isEnabled = enabled && !isProcessing
+        rootPanel.revalidate()
+        rootPanel.repaint()
     }
 
     fun addFileChip(name: String) {

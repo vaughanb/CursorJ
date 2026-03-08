@@ -5,6 +5,7 @@ import com.cursorj.acp.messages.ConfigOptionValue
 import com.cursorj.handlers.FileSystemHandler
 import com.cursorj.handlers.PermissionHandler
 import com.cursorj.handlers.TerminalHandler
+import com.cursorj.rollback.TurnRollbackManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -32,6 +33,7 @@ class AgentConnection(
 
     val processManager = AcpProcessManager(this)
     val client = AcpClient(this)
+    private val rollbackManager = TurnRollbackManager.forProject(project)
     private val fileSystemHandler = FileSystemHandler(project)
     private val terminalHandler = TerminalHandler(project)
     private val permissionHandler = PermissionHandler()
@@ -129,7 +131,7 @@ class AgentConnection(
             result.configOptions + buildModelConfigOption()
         }
 
-        val newSession = AcpSession(result.sessionId, client, configOptions)
+        val newSession = AcpSession(result.sessionId, client, rollbackManager, configOptions)
         session = newSession
 
         return newSession
@@ -209,6 +211,7 @@ class AgentConnection(
 
     private fun handleDisconnect() {
         if (!isConnected) return
+        session?.markActiveTurnInterrupted()
         isConnected = false
         lastError = "Agent disconnected"
         log.warn("Agent connection lost, attempting reconnect...")

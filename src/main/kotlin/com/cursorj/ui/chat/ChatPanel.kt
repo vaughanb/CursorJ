@@ -1,16 +1,19 @@
 package com.cursorj.ui.chat
 
+import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.SessionMode
 import com.cursorj.acp.ToolActivity
 import com.cursorj.acp.messages.*
+import com.cursorj.rollback.RollbackStatus
 import com.cursorj.context.DragDropProvider
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.toolwindow.CursorJService
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
@@ -66,6 +69,7 @@ class ChatPanel(private val service: CursorJService) {
 
         inputPanel.onSend = { text -> handleSend(text) }
         inputPanel.onCancel = { handleCancel() }
+        inputPanel.onRollback = { handleRollback() }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onModelChanged = { configId, value -> handleConfigOptionChange(configId, value) }
 
@@ -107,6 +111,7 @@ class ChatPanel(private val service: CursorJService) {
                 if (!message.isStreaming && session.isProcessing) {
                     messageListPanel.showProgress(color = modeProgressColor())
                 }
+                refreshRollbackAvailability()
             }
         }
 
@@ -131,6 +136,7 @@ class ChatPanel(private val service: CursorJService) {
                 if (activity.path != null) {
                     refreshProjectTreeThrottled()
                 }
+                refreshRollbackAvailability()
             }
         }
 
@@ -140,6 +146,8 @@ class ChatPanel(private val service: CursorJService) {
         session.addConfigListener { options ->
             updateConfigOptions(options)
         }
+
+        refreshRollbackAvailability()
     }
 
     fun sendPrompt(text: String) {
@@ -156,6 +164,7 @@ class ChatPanel(private val service: CursorJService) {
                 val contentBlocks = buildContentBlocks(text)
                 SwingUtilities.invokeLater {
                     inputPanel.setProcessing(true)
+                    refreshRollbackAvailability()
                 }
                 s.sendPrompt(contentBlocks)
             } catch (e: CancellationException) {
@@ -169,6 +178,7 @@ class ChatPanel(private val service: CursorJService) {
                     commitPendingToolCall()
                     messageListPanel.hideProgress()
                     inputPanel.setProcessing(false)
+                    refreshRollbackAvailability()
                     attachedFiles.clear()
                     inputPanel.clearFileChips()
                     if (desiredMode == SessionMode.PLAN && session?.planCreated == true) {
@@ -208,7 +218,47 @@ class ChatPanel(private val service: CursorJService) {
             session?.cancel()
             SwingUtilities.invokeLater {
                 inputPanel.setProcessing(false)
+                refreshRollbackAvailability()
             }
+        }
+    }
+
+    private fun handleRollback() {
+        val s = session ?: return
+        val confirmed = Messages.showYesNoDialog(
+            service.project,
+            CursorJBundle.message("chat.rollback.confirm.message"),
+            CursorJBundle.message("chat.rollback.confirm.title"),
+            Messages.getWarningIcon(),
+        ) == Messages.YES
+        if (!confirmed) return
+
+        scope.launch {
+            val result = s.rollbackLastTurn()
+            when (result.status) {
+                RollbackStatus.SUCCESS -> {
+                    showStatus(CursorJBundle.message("chat.rollback.success"))
+                    refreshProjectTreeThrottled(force = true)
+                }
+                RollbackStatus.NO_CHECKPOINT -> {
+                    showStatus(CursorJBundle.message("chat.rollback.unavailable"))
+                }
+                RollbackStatus.PROCESSING, RollbackStatus.IN_PROGRESS -> {
+                    showStatus(CursorJBundle.message("chat.rollback.inProgress"))
+                }
+                RollbackStatus.INTERRUPTED -> {
+                    showError(CursorJBundle.message("chat.rollback.interrupted"))
+                }
+                RollbackStatus.FAILED -> {
+                    showError(
+                        CursorJBundle.message(
+                            "chat.rollback.failed",
+                            result.errorMessage ?: "Unknown error",
+                        ),
+                    )
+                }
+            }
+            SwingUtilities.invokeLater { refreshRollbackAvailability() }
         }
     }
 
@@ -330,6 +380,11 @@ class ChatPanel(private val service: CursorJService) {
         if (!force && (now - lastProjectTreeRefreshAt) < minRefreshIntervalMs) return
         lastProjectTreeRefreshAt = now
         refreshProjectTree()
+    }
+
+    private fun refreshRollbackAvailability() {
+        val canRollback = session?.canRollbackLastTurn() == true
+        inputPanel.setRollbackEnabled(canRollback)
     }
 
     private fun openFileInEditor(path: String) {

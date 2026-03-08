@@ -3,7 +3,13 @@ package com.cursorj.acp
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ConfigOptionValue
 import com.cursorj.acp.messages.PlanEntry
+import com.cursorj.rollback.LocalHistoryGateway
+import com.cursorj.rollback.TurnRollbackManager
+import com.intellij.history.ByteContent
+import com.intellij.history.Label
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
@@ -219,10 +225,23 @@ class AcpSessionTest {
         val disposable = Disposer.newDisposable("AcpSessionTestDisposable")
         try {
             val client = AcpClient(disposable)
-            block(AcpSession("session-1", client))
+            val rollbackManager = TurnRollbackManager(NoopLocalHistoryGateway())
+            block(AcpSession("session-1", client, rollbackManager))
         } finally {
             Disposer.dispose(disposable)
         }
+    }
+
+    private class NoopLocalHistoryGateway : LocalHistoryGateway {
+        override fun putSystemLabel(name: String): Label = NoopLabel
+
+        override fun revert(label: Label) {}
+    }
+
+    private object NoopLabel : Label {
+        override fun revert(project: Project, file: VirtualFile) {}
+
+        override fun getByteContent(path: String): ByteContent? = null
     }
 
     private fun update(

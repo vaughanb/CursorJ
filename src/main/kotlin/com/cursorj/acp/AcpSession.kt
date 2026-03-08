@@ -1,6 +1,8 @@
 package com.cursorj.acp
 
 import com.cursorj.acp.messages.*
+import com.cursorj.rollback.RollbackResult
+import com.cursorj.rollback.TurnRollbackManager
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.serialization.json.*
 
@@ -29,6 +31,7 @@ data class ToolActivity(
 class AcpSession(
     val sessionId: String,
     private val client: AcpClient,
+    private val rollbackManager: TurnRollbackManager,
     initialConfigOptions: List<ConfigOption> = emptyList(),
 ) {
     private val log = Logger.getInstance(AcpSession::class.java)
@@ -332,17 +335,26 @@ class AcpSession(
         _messages.add(userMessage)
         notifyMessageListeners(userMessage)
 
+        val turnId = rollbackManager.beginTurn(sessionId, textContent)
         isProcessing = true
         _currentAgentText.clear()
         _toolCallContents.clear()
         _planContent.setLength(0)
         _thoughtContent.setLength(0)
         planCreated = false
+
+        var interrupted = false
         return try {
             client.sessionPrompt(sessionId, content)
+        } catch (e: AcpException) {
+            if (e.code == -1) {
+                interrupted = true
+            }
+            throw e
         } finally {
             isProcessing = false
             finalizeCurrentText()
+            rollbackManager.completeTurn(sessionId, turnId, interrupted = interrupted)
         }
     }
 
@@ -372,6 +384,18 @@ class AcpSession(
             if (option.id == configId) option.copy(currentValue = value) else option
         }
         updateConfigOptions(updated)
+    }
+
+    fun canRollbackLastTurn(): Boolean {
+        return rollbackManager.canRollback(sessionId, isProcessing)
+    }
+
+    fun rollbackLastTurn(): RollbackResult {
+        return rollbackManager.rollbackLastTurn(sessionId, isProcessing)
+    }
+
+    fun markActiveTurnInterrupted() {
+        rollbackManager.markActiveTurnInterrupted(sessionId)
     }
 
     private fun updateConfigOptions(options: List<ConfigOption>) {
