@@ -21,6 +21,8 @@ repositories {
 dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
+    testImplementation(kotlin("test"))
+    testRuntimeOnly("junit:junit:4.13.2")
 
     intellijPlatform {
         val platformType = providers.gradleProperty("platformType")
@@ -69,6 +71,10 @@ intellijPlatform {
 }
 
 tasks {
+    test {
+        useJUnitPlatform()
+    }
+
     wrapper {
         gradleVersion = "8.13"
     }
