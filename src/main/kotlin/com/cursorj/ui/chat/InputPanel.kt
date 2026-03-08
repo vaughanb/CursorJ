@@ -125,6 +125,12 @@ class InputPanel {
     private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
     }
+    private val fileChipsWrapper = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        border = JBUI.Borders.empty(8, 12, 0, 12)
+        isVisible = false
+        add(fileChipsPanel, BorderLayout.CENTER)
+    }
 
     var onSend: ((String) -> Unit)? = null
     var onCancel: (() -> Unit)? = null
@@ -132,6 +138,7 @@ class InputPanel {
     var onModelChanged: ((configId: String, value: String) -> Unit)? = null
 
     val component: JComponent get() = rootPanel
+    val dropTargetComponent: JComponent get() = textArea
 
     init {
         val scrollPane = JScrollPane(textArea).apply {
@@ -150,7 +157,6 @@ class InputPanel {
                 isOpaque = false
                 add(modeCombo)
                 add(modelCombo)
-                add(fileChipsPanel)
             }
 
             val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
@@ -163,7 +169,13 @@ class InputPanel {
             add(rightControls, BorderLayout.EAST)
         }
 
-        container.add(scrollPane, BorderLayout.CENTER)
+        val editorArea = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(fileChipsWrapper, BorderLayout.NORTH)
+            add(scrollPane, BorderLayout.CENTER)
+        }
+
+        container.add(editorArea, BorderLayout.CENTER)
         container.add(bottomBar, BorderLayout.SOUTH)
 
         rootPanel.add(container, BorderLayout.CENTER)
@@ -285,21 +297,29 @@ class InputPanel {
             removeBtn.addMouseListener(object : java.awt.event.MouseAdapter() {
                 override fun mouseClicked(e: java.awt.event.MouseEvent) {
                     fileChipsPanel.remove(this@apply)
-                    fileChipsPanel.revalidate()
-                    fileChipsPanel.repaint()
+                    updateFileChipsVisibility()
                 }
             })
             add(label)
             add(removeBtn)
         }
         fileChipsPanel.add(chip)
-        fileChipsPanel.revalidate()
+        updateFileChipsVisibility()
     }
 
     fun clearFileChips() {
         fileChipsPanel.removeAll()
+        updateFileChipsVisibility()
+    }
+
+    private fun updateFileChipsVisibility() {
+        fileChipsWrapper.isVisible = fileChipsPanel.componentCount > 0
         fileChipsPanel.revalidate()
         fileChipsPanel.repaint()
+        fileChipsWrapper.revalidate()
+        fileChipsWrapper.repaint()
+        rootPanel.revalidate()
+        rootPanel.repaint()
     }
 
     private fun doSend() {

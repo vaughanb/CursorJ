@@ -78,6 +78,8 @@ class ChatPanel(private val service: CursorJService) {
             }
         }
         dragDrop.install(rootPanel)
+        dragDrop.install(inputPanel.component)
+        dragDrop.install(inputPanel.dropTargetComponent)
 
         messageListPanel.onToolCallFileClick = { path ->
             openFileInEditor(path)
