@@ -82,6 +82,16 @@ intellijPlatform {
         """.trimIndent()
     }
 
+    val publishingChannel = providers.gradleProperty("intellijPlatformPublishingChannel")
+        .orElse(providers.environmentVariable("JETBRAINS_MARKETPLACE_CHANNEL"))
+        .orElse("default")
+
+    publishing {
+        token = providers.gradleProperty("intellijPlatformPublishingToken")
+            .orElse(providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN"))
+        channels = publishingChannel.map { listOf(it) }
+    }
+
     pluginVerification {
         ides {
             recommended()

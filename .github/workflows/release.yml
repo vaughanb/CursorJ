@@ -83,7 +83,17 @@ jobs:
       - name: Ensure Gradle wrapper is executable
         run: chmod +x ./gradlew
 
+      - name: Verify marketplace token is present
+        env:
+          TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "JETBRAINS_MARKETPLACE_TOKEN is missing"
+            exit 1
+          fi
+
       - name: Publish to JetBrains Marketplace
         env:
-          ORG_GRADLE_PROJECT_intellijPlatformPublishingToken: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          JETBRAINS_MARKETPLACE_CHANNEL: beta
         run: ./gradlew --no-daemon publishPlugin
