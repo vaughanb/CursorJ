@@ -33,3 +33,4 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+run.bat
