@@ -72,12 +72,11 @@ intellijPlatform {
 
         // Keep synchronized with CHANGELOG.md for each release.
         changeNotes = """
-            <p>Initial public release of CursorJ.</p>
+            <p>Beta release with publishing and release pipeline hardening.</p>
             <ul>
-                <li>Agentic coding via Cursor ACP (files, terminal, and codebase context)</li>
-                <li>Active file/selection context, drag-and-drop references, and multi-session chat</li>
-                <li>Native permission dialogs and per-turn Local History rollback</li>
-                <li>API keys stored in JetBrains Password Safe</li>
+                <li>Configured explicit Marketplace token/channel publishing flow</li>
+                <li>Added release token preflight validation in GitHub Actions</li>
+                <li>Improved GitHub-hosted runner reliability with disk cleanup and split jobs</li>
             </ul>
         """.trimIndent()
     }

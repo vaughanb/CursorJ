@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.0] - 2026-03-09
+
+### Changed
+
+- Beta release updates to publishing and release automation.
+- Added explicit publishing token/channel wiring for Marketplace uploads.
+- Added release workflow preflight token validation to fail fast on misconfiguration.
+- Improved GitHub Actions stability with runner disk cleanup and split validation/publish jobs.
+
 ## [0.1.0] - 2026-03-07
 
 ### Added
