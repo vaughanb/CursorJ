@@ -226,21 +226,24 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
         val settings = CursorJSettings.instance
         if (settings.agentPath.isNotBlank()) {
             val file = File(settings.agentPath)
-            if (file.exists()) return settings.agentPath
+            if (file.isFile) return settings.agentPath
         }
 
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val osName = System.getProperty("os.name").lowercase()
+        val isWindows = osName.contains("win")
+        val isMac = osName.contains("mac") || osName.contains("darwin")
         val candidates = if (isWindows) {
             listOf("agent.cmd", "agent.bat", "agent.exe", "agent")
         } else {
             listOf("agent")
         }
 
-        val pathDirs = System.getenv("PATH")?.split(File.pathSeparator) ?: emptyList()
+        val pathValue = System.getenv("PATH") ?: System.getenv("Path")
+        val pathDirs = pathValue?.split(File.pathSeparator) ?: emptyList()
         for (dir in pathDirs) {
             for (name in candidates) {
                 val file = File(dir, name)
-                if (file.exists()) {
+                if (isRunnable(file, isWindows)) {
                     log.info("Found agent in PATH: ${file.absolutePath}")
                     return file.absolutePath
                 }
@@ -256,6 +259,12 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
                 add("$home\\AppData\\Local\\Programs\\cursor-agent\\agent.exe")
                 add("$home\\.local\\bin\\agent.cmd")
                 add("$home\\.local\\bin\\agent.exe")
+            } else if (isMac) {
+                add("$home/.cursor/bin/agent")
+                add("$home/.local/bin/agent")
+                add("/opt/homebrew/bin/agent")
+                add("/usr/local/bin/agent")
+                add("/opt/local/bin/agent")
             } else {
                 add("$home/.local/bin/agent")
                 add("$home/.cursor/bin/agent")
@@ -264,13 +273,17 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
         }
         for (path in wellKnownPaths) {
             val file = File(path)
-            if (file.exists()) {
+            if (isRunnable(file, isWindows)) {
                 log.info("Found agent at well-known path: ${file.absolutePath}")
                 return file.absolutePath
             }
         }
 
         return null
+    }
+
+    private fun isRunnable(file: File, isWindows: Boolean): Boolean {
+        return file.isFile && (isWindows || file.canExecute())
     }
 
     override fun dispose() {
