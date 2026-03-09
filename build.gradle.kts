@@ -1,11 +1,17 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.intellij.platform)
 }
 
+val pluginVersion = providers.gradleProperty("pluginVersion")
+val projectUrl = "https://github.com/vaughanb/CursorJ"
+val issuesUrl = "https://github.com/vaughanb/CursorJ/issues"
+
 group = providers.gradleProperty("pluginGroup").get()
-version = providers.gradleProperty("pluginVersion").get()
+version = pluginVersion.get()
 
 kotlin {
     jvmToolchain(21)
@@ -32,7 +38,6 @@ dependencies {
         bundledPlugin("org.jetbrains.plugins.terminal")
 
         pluginVerifier()
-        instrumentationTools()
     }
 }
 
@@ -40,7 +45,7 @@ intellijPlatform {
     pluginConfiguration {
         id = "com.cursorj"
         name = providers.gradleProperty("pluginName")
-        version = providers.gradleProperty("pluginVersion")
+        version = pluginVersion
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
@@ -49,6 +54,7 @@ intellijPlatform {
 
         vendor {
             name = "CursorJ"
+            url = projectUrl
         }
 
         description = """
@@ -59,6 +65,19 @@ intellijPlatform {
                 <li>Drag-and-drop file references</li>
                 <li>Multiple concurrent chat sessions</li>
                 <li>Native IntelliJ UI with syntax-highlighted code blocks and diff rendering</li>
+            </ul>
+            <p>Project home: <a href="$projectUrl">$projectUrl</a></p>
+            <p>Support and issues: <a href="$issuesUrl">$issuesUrl</a></p>
+        """.trimIndent()
+
+        // Keep synchronized with CHANGELOG.md for each release.
+        changeNotes = """
+            <p>Initial public release of CursorJ.</p>
+            <ul>
+                <li>Agentic coding via Cursor ACP (files, terminal, and codebase context)</li>
+                <li>Active file/selection context, drag-and-drop references, and multi-session chat</li>
+                <li>Native permission dialogs and per-turn Local History rollback</li>
+                <li>API keys stored in JetBrains Password Safe</li>
             </ul>
         """.trimIndent()
     }
@@ -73,6 +92,20 @@ intellijPlatform {
 tasks {
     test {
         useJUnitPlatform()
+    }
+
+    runIde {
+        val runIdeSandboxRoot = layout.projectDirectory.dir(".runIde-sandbox").asFile
+        val runIdeConfigDir = File(runIdeSandboxRoot, "config").absolutePath
+        val runIdeSystemDir = File(runIdeSandboxRoot, "system").absolutePath
+        val runIdeLogDir = File(runIdeSandboxRoot, "log").absolutePath
+
+        // Keep interactive runIde state isolated from verification/search tasks.
+        jvmArgs(
+            "-Didea.config.path=$runIdeConfigDir",
+            "-Didea.system.path=$runIdeSystemDir",
+            "-Didea.log.path=$runIdeLogDir",
+        )
     }
 
     wrapper {

@@ -6,6 +6,7 @@ import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import javax.swing.JComponent
@@ -13,7 +14,7 @@ import javax.swing.JPanel
 
 class CursorJConfigurable : Configurable {
     private var agentPathField: TextFieldWithBrowseButton? = null
-    private var apiKeyField: JBTextField? = null
+    private var apiKeyField: JBPasswordField? = null
     private var defaultModelField: JBTextField? = null
     private var autoAttachCheckbox: JBCheckBox? = null
     private var mainPanel: JPanel? = null
@@ -27,7 +28,7 @@ class CursorJConfigurable : Configurable {
                 .withDescription(CursorJBundle.message("settings.agent.path.tooltip"))
             addBrowseFolderListener(null, descriptor)
         }
-        apiKeyField = JBTextField()
+        apiKeyField = JBPasswordField()
         defaultModelField = JBTextField()
         autoAttachCheckbox = JBCheckBox(
             CursorJBundle.message("settings.auto.attach"),
@@ -57,7 +58,7 @@ class CursorJConfigurable : Configurable {
     override fun isModified(): Boolean {
         val settings = CursorJSettings.instance
         return agentPathField?.text != settings.agentPath ||
-            apiKeyField?.text != settings.apiKey ||
+            readApiKeyInput() != settings.apiKey ||
             defaultModelField?.text != settings.defaultModel ||
             autoAttachCheckbox?.isSelected != settings.autoAttachActiveFile
     }
@@ -65,7 +66,7 @@ class CursorJConfigurable : Configurable {
     override fun apply() {
         val settings = CursorJSettings.instance
         settings.agentPath = agentPathField?.text ?: ""
-        settings.apiKey = apiKeyField?.text ?: ""
+        settings.apiKey = readApiKeyInput()
         settings.defaultModel = defaultModelField?.text ?: ""
         settings.autoAttachActiveFile = autoAttachCheckbox?.isSelected ?: true
     }
@@ -77,6 +78,8 @@ class CursorJConfigurable : Configurable {
         defaultModelField?.text = settings.defaultModel
         autoAttachCheckbox?.isSelected = settings.autoAttachActiveFile
     }
+
+    private fun readApiKeyInput(): String = apiKeyField?.password?.concatToString() ?: ""
 
     override fun disposeUIResources() {
         agentPathField = null

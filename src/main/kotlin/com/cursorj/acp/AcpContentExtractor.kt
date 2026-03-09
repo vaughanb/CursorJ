@@ -8,10 +8,10 @@ object AcpContentExtractor {
         if (contentElement == null || contentElement is JsonNull) return null
 
         if (contentElement is JsonObject) {
-            contentElement["text"]?.jsonPrimitive?.contentOrNull?.let { return it }
+            textValue(contentElement["text"])?.let { return it }
             val inner = contentElement["content"]
             if (inner is JsonObject) {
-                return inner["text"]?.jsonPrimitive?.contentOrNull
+                return textValue(inner["text"])
             }
         }
 
@@ -19,9 +19,9 @@ object AcpContentExtractor {
             val sb = StringBuilder()
             for (block in contentElement) {
                 if (block is JsonObject) {
-                    val text = block["text"]?.jsonPrimitive?.contentOrNull
+                    val text = textValue(block["text"])
                         ?: block["content"]?.let { inner ->
-                            if (inner is JsonObject) inner["text"]?.jsonPrimitive?.contentOrNull else null
+                            if (inner is JsonObject) textValue(inner["text"]) else null
                         }
                     text?.let { sb.append(it) }
                 }
@@ -34,5 +34,9 @@ object AcpContentExtractor {
         }
 
         return null
+    }
+
+    private fun textValue(element: JsonElement?): String? {
+        return (element as? JsonPrimitive)?.contentOrNull
     }
 }

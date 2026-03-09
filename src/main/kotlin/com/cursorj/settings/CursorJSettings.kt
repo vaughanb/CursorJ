@@ -12,6 +12,7 @@ import com.intellij.openapi.components.Storage
 class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
     data class State(
         var agentPath: String = "",
+        // Legacy field kept only to migrate existing plaintext settings to Password Safe.
         var apiKey: String = "",
         var defaultModel: String = "",
         var autoAttachActiveFile: Boolean = true,
@@ -25,6 +26,7 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
 
     override fun loadState(state: State) {
         myState = state
+        migrateLegacyApiKey()
     }
 
     var agentPath: String
@@ -32,8 +34,19 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         set(value) { myState.agentPath = value }
 
     var apiKey: String
-        get() = myState.apiKey
-        set(value) { myState.apiKey = value }
+        get() = CursorJSecretStore.getApiKey()
+        set(value) {
+            CursorJSecretStore.setApiKey(value)
+            myState.apiKey = ""
+        }
+
+    private fun migrateLegacyApiKey() {
+        if (myState.apiKey.isBlank()) return
+        if (CursorJSecretStore.getApiKey().isBlank()) {
+            CursorJSecretStore.setApiKey(myState.apiKey)
+        }
+        myState.apiKey = ""
+    }
 
     var defaultModel: String
         get() = myState.defaultModel

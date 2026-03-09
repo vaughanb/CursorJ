@@ -28,6 +28,7 @@ out/
 
 # IntelliJ Platform Plugin SDK
 .intellijPlatform/
+.runIde-sandbox/
 
 # OS
 .DS_Store

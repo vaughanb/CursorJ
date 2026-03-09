@@ -15,7 +15,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 
 ## Prerequisites
 
-- A JetBrains IDE (IntelliJ IDEA, PyCharm, WebStorm, GoLand, CLion, Rider, etc.) version 2024.2+
+- A JetBrains IDE (IntelliJ IDEA, PyCharm, WebStorm, GoLand, CLion, Rider, etc.) version 2025.1+
 - [Cursor CLI](https://cursor.com/docs/cli/overview) installed (`agent` binary available in PATH)
 - A paid [Cursor plan](https://cursor.com/docs/account/pricing)
 
@@ -37,7 +37,7 @@ Before using CursorJ, authenticate with Cursor:
 agent login
 ```
 
-Or configure an API key in **Settings > Tools > CursorJ**.
+Or configure an API key in **Settings > Tools > CursorJ** (stored in JetBrains Password Safe).
 
 ## Usage
 
@@ -71,6 +71,14 @@ Requires JDK 21.
 ./gradlew buildPlugin  # Package as installable zip
 ./gradlew runIde       # Launch a sandboxed IDE with the plugin
 ```
+
+## Releasing
+
+For release steps and publishing instructions, see [RELEASING.md](RELEASING.md).
+
+## Privacy
+
+For data handling details, see [PRIVACY.md](PRIVACY.md).
 
 ## License
 

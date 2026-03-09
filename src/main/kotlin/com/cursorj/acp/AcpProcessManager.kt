@@ -72,7 +72,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
             }, "CursorJ-Agent-Stderr").apply { isDaemon = true }
             stderrThread!!.start()
 
-            log.info("Cursor agent ACP process started (pid=${process!!.pid()}, cmd=$command)")
+            log.info("Cursor agent ACP process started (pid=${process!!.pid()})")
             true
         } catch (e: Exception) {
             log.error("Failed to start Cursor agent ACP process", e)
@@ -89,10 +89,6 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
         }
         command.add("acp")
 
-        val settings = CursorJSettings.instance
-        settings.apiKey.takeIf { it.isNotBlank() }?.let {
-            command.addAll(listOf("--api-key", it))
-        }
         modelOverride?.let {
             command.addAll(listOf("--model", it))
         }
@@ -135,7 +131,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
         val agentPath = resolveAgentPath() ?: return emptyList()
         return try {
             val settings = CursorJSettings.instance
-            val command = buildAgentCommand(agentPath, "models", settings)
+            val command = buildAgentCommand(agentPath, "models")
 
             val pb = ProcessBuilder(command)
             pb.redirectErrorStream(true)
@@ -143,7 +139,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
                 pb.environment()["CURSOR_API_KEY"] = it
             }
 
-            log.info("Fetching models with command: $command")
+            log.info("Fetching models from agent CLI")
             val proc = pb.start()
             val output = proc.inputStream.bufferedReader().readText()
             val exited = proc.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -164,7 +160,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
         }
     }
 
-    private fun buildAgentCommand(agentPath: String, subcommand: String, settings: CursorJSettings): List<String> {
+    private fun buildAgentCommand(agentPath: String, subcommand: String): List<String> {
         val command = mutableListOf<String>()
         if (agentPath.endsWith(".cmd", ignoreCase = true) || agentPath.endsWith(".bat", ignoreCase = true)) {
             command.addAll(listOf("cmd.exe", "/c", agentPath))
@@ -172,9 +168,6 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
             command.add(agentPath)
         }
         command.add(subcommand)
-        settings.apiKey.takeIf { it.isNotBlank() }?.let {
-            command.addAll(listOf("--api-key", it))
-        }
         return command
     }
 
@@ -184,13 +177,13 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
         val agentPath = resolveAgentPath() ?: return emptyList()
         return try {
             val settings = CursorJSettings.instance
-            val command = buildAgentCommand(agentPath, "models", settings)
+            val command = buildAgentCommand(agentPath, "models")
             val pb = ProcessBuilder(command)
             pb.redirectErrorStream(true)
             settings.apiKey.takeIf { it.isNotBlank() }?.let {
                 pb.environment()["CURSOR_API_KEY"] = it
             }
-            log.info("Fetching model info with command: $command")
+            log.info("Fetching model info from agent CLI")
             val proc = pb.start()
             val output = proc.inputStream.bufferedReader().readText()
             val exited = proc.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)

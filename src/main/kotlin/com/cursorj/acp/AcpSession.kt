@@ -238,10 +238,20 @@ class AcpSession(
 
     private fun captureToolCallContent(toolCallId: String, obj: JsonObject) {
         val text = AcpContentExtractor.extractTextFromContent(obj["content"])
-            ?: obj["rawOutput"]?.jsonPrimitive?.contentOrNull
-        if (text != null) {
+            ?: extractRawOutputText(obj["rawOutput"])
+        if (!text.isNullOrBlank()) {
             log.info("Captured tool call content for $toolCallId (${text.length} chars)")
             _toolCallContents.getOrPut(toolCallId) { StringBuilder() }.append(text)
+        }
+    }
+
+    private fun extractRawOutputText(rawOutput: JsonElement?): String? {
+        return when (rawOutput) {
+            null, JsonNull -> null
+            is JsonPrimitive -> rawOutput.contentOrNull
+            is JsonObject, is JsonArray -> {
+                AcpContentExtractor.extractTextFromContent(rawOutput) ?: rawOutput.toString()
+            }
         }
     }
 

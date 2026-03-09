@@ -82,7 +82,7 @@ class AcpSessionTest {
                 extra = buildJsonObject {
                     put("toolCallId", "call-1")
                     put("kind", "edit")
-                    put("rawOutput", " second")
+                    put("rawOutput", buildJsonObject { put("text", " second") })
                     put(
                         "rawInput",
                         buildJsonObject {
