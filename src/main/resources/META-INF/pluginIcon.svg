@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+    <defs>
+        <linearGradient id="gradJ" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#FF7A00" />
+            <stop offset="45%" stop-color="#D9248F" />
+            <stop offset="100%" stop-color="#00A3FF" />
+        </linearGradient>
+
+        <linearGradient id="gradArrow" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#FFFFFF" />
+            <stop offset="100%" stop-color="#B0B6C4" />
+        </linearGradient>
+    </defs>
+
+    <rect width="40" height="40" rx="8" fill="#2B2D30" />
+
+    <path d="M 28 16
+           L 28 23
+           A 11 11 0 0 1 6 23
+           L 6 19
+           L 12 19
+           L 12 23
+           A 5 5 0 0 0 22 23
+           L 22 16
+           Z"
+          fill="url(#gradJ)" />
+
+    <path d="M 34 8
+           L 16 14
+           L 23 19
+           L 28 26
+           Z"
+          fill="#000000" opacity="0.35" />
+
+    <path d="M 34 6
+           L 16 12
+           L 23 17
+           L 28 24
+           Z"
+          fill="url(#gradArrow)" />
+</svg>
