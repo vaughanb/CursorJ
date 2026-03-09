@@ -23,7 +23,7 @@ help: ## Show available targets
 	@echo "  make verify  - Run IntelliJ plugin verification"
 	@echo "  make clean   - Remove build outputs"
 	@echo "  make deps    - Print dependency tree"
-	@echo "  make release <major|minor|patch> - Create the next semantic version tag"
+	@echo "  make release <major|minor|patch> - Clean tree required; bump version, commit/push, tag/push"
 
 setup: ## Prepare local Gradle state
 	$(GRADLEW) --version
@@ -52,11 +52,20 @@ clean: ## Remove build outputs
 deps: ## Show dependency graph
 	$(GRADLEW) dependencies
 
-release: ## Create next semantic git tag
+release: ## Bump version, commit/push, then create and push semantic git tag
 	@case "$(BUMP)" in \
 		major|minor|patch) ;; \
 		*) echo "Usage: make release <major|minor|patch> (or make release BUMP=<major|minor|patch>)"; exit 1 ;; \
 	esac
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "Working tree must be clean before release."; \
+		echo "Commit or stash local changes, then run release again."; \
+		exit 1; \
+	fi
+	@if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then \
+		echo "Current branch has no upstream. Push with: git push -u origin <branch>"; \
+		exit 1; \
+	fi
 	@latest_tag=$$(git describe --tags --abbrev=0 --match "v[0-9]*.[0-9]*.[0-9]*" 2>/dev/null || echo "v0.0.0"); \
 	version=$${latest_tag#v}; \
 	major=$${version%%.*}; \
@@ -68,13 +77,27 @@ release: ## Create next semantic git tag
 		minor) minor=$$((minor + 1)); patch=0 ;; \
 		patch) patch=$$((patch + 1)) ;; \
 	esac; \
-	new_tag="v$$major.$$minor.$$patch"; \
+	new_version="$$major.$$minor.$$patch"; \
+	new_tag="v$$new_version"; \
 	if git rev-parse "$$new_tag" >/dev/null 2>&1; then \
 		echo "Tag $$new_tag already exists."; \
 		exit 1; \
 	fi; \
+	tmp_file="gradle.properties.tmp"; \
+	awk -v new_version="$$new_version" 'BEGIN { updated=0 } /^pluginVersion[[:space:]]*=/ { print "pluginVersion = " new_version; updated=1; next } { print } END { if (!updated) exit 2 }' gradle.properties > "$$tmp_file"; \
+	awk_exit=$$?; \
+	if [ $$awk_exit -ne 0 ]; then \
+		rm -f "$$tmp_file"; \
+		echo "Failed to update pluginVersion in gradle.properties."; \
+		exit 1; \
+	fi; \
+	mv "$$tmp_file" gradle.properties; \
+	git commit --only gradle.properties -m "chore(release): v$$new_version"; \
+	git push; \
 	git tag "$$new_tag"; \
-	echo "Created tag $$new_tag (previous: $$latest_tag)"
+	git push origin "$$new_tag"; \
+	echo "Updated pluginVersion to $$new_version in gradle.properties"; \
+	echo "Committed, pushed, and tagged $$new_tag (previous: $$latest_tag)"
 
 # Consume optional second goal when using: make release patch
 major minor patch:
