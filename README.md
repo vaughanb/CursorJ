@@ -1,5 +1,9 @@
 # CursorJ
 
+<p align="center">
+  <img src="CursorJ_logo.png" alt="CursorJ logo" width="320" />
+</p>
+
 An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/).
 
 ## Features
