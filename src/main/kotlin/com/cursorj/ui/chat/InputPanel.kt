@@ -252,6 +252,7 @@ class InputPanel {
                 onModelChanged?.invoke(modelConfigId, modelValues[idx])
             }
         }
+
     }
 
     private var updatingMode = false

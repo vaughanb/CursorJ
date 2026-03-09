@@ -79,6 +79,7 @@ class SessionTabManager(
         val chatPanel = ChatPanel(service)
         val entry = TabEntry(chatPanel = chatPanel)
         Disposer.register(toolWindow.disposable, entry)
+        Disposer.register(entry, chatPanel)
         tabs.add(entry)
 
         suppressTabChange = true

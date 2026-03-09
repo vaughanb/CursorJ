@@ -2,6 +2,9 @@ package com.cursorj.handlers
 
 import com.cursorj.acp.AcpClient
 import com.cursorj.acp.messages.*
+import com.cursorj.permissions.PermissionMode
+import com.cursorj.permissions.PermissionPolicy
+import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.serialization.json.*
@@ -34,6 +37,7 @@ class TerminalHandler(private val project: Project) {
     }
 
     private fun handleCreate(params: JsonElement): JsonElement {
+        ensureExecutionAllowed("terminal/create", params)
         val request = json.decodeFromJsonElement<TerminalCreateParams>(params)
         val terminalId = "term-${nextTerminalId.getAndIncrement()}"
         log.info("terminal/create: command='${request.command}', cwd=${request.cwd}")
@@ -113,5 +117,14 @@ class TerminalHandler(private val project: Project) {
             if (managed.process.isAlive) managed.process.destroyForcibly()
         }
         terminals.clear()
+    }
+
+    private fun ensureExecutionAllowed(method: String, params: JsonElement) {
+        val settings = CursorJSettings.instance
+        val mode = PermissionMode.fromId(settings.permissionMode)
+        val approvedKeys = settings.getApprovedPermissionKeys()
+        if (!PermissionPolicy.shouldAllowMethodExecution(mode, approvedKeys, method, params)) {
+            throw IllegalStateException("Permission denied for $method")
+        }
     }
 }

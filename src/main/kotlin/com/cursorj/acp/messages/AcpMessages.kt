@@ -281,6 +281,11 @@ data class PermissionOption(
 @Serializable
 data class RequestPermissionParams(
     val toolName: String? = null,
+    @SerialName("tool_name")
+    val toolNameSnake: String? = null,
+    val tool: String? = null,
+    val name: String? = null,
+    val method: String? = null,
     val description: String? = null,
     val arguments: JsonElement? = null,
     val options: List<PermissionOption> = listOf(

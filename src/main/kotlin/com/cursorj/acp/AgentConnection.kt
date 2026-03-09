@@ -2,6 +2,7 @@ package com.cursorj.acp
 
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ConfigOptionValue
+import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.handlers.FileSystemHandler
 import com.cursorj.handlers.PermissionHandler
 import com.cursorj.handlers.TerminalHandler
@@ -15,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.CompletableFuture
 import javax.swing.SwingUtilities
 
 class AgentConnection(
@@ -173,6 +175,10 @@ class AgentConnection(
                 options = _modelInfos.map { ConfigOptionValue(value = it.id, name = it.displayName) },
             ),
         )
+    }
+
+    fun setPermissionPromptResolver(resolver: ((RequestPermissionParams) -> CompletableFuture<String>)?) {
+        permissionHandler.setPromptResolver(resolver)
     }
 
     private fun registerHandlers() {

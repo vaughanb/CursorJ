@@ -8,8 +8,10 @@ import com.cursorj.acp.ToolActivity
 import com.cursorj.acp.messages.*
 import com.cursorj.rollback.RollbackStatus
 import com.cursorj.context.DragDropProvider
+import com.cursorj.permissions.PermissionMode
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.toolwindow.CursorJService
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -21,12 +23,15 @@ import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.Color
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
-class ChatPanel(private val service: CursorJService) {
+class ChatPanel(private val service: CursorJService) : Disposable {
     private val log = Logger.getInstance(ChatPanel::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -39,6 +44,8 @@ class ChatPanel(private val service: CursorJService) {
     private val attachedFiles = mutableListOf<ResourceLinkContent>()
     private val pendingSelectionQueue = PendingSelectionQueue()
     private var pendingToolCall: Pair<String, ToolActivity>? = null
+    private val permissionRequestSeq = AtomicInteger(1)
+    private val pendingPermissionResponses = ConcurrentHashMap<String, CompletableFuture<String>>()
     private var desiredMode: SessionMode = SessionMode.AGENT
     private var lastProjectTreeRefreshAt = 0L
     private val minRefreshIntervalMs = 750L
@@ -100,6 +107,9 @@ class ChatPanel(private val service: CursorJService) {
 
     fun bindConnection(connection: AgentConnection) {
         this.connection = connection
+        connection.setPermissionPromptResolver { request ->
+            queuePermissionRequest(request)
+        }
     }
 
     fun bindSession(session: AcpSession) {
@@ -381,6 +391,49 @@ class ChatPanel(private val service: CursorJService) {
         }
     }
 
+    private fun enableRunEverything(): Boolean {
+        val settings = CursorJSettings.instance
+        val currentMode = PermissionMode.fromId(settings.permissionMode)
+        if (currentMode == PermissionMode.RUN_EVERYTHING) return true
+
+        if (!settings.runEverythingConfirmationAcknowledged) {
+            val confirmed = Messages.showYesNoDialog(
+                service.project,
+                CursorJBundle.message("permission.mode.confirm.enable.message"),
+                CursorJBundle.message("permission.mode.confirm.enable.title"),
+                Messages.getWarningIcon(),
+            ) == Messages.YES
+            if (!confirmed) {
+                return false
+            }
+            settings.runEverythingConfirmationAcknowledged = true
+        }
+
+        settings.permissionMode = PermissionMode.RUN_EVERYTHING.id
+        showStatus(CursorJBundle.message("permission.mode.status.runEverything"))
+        return true
+    }
+
+    private fun queuePermissionRequest(request: RequestPermissionParams): CompletableFuture<String> {
+        val requestId = "permission-${permissionRequestSeq.getAndIncrement()}"
+        val response = CompletableFuture<String>()
+        pendingPermissionResponses[requestId] = response
+        response.whenComplete { _, _ -> pendingPermissionResponses.remove(requestId) }
+        SwingUtilities.invokeLater {
+            messageListPanel.addPermissionRequestCard(
+                requestId = requestId,
+                request = request,
+                onDecision = { optionId ->
+                    if (!response.isDone) {
+                        response.complete(optionId)
+                    }
+                },
+                onRunEverything = { enableRunEverything() },
+            )
+        }
+        return response
+    }
+
     private fun refreshProjectTree() {
         ApplicationManager.getApplication().invokeLater {
             service.project.basePath?.let { basePath ->
@@ -433,5 +486,13 @@ class ChatPanel(private val service: CursorJService) {
     private fun clearQueuedSelectionContext() {
         pendingSelectionQueue.clear()
         inputPanel.clearSelectionChip()
+    }
+
+    override fun dispose() {
+        scope.cancel()
+        pendingPermissionResponses.values.forEach { future ->
+            if (!future.isDone) future.complete("reject-once")
+        }
+        pendingPermissionResponses.clear()
     }
 }

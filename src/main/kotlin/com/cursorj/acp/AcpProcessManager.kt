@@ -50,11 +50,6 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
                 }
             }
 
-            val settings = CursorJSettings.instance
-            settings.apiKey.takeIf { it.isNotBlank() }?.let {
-                pb.environment()["CURSOR_API_KEY"] = it
-            }
-
             process = pb.start()
             reader = process!!.inputStream.bufferedReader()
             writer = process!!.outputStream.bufferedWriter()
@@ -130,14 +125,10 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
     fun fetchAvailableModels(): List<String> {
         val agentPath = resolveAgentPath() ?: return emptyList()
         return try {
-            val settings = CursorJSettings.instance
             val command = buildAgentCommand(agentPath, "models")
 
             val pb = ProcessBuilder(command)
             pb.redirectErrorStream(true)
-            settings.apiKey.takeIf { it.isNotBlank() }?.let {
-                pb.environment()["CURSOR_API_KEY"] = it
-            }
 
             log.info("Fetching models from agent CLI")
             val proc = pb.start()
@@ -176,13 +167,9 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
     fun fetchAvailableModelsWithInfo(): List<ModelInfo> {
         val agentPath = resolveAgentPath() ?: return emptyList()
         return try {
-            val settings = CursorJSettings.instance
             val command = buildAgentCommand(agentPath, "models")
             val pb = ProcessBuilder(command)
             pb.redirectErrorStream(true)
-            settings.apiKey.takeIf { it.isNotBlank() }?.let {
-                pb.environment()["CURSOR_API_KEY"] = it
-            }
             log.info("Fetching model info from agent CLI")
             val proc = pb.start()
             val output = proc.inputStream.bufferedReader().readText()

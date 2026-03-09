@@ -2,13 +2,21 @@ package com.cursorj.ui.chat
 
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.ChatMessage
+import com.cursorj.acp.messages.PermissionOption
+import com.cursorj.acp.messages.RequestPermissionParams
+import com.cursorj.permissions.PermissionPolicy
 import com.cursorj.ui.components.MessageRenderer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.*
+import java.util.Locale
 import javax.swing.*
 
 class MessageListPanel {
+    private val json = Json { prettyPrint = true }
+
     private val innerPanel = Box.createVerticalBox().apply {
         border = JBUI.Borders.empty(8)
     }
@@ -91,6 +99,7 @@ class MessageListPanel {
     )
 
     private val toolCallLabels = mutableMapOf<String, ToolCallLine>()
+    private val permissionCards = mutableMapOf<String, JComponent>()
 
     fun addOrUpdateToolCallLine(id: String, text: String, path: String? = null) {
         val existing = toolCallLabels[id]
@@ -113,6 +122,180 @@ class MessageListPanel {
             toolCallLabels[id] = line
             innerPanel.add(line.panel)
         }
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    fun addPermissionRequestCard(
+        requestId: String,
+        request: RequestPermissionParams,
+        onDecision: (String) -> Unit,
+        onRunEverything: (() -> Boolean)? = null,
+    ) {
+        permissionCards[requestId]?.let {
+            innerPanel.remove(it)
+            permissionCards.remove(requestId)
+        }
+
+        val borderColor = JBColor(Color(0xCC9F52), Color(0x8D6A33))
+        val bgColor = JBColor(Color(0xFFF9EE), Color(0x3A3222))
+        val titleColor = JBColor(Color(0x7C530E), Color(0xD0A86A))
+        val secondaryColor = JBColor(Color(0x6E6E6E), Color(0x9C9C9C))
+
+        val card = object : JPanel() {
+            init {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            }
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(borderColor, 1),
+                JBUI.Borders.empty(8, 10),
+            )
+            isOpaque = true
+            background = bgColor
+            name = "permission-card"
+        }
+
+        val toolName = PermissionPolicy.displayToolName(request)
+        val title = JLabel("Permission required: $toolName").apply {
+            foreground = titleColor
+            font = font.deriveFont(Font.BOLD)
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        card.add(title)
+
+        request.description?.takeIf { it.isNotBlank() }?.let { desc ->
+            card.add(Box.createVerticalStrut(4))
+            card.add(JLabel(desc).apply {
+                foreground = secondaryColor
+                alignmentX = Component.LEFT_ALIGNMENT
+            })
+        }
+
+        val argsText = formatArguments(request.arguments)
+        val argsScroll = JScrollPane(
+            JTextArea(argsText).apply {
+                isEditable = false
+                lineWrap = true
+                wrapStyleWord = true
+                border = JBUI.Borders.empty(6)
+            },
+        ).apply {
+            border = JBUI.Borders.customLine(JBColor.border(), 1)
+            preferredSize = Dimension(380, 120)
+            maximumSize = Dimension(Int.MAX_VALUE, 180)
+            alignmentX = Component.LEFT_ALIGNMENT
+            isVisible = false
+        }
+
+        if (argsText.isNotBlank()) {
+            card.add(Box.createVerticalStrut(6))
+            val toggleArgs = JButton(CursorJBundle.message("permission.args.show")).apply {
+                isContentAreaFilled = false
+                isBorderPainted = false
+                foreground = JBColor(Color(0x5890C8), Color(0x6B9BD2))
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                alignmentX = Component.LEFT_ALIGNMENT
+                horizontalAlignment = SwingConstants.LEFT
+            }
+            toggleArgs.addActionListener {
+                argsScroll.isVisible = !argsScroll.isVisible
+                toggleArgs.text = if (argsScroll.isVisible) {
+                    CursorJBundle.message("permission.args.hide")
+                } else {
+                    CursorJBundle.message("permission.args.show")
+                }
+                innerPanel.revalidate()
+                innerPanel.repaint()
+                scrollToBottom()
+            }
+            card.add(toggleArgs)
+            card.add(Box.createVerticalStrut(4))
+            card.add(argsScroll)
+        }
+
+        val options = if (request.options.isEmpty()) {
+            listOf(
+                PermissionOption("allow-once", CursorJBundle.message("permission.allow.once")),
+                PermissionOption("allow-always", CursorJBundle.message("permission.allow.always")),
+                PermissionOption("reject-once", CursorJBundle.message("permission.reject")),
+            )
+        } else {
+            request.options
+        }
+
+        card.add(Box.createVerticalStrut(8))
+        val statusLabel = JLabel().apply {
+            isVisible = false
+            foreground = secondaryColor
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        val actionsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        val allowOptionId = PermissionPolicy.chooseAllowOption(options)
+
+        data class PermissionChoice(
+            val optionId: String,
+            val label: String,
+            val isRunEverything: Boolean = false,
+        )
+
+        val choices = mutableListOf<PermissionChoice>()
+        for (option in options) {
+            choices.add(
+                PermissionChoice(
+                    optionId = option.optionId,
+                    label = normalizePermissionLabel(option),
+                ),
+            )
+        }
+        if (onRunEverything != null) {
+            choices.add(
+                PermissionChoice(
+                    optionId = "__run_everything__",
+                    label = CursorJBundle.message("permission.mode.runEverything"),
+                    isRunEverything = true,
+                ),
+            )
+        }
+
+        val selector = JComboBox(choices.map { it.label }.toTypedArray()).apply {
+            minimumSize = Dimension(170, 26)
+            preferredSize = Dimension(210, 26)
+            toolTipText = CursorJBundle.message("permission.card.selectOption")
+        }
+        val applyButton = JButton(CursorJBundle.message("permission.card.apply")).apply {
+            addActionListener {
+                val idx = selector.selectedIndex.coerceIn(0, choices.lastIndex)
+                val selected = choices[idx]
+                if (selected.isRunEverything) {
+                    val enabled = onRunEverything?.invoke() == true
+                    if (!enabled) return@addActionListener
+                    actionsPanel.isVisible = false
+                    statusLabel.text = CursorJBundle.message("permission.card.selected.runEverything")
+                    statusLabel.isVisible = true
+                    onDecision(allowOptionId)
+                } else {
+                    actionsPanel.isVisible = false
+                    statusLabel.text = CursorJBundle.message("permission.card.selected", selected.label)
+                    statusLabel.isVisible = true
+                    onDecision(selected.optionId)
+                }
+            }
+        }
+        actionsPanel.add(selector)
+        actionsPanel.add(applyButton)
+        card.add(actionsPanel)
+        card.add(Box.createVerticalStrut(4))
+        card.add(statusLabel)
+
+        permissionCards[requestId] = card
+        innerPanel.add(card)
         innerPanel.revalidate()
         innerPanel.repaint()
         scrollToBottom()
@@ -279,6 +462,33 @@ class MessageListPanel {
                 vsb.value = vsb.maximum
             }
         }
+    }
+
+    private fun formatArguments(arguments: JsonElement?): String {
+        if (arguments == null) return ""
+        return try {
+            json.encodeToString(JsonElement.serializer(), arguments)
+        } catch (_: Exception) {
+            arguments.toString()
+        }
+    }
+
+    private fun normalizePermissionLabel(option: PermissionOption): String {
+        val raw = option.label?.trim().orEmpty()
+        if (raw.isNotEmpty() && !raw.contains("-")) {
+            return raw
+        }
+        return option.optionId
+            .trim()
+            .replace('_', '-')
+            .split('-')
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { token ->
+                token.lowercase(Locale.getDefault()).replaceFirstChar { ch ->
+                    if (ch.isLowerCase()) ch.titlecase(Locale.getDefault()) else ch.toString()
+                }
+            }
+            .ifBlank { option.optionId }
     }
 }
 

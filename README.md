@@ -41,8 +41,6 @@ Before using CursorJ, authenticate with Cursor:
 agent login
 ```
 
-Or configure an API key in **Settings > Tools > CursorJ** (stored in JetBrains Password Safe).
-
 ## Usage
 
 1. Open the **CursorJ** tool window from the right sidebar
