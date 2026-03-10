@@ -1,8 +1,6 @@
 # CursorJ
 
-<p align="center">
-  <img src="CursorJ_logo.png" alt="CursorJ logo" width="320" />
-</p>
+
 
 An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/).
 
@@ -14,7 +12,6 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Multiple Chat Sessions**: Open multiple concurrent chat tabs, each with independent sessions
 - **Native IntelliJ UI**: Consistent look and feel with syntax-highlighted code blocks and diff rendering
 - **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic chunks
-- **Indexing Lifecycle Indicators**: Startup and incremental indexing status surfaced in the status bar and optional chat updates
 - **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs
 - **Mode Switching**: Switch between Agent, Plan, and Ask modes
 - **Rollback Last Turn**: Revert files to the state before the most recent agent turn using Local History
@@ -51,18 +48,21 @@ agent login
 
 ### Keyboard Shortcuts
 
-| Shortcut | Action |
-|---|---|
-| `Alt+C` | Focus CursorJ tool window |
+
+| Shortcut       | Action                    |
+| -------------- | ------------------------- |
+| `Alt+C`        | Focus CursorJ tool window |
 | `Ctrl+Shift+J` | Send selection to CursorJ |
-| `Enter` | Send prompt |
-| `Shift+Enter` | New line in input |
+| `Enter`        | Send prompt               |
+| `Shift+Enter`  | New line in input         |
+
 
 ## Architecture
 
 CursorJ communicates with Cursor's agent via the Agent Client Protocol (ACP). It spawns `agent acp` as a subprocess and exchanges JSON-RPC 2.0 messages over stdio.
 
 The plugin declares client capabilities for:
+
 - **File system**: Read/write files through CursorJ filesystem handlers, with Local History labels for per-turn rollback
 - **Search**: `fs/find_text_in_files` for lexical project search
 - **Editor indexing**: `editor/get_open_files`, `editor/find_symbol`, `editor/list_file_symbols`, `editor/find_references`

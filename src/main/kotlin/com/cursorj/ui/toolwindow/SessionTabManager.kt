@@ -208,8 +208,9 @@ class SessionTabManager(
             WorkspaceIndexOrchestrator.IndexLifecycleState.INCREMENTAL_BUILD -> update.message
             WorkspaceIndexOrchestrator.IndexLifecycleState.STALE_REBUILDING -> update.message
             WorkspaceIndexOrchestrator.IndexLifecycleState.FAILED -> update.message
-            WorkspaceIndexOrchestrator.IndexLifecycleState.READY -> update.message
+            WorkspaceIndexOrchestrator.IndexLifecycleState.READY -> null
         }
+        if (message.isNullOrBlank()) return
         for (tab in tabs) {
             tab.chatPanel.showStatus(message)
         }
