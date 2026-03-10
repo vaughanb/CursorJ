@@ -7,6 +7,8 @@ import com.cursorj.context.ActiveFileProvider
 import com.cursorj.context.SelectionProvider
 import com.cursorj.history.PromptHistoryManager
 import com.cursorj.history.PromptHistoryStore
+import com.cursorj.history.ChatHistoryIndexManager
+import com.cursorj.history.ChatHistoryStore
 import com.cursorj.history.ChatTranscriptManager
 import com.cursorj.history.ChatTranscriptStore
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
@@ -60,6 +62,7 @@ class CursorJService(
     val workspaceIndexOrchestrator = WorkspaceIndexOrchestrator(project)
     val promptHistoryManager = PromptHistoryManager(PromptHistoryStore(project.basePath))
     val chatTranscriptManager = ChatTranscriptManager(ChatTranscriptStore(project.basePath))
+    val chatHistoryIndexManager = ChatHistoryIndexManager(ChatHistoryStore(project.basePath))
 
     lateinit var tabManager: SessionTabManager
         private set
@@ -75,6 +78,8 @@ class CursorJService(
         instances[project] = this
         promptHistoryManager.load()
         chatTranscriptManager.load()
+        chatHistoryIndexManager.load()
+        backfillChatHistoryIfNeeded()
         tabManager = SessionTabManager(this, toolWindow)
         tabManager.addInitialTab()
         val indexingListener: (WorkspaceIndexOrchestrator.IndexLifecycleUpdate) -> Unit = { update ->
@@ -97,6 +102,34 @@ class CursorJService(
         Disposer.register(this, workspaceIndexOrchestrator)
         workspaceIndexOrchestrator.start()
         fetchModelsAsync()
+    }
+
+    private fun backfillChatHistoryIfNeeded() {
+        if (chatHistoryIndexManager.storeFileExists() || chatHistoryIndexManager.entryCount() > 0) return
+
+        val savedSessionIds = CursorJSettings.instance.savedSessionIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (savedSessionIds.isEmpty()) return
+
+        for (sessionId in savedSessionIds) {
+            val historyKey = "session:$sessionId"
+            val title = chatTranscriptManager.transcriptFor(historyKey)
+                .asReversed()
+                .firstOrNull { it.role == "user" && it.content.isNotBlank() }
+                ?.content
+                ?.let { firstLine ->
+                    firstLine.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(32) ?: "Chat"
+                }
+                ?: promptHistoryManager.historyFor(historyKey)
+                    .lastOrNull()
+                    ?.let { prompt ->
+                        prompt.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(32) ?: "Chat"
+                    }
+                ?: "Chat"
+            chatHistoryIndexManager.recordSession(sessionId, title)
+        }
     }
 
     private fun fetchModelsAsync() {
@@ -149,6 +182,7 @@ class CursorJService(
     override fun dispose() {
         promptHistoryManager.persist()
         chatTranscriptManager.persist()
+        chatHistoryIndexManager.persist()
         instances.remove(project, this)
         scope.cancel()
     }

@@ -5,12 +5,15 @@ import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.messages.ContentBlock
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
+import com.cursorj.settings.CursorJConfigurable
 import com.cursorj.settings.CursorJSettings
+import com.cursorj.ui.chat.ChatHistoryPopup
 import com.cursorj.ui.chat.ChatPanel
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.ui.JBColor
@@ -106,11 +109,27 @@ class SessionTabManager(
         isOpaque = false
     }
 
+    private val historyButton = JLabel(AllIcons.Vcs.History).apply {
+        toolTipText = CursorJBundle.message("chat.history.button.tooltip")
+        border = JBUI.Borders.empty(6, 4, 6, 4)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        isOpaque = false
+    }
+
+    private val settingsButton = JLabel(AllIcons.General.GearPlain).apply {
+        toolTipText = CursorJBundle.message("settings.title")
+        border = JBUI.Borders.empty(6, 4, 6, 6)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        isOpaque = false
+    }
+
     private val rightControls = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.X_AXIS)
         isOpaque = false
         add(scrollRightBtn)
         add(addButton)
+        add(historyButton)
+        add(settingsButton)
     }
 
     private val headerPanel = JPanel(BorderLayout()).apply {
@@ -151,6 +170,18 @@ class SessionTabManager(
         addButton.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 addNewTab()
+            }
+        })
+
+        historyButton.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                showHistoryPopup()
+            }
+        })
+
+        settingsButton.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                ShowSettingsUtil.getInstance().showSettingsDialog(service.project, CursorJConfigurable::class.java)
             }
         })
 
@@ -215,11 +246,14 @@ class SessionTabManager(
 
     private fun addRestoredTab(sessionId: String): ChatPanel {
         val historyKey = "session:$sessionId"
-        val restoredTitle = service.chatTranscriptManager.transcriptFor(historyKey)
-            .asReversed()
-            .firstOrNull { it.role == "user" && it.content.isNotBlank() }
-            ?.content
-            ?.let(::buildHeuristicTitle)
+        val indexTitle = service.chatHistoryIndexManager.listAll()
+            .firstOrNull { it.sessionId == sessionId }?.title
+        val restoredTitle = indexTitle
+            ?: service.chatTranscriptManager.transcriptFor(historyKey)
+                .asReversed()
+                .firstOrNull { it.role == "user" && it.content.isNotBlank() }
+                ?.content
+                ?.let(::buildHeuristicTitle)
             ?: service.promptHistoryManager.historyFor(historyKey)
                 .lastOrNull()
                 ?.let(::buildHeuristicTitle)
@@ -423,17 +457,24 @@ class SessionTabManager(
                             entry.chatPanel.updateHistorySessionKey(restoredHistoryKey)
                             entry.chatPanel.bindSession(restoredSession)
 
-                            val restoredTitle = restoredSession.messages
-                                .asReversed()
-                                .firstOrNull { it.role == "user" && it.content.isNotBlank() }
-                                ?.content
-                                ?.let(::buildHeuristicTitle)
-                                ?: service.promptHistoryManager.historyFor(restoredHistoryKey)
-                                    .lastOrNull()
+                            val defaultTitle = CursorJBundle.message("chat.tab.new")
+                            if (entry.title == defaultTitle) {
+                                val restoredTitle = restoredSession.messages
+                                    .asReversed()
+                                    .firstOrNull { it.role == "user" && it.content.isNotBlank() }
+                                    ?.content
                                     ?.let(::buildHeuristicTitle)
-                            if (!restoredTitle.isNullOrBlank()) {
-                                applyTabTitle(entry, restoredTitle)
+                                    ?: service.promptHistoryManager.historyFor(restoredHistoryKey)
+                                        .lastOrNull()
+                                        ?.let(::buildHeuristicTitle)
+                                if (!restoredTitle.isNullOrBlank()) {
+                                    applyTabTitle(entry, restoredTitle)
+                                }
                             }
+                            service.chatHistoryIndexManager.recordSession(
+                                restoredSession.sessionId,
+                                entry.title,
+                            )
 
                             if (restoredSession.messages.isNotEmpty()) {
                                 restoreSucceeded = true
@@ -525,6 +566,25 @@ class SessionTabManager(
         return true
     }
 
+    private fun showHistoryPopup() {
+        val popup = ChatHistoryPopup(service.chatHistoryIndexManager) { sessionId ->
+            openHistoryEntry(sessionId)
+        }
+        popup.show(historyButton)
+    }
+
+    private fun openHistoryEntry(sessionId: String) {
+        val existing = tabs.find { entry ->
+            entry.session?.sessionId == sessionId ||
+                entry.historyKey == "session:$sessionId"
+        }
+        if (existing != null) {
+            selectTab(existing)
+            return
+        }
+        addRestoredTab(sessionId)
+    }
+
     private fun ensureConnectionAndSend(entry: TabEntry, prompt: String) {
         scope.launch {
             try {
@@ -535,14 +595,17 @@ class SessionTabManager(
                 }
 
                 if (entry.session == null) {
-                    applyTabTitle(entry, buildHeuristicTitle(prompt))
+                    val heuristicTitle = buildHeuristicTitle(prompt)
+                    applyTabTitle(entry, heuristicTitle)
                     entry.session = conn.createSession()
-                    val sessionHistoryKey = "session:${entry.session!!.sessionId}"
+                    val sessionId = entry.session!!.sessionId
+                    val sessionHistoryKey = "session:$sessionId"
                     service.promptHistoryManager.migrateSessionKey(entry.historyKey, sessionHistoryKey)
                     service.chatTranscriptManager.migrateSessionKey(entry.historyKey, sessionHistoryKey)
                     entry.historyKey = sessionHistoryKey
                     entry.chatPanel.updateHistorySessionKey(sessionHistoryKey)
                     entry.chatPanel.bindSession(entry.session!!)
+                    service.chatHistoryIndexManager.recordSession(sessionId, heuristicTitle)
                     persistSavedSessions()
 
                     val agentTitleApplied = AtomicBoolean(false)
@@ -558,6 +621,7 @@ class SessionTabManager(
                     }
                 }
 
+                entry.session?.sessionId?.let { service.chatHistoryIndexManager.touchActivity(it) }
                 entry.chatPanel.sendPrompt(prompt)
             } catch (e: CancellationException) {
                 throw e
@@ -706,6 +770,11 @@ class SessionTabManager(
 
     private fun applyTabTitle(entry: TabEntry, title: String) {
         entry.title = title
+        val sessionId = entry.session?.sessionId
+            ?: entry.historyKey.removePrefix("session:").takeIf { entry.historyKey.startsWith("session:") }
+        if (sessionId != null) {
+            service.chatHistoryIndexManager.updateTitle(sessionId, title)
+        }
         SwingUtilities.invokeLater {
             if (!entry.isDisposed) {
                 entry.tabTitleLabel?.text = title

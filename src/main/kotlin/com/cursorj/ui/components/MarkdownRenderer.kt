@@ -29,19 +29,19 @@ object MarkdownRenderer {
                     codeBuffer.append(line)
                 }
                 line.startsWith("### ") -> {
-                    sb.append("<h4>${escapeHtml(line.removePrefix("### "))}</h4>")
+                    sb.append("<h4 style='margin: 4px 0 2px 0;'>${escapeHtml(line.removePrefix("### "))}</h4>")
                 }
                 line.startsWith("## ") -> {
-                    sb.append("<h3>${escapeHtml(line.removePrefix("## "))}</h3>")
+                    sb.append("<h3 style='margin: 6px 0 2px 0;'>${escapeHtml(line.removePrefix("## "))}</h3>")
                 }
                 line.startsWith("# ") -> {
-                    sb.append("<h2>${escapeHtml(line.removePrefix("# "))}</h2>")
+                    sb.append("<h2 style='margin: 6px 0 2px 0;'>${escapeHtml(line.removePrefix("# "))}</h2>")
                 }
                 line.startsWith("- ") || line.startsWith("* ") -> {
                     sb.append("<p style='margin: 2px 0 2px 16px;'>&bull; ${renderInline(line.drop(2))}</p>")
                 }
                 line.isBlank() -> {
-                    sb.append("<br/>")
+                    sb.append("<div style='margin: 0; padding: 0; line-height: 6px;'>&nbsp;</div>")
                 }
                 else -> {
                     sb.append("<p style='margin: 2px 0;'>${renderInline(line)}</p>")
