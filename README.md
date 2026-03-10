@@ -13,6 +13,8 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Drag-and-Drop**: Drop files onto the chat panel to add them as context
 - **Multiple Chat Sessions**: Open multiple concurrent chat tabs, each with independent sessions
 - **Native IntelliJ UI**: Consistent look and feel with syntax-highlighted code blocks and diff rendering
+- **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic chunks
+- **Indexing Lifecycle Indicators**: Startup and incremental indexing status surfaced in the status bar and optional chat updates
 - **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs
 - **Mode Switching**: Switch between Agent, Plan, and Ask modes
 - **Rollback Last Turn**: Revert files to the state before the most recent agent turn using Local History
@@ -62,7 +64,34 @@ CursorJ communicates with Cursor's agent via the Agent Client Protocol (ACP). It
 
 The plugin declares client capabilities for:
 - **File system**: Read/write files through CursorJ filesystem handlers, with Local History labels for per-turn rollback
+- **Search**: `fs/find_text_in_files` for lexical project search
+- **Editor indexing**: `editor/get_open_files`, `editor/find_symbol`, `editor/list_file_symbols`, `editor/find_references`
 - **Terminal**: Execute shell commands
+
+## Project Indexing
+
+CursorJ uses a hybrid local-first indexing model:
+
+- **Lexical index (default)**: File-content indexing with SQLite persistence for warm starts and incremental updates
+- **Symbol index**: IntelliJ PSI/index-based symbol and reference lookup
+- **Semantic index (optional)**: In-memory chunk index for semantic retrieval (memory-only storage)
+- **Hybrid ranking**: Retrieval results are fused and ranked before prompt context is assembled
+
+Persistence details:
+
+- Lexical metadata and hits are stored under `.cursorj/index/index-v1.db` in the workspace
+- Semantic vectors/chunks are currently memory-only
+- Index lifecycle states include startup build, incremental build, stale rebuild, ready, and failed
+
+Configuration is available in **Settings > Tools > CursorJ**, including:
+
+- Enable/disable project indexing
+- Enable lexical persistence
+- Enable semantic indexing
+- Retrieval limits and timeout
+- Retention days and max DB size
+- Manual "Rebuild index now"
+- Optional chat-surface indexing status messages
 
 ## Building
 
@@ -73,6 +102,25 @@ Requires JDK 21.
 ./gradlew buildPlugin  # Package as installable zip
 ./gradlew runIde       # Launch a sandboxed IDE with the plugin
 ```
+
+## Testing
+
+Run all tests:
+
+```bash
+./gradlew build
+```
+
+Current indexing-focused tests validate:
+
+- lexical search behavior (matching, scope filters, case sensitivity, truncation, binary/size skipping)
+- SQLite persistence behavior (migration, reopen persistence, pruning, normalization, ordering)
+- orchestrator lifecycle/queue behavior (startup, incremental updates, reconcile, telemetry)
+- hybrid retrieval behavior in orchestrator (lexical + symbol + semantic fusion, disabled/timeout fallbacks)
+- ACP handler routing and serialization for indexing methods
+- freshness callback mapping (notify paths and attach-time event mapping via seams)
+
+Thin IntelliJ fixture-based tests for PSI symbol/reference behavior are still recommended as a final integration safety net when targeting parity-level confidence across IDE/platform updates.
 
 ## Releasing
 
