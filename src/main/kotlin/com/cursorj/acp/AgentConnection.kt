@@ -31,6 +31,8 @@ class AgentConnection(
     private val log = Logger.getInstance(AgentConnection::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var _modelInfos: List<AcpProcessManager.ModelInfo> = modelInfos
+    @Volatile
+    private var connectionGeneration = 0L
 
     fun updateModelInfos(infos: List<AcpProcessManager.ModelInfo>) {
         _modelInfos = infos
@@ -98,7 +100,11 @@ class AgentConnection(
             client.connect(processManager.reader!!, processManager.writer!!)
 
             registerHandlers()
-            client.addDisconnectListener { handleDisconnect() }
+            val gen = connectionGeneration
+            client.addDisconnectListener {
+                if (gen == connectionGeneration) handleDisconnect()
+                else log.info("Ignoring stale readLoop disconnect (gen $gen, current $connectionGeneration)")
+            }
             client.addNotificationHandler(visibleSessionUpdateHandler)
 
             log.info("Sending ACP initialize...")
@@ -110,7 +116,7 @@ class AgentConnection(
             lastError = null
             notifyConnectionChanged(true)
 
-            monitorProcess()
+            monitorProcess(gen)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -195,14 +201,18 @@ class AgentConnection(
 
         scope.launch {
             isConnected = false
+            val gen = ++connectionGeneration
             broadcastStatus("Switching model...")
 
             processManager.stop()
             client.disconnect()
 
             connect()
+            if (gen != connectionGeneration) return@launch
             if (isConnected) {
                 broadcastStatus("Switched to $modelId. Type a message to start.")
+            } else {
+                broadcastStatus(lastError ?: "Failed to switch model. Please try again.")
             }
         }
     }
@@ -254,11 +264,11 @@ class AgentConnection(
         }
     }
 
-    private fun monitorProcess() {
+    private fun monitorProcess(gen: Long) {
         scope.launch(Dispatchers.IO) {
             try {
                 val exitCode = processManager.waitForExit()
-                if (exitCode != null) {
+                if (exitCode != null && gen == connectionGeneration) {
                     log.warn("Agent process exited with code $exitCode")
                     handleDisconnect()
                 }
@@ -268,6 +278,7 @@ class AgentConnection(
 
     private fun handleDisconnect() {
         if (!isConnected) return
+        val gen = connectionGeneration
         session?.markActiveTurnInterrupted()
         isConnected = false
         lastError = "Agent disconnected"
@@ -275,6 +286,10 @@ class AgentConnection(
 
         scope.launch {
             delay(2000)
+            if (gen != connectionGeneration) {
+                log.info("Skipping reconnect — connection generation changed ($gen -> $connectionGeneration)")
+                return@launch
+            }
             attemptReconnect()
         }
     }
@@ -297,7 +312,11 @@ class AgentConnection(
                 client.connect(processManager.reader!!, processManager.writer!!)
 
                 registerHandlers()
-                client.addDisconnectListener { handleDisconnect() }
+                val reconnectGen = connectionGeneration
+                client.addDisconnectListener {
+                    if (reconnectGen == connectionGeneration) handleDisconnect()
+                    else log.info("Ignoring stale reconnect disconnect (gen $reconnectGen, current $connectionGeneration)")
+                }
                 client.addNotificationHandler(visibleSessionUpdateHandler)
 
                 client.initialize()
@@ -309,7 +328,7 @@ class AgentConnection(
                 log.info("Reconnected successfully")
                 broadcastStatus("Reconnected. You may need to resend your last message.")
 
-                monitorProcess()
+                monitorProcess(reconnectGen)
                 return
             } catch (e: CancellationException) {
                 throw e
