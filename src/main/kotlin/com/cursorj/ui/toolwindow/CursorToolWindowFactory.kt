@@ -4,6 +4,9 @@ import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpProcessManager
 import com.cursorj.context.ActiveFileProvider
 import com.cursorj.context.SelectionProvider
+import com.cursorj.indexing.WorkspaceIndexOrchestrator
+import com.cursorj.settings.CursorJSettings
+import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbAware
@@ -37,6 +40,7 @@ class CursorJService(
 
     val activeFileProvider = ActiveFileProvider(project)
     val selectionProvider = SelectionProvider(project)
+    val workspaceIndexOrchestrator = WorkspaceIndexOrchestrator(project)
 
     lateinit var tabManager: SessionTabManager
         private set
@@ -52,6 +56,19 @@ class CursorJService(
         instances[project] = this
         tabManager = SessionTabManager(this, toolWindow)
         tabManager.addInitialTab()
+        val indexingListener: (WorkspaceIndexOrchestrator.IndexLifecycleUpdate) -> Unit = { update ->
+            CursorJConnectionStatus.updateIndexing(update.message)
+            if (CursorJSettings.instance.showIndexingStatusInChat) {
+                tabManager.showIndexLifecycle(update)
+            }
+        }
+        workspaceIndexOrchestrator.addLifecycleListener(indexingListener)
+        Disposer.register(this) {
+            workspaceIndexOrchestrator.removeLifecycleListener(indexingListener)
+            CursorJConnectionStatus.updateIndexing(null)
+        }
+        Disposer.register(this, workspaceIndexOrchestrator)
+        workspaceIndexOrchestrator.start()
         fetchModelsAsync()
     }
 
@@ -83,7 +100,13 @@ class CursorJService(
     }
 
     fun createAgentConnection(parentDisposable: Disposable, model: String? = null): AgentConnection {
-        return AgentConnection(project, parentDisposable, availableModelInfos, model)
+        return AgentConnection(
+            project = project,
+            parentDisposable = parentDisposable,
+            modelInfos = availableModelInfos,
+            workspaceIndexOrchestrator = workspaceIndexOrchestrator,
+            initialModel = model,
+        )
     }
 
     override fun dispose() {

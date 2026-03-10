@@ -17,6 +17,15 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         var agentPath: String = "",
         var defaultModel: String = "",
         var autoAttachActiveFile: Boolean = true,
+        var enableProjectIndexing: Boolean = true,
+        var enableLexicalPersistence: Boolean = true,
+        var enableSemanticIndexing: Boolean = false,
+        var retrievalMaxCandidates: Int = 40,
+        var retrievalSnippetCharBudget: Int = 5000,
+        var retrievalTimeoutMs: Int = 2500,
+        var indexRetentionDays: Int = 30,
+        var indexMaxDatabaseMb: Int = 512,
+        var showIndexingStatusInChat: Boolean = true,
         // Legacy field retained for backward compatibility with existing configs.
         var defaultPermissionBehavior: String = "ask",
         var permissionMode: String = "ask-every-time",
@@ -67,6 +76,69 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         get() = synchronized(stateLock) { myState.autoAttachActiveFile }
         set(value) {
             synchronized(stateLock) { myState.autoAttachActiveFile = value }
+            fireSettingsChanged()
+        }
+
+    var enableProjectIndexing: Boolean
+        get() = synchronized(stateLock) { myState.enableProjectIndexing }
+        set(value) {
+            synchronized(stateLock) { myState.enableProjectIndexing = value }
+            fireSettingsChanged()
+        }
+
+    var enableLexicalPersistence: Boolean
+        get() = synchronized(stateLock) { myState.enableLexicalPersistence }
+        set(value) {
+            synchronized(stateLock) { myState.enableLexicalPersistence = value }
+            fireSettingsChanged()
+        }
+
+    var enableSemanticIndexing: Boolean
+        get() = synchronized(stateLock) { myState.enableSemanticIndexing }
+        set(value) {
+            synchronized(stateLock) { myState.enableSemanticIndexing = value }
+            fireSettingsChanged()
+        }
+
+    var retrievalMaxCandidates: Int
+        get() = synchronized(stateLock) { myState.retrievalMaxCandidates.coerceIn(1, 200) }
+        set(value) {
+            synchronized(stateLock) { myState.retrievalMaxCandidates = value.coerceIn(1, 200) }
+            fireSettingsChanged()
+        }
+
+    var retrievalSnippetCharBudget: Int
+        get() = synchronized(stateLock) { myState.retrievalSnippetCharBudget.coerceIn(500, 30000) }
+        set(value) {
+            synchronized(stateLock) { myState.retrievalSnippetCharBudget = value.coerceIn(500, 30000) }
+            fireSettingsChanged()
+        }
+
+    var retrievalTimeoutMs: Int
+        get() = synchronized(stateLock) { myState.retrievalTimeoutMs.coerceIn(250, 20000) }
+        set(value) {
+            synchronized(stateLock) { myState.retrievalTimeoutMs = value.coerceIn(250, 20000) }
+            fireSettingsChanged()
+        }
+
+    var indexRetentionDays: Int
+        get() = synchronized(stateLock) { myState.indexRetentionDays.coerceIn(1, 365) }
+        set(value) {
+            synchronized(stateLock) { myState.indexRetentionDays = value.coerceIn(1, 365) }
+            fireSettingsChanged()
+        }
+
+    var indexMaxDatabaseMb: Int
+        get() = synchronized(stateLock) { myState.indexMaxDatabaseMb.coerceIn(50, 4096) }
+        set(value) {
+            synchronized(stateLock) { myState.indexMaxDatabaseMb = value.coerceIn(50, 4096) }
+            fireSettingsChanged()
+        }
+
+    var showIndexingStatusInChat: Boolean
+        get() = synchronized(stateLock) { myState.showIndexingStatusInChat }
+        set(value) {
+            synchronized(stateLock) { myState.showIndexingStatusInChat = value }
             fireSettingsChanged()
         }
 

@@ -14,6 +14,11 @@ object PermissionPolicy {
         "fs/list_directory",
         "fs/get_file_info",
         "fs/search_files",
+        "fs/find_text_in_files",
+        "editor/get_open_files",
+        "editor/find_symbol",
+        "editor/list_file_symbols",
+        "editor/find_references",
         "terminal/get_output",
         "terminal/wait",
         "terminal/kill",
@@ -118,7 +123,8 @@ object PermissionPolicy {
                 keys.add("shell")
                 extractShellCommandBase(params)?.let { keys.add("shell:$it") }
             }
-            "fs/read_text_file", "fs/list_directory", "fs/get_file_info", "fs/search_files" -> {
+            "fs/read_text_file", "fs/list_directory", "fs/get_file_info", "fs/search_files", "fs/find_text_in_files",
+            "editor/get_open_files", "editor/find_symbol", "editor/list_file_symbols", "editor/find_references" -> {
                 keys.add("fs/read_text_file")
                 keys.add("read")
                 keys.add("search")

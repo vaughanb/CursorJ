@@ -2,8 +2,10 @@ package com.cursorj.settings
 
 import com.cursorj.CursorJBundle
 import com.cursorj.permissions.PermissionMode
+import com.cursorj.ui.toolwindow.CursorJService
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
@@ -12,6 +14,7 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.FormBuilder
 import java.awt.Dimension
+import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -20,6 +23,16 @@ class CursorJConfigurable : Configurable {
     private var agentPathField: TextFieldWithBrowseButton? = null
     private var defaultModelField: JBTextField? = null
     private var autoAttachCheckbox: JBCheckBox? = null
+    private var projectIndexingCheckbox: JBCheckBox? = null
+    private var lexicalPersistenceCheckbox: JBCheckBox? = null
+    private var semanticIndexingCheckbox: JBCheckBox? = null
+    private var showIndexingStatusInChatCheckbox: JBCheckBox? = null
+    private var retrievalMaxCandidatesField: JBTextField? = null
+    private var retrievalSnippetBudgetField: JBTextField? = null
+    private var retrievalTimeoutField: JBTextField? = null
+    private var indexRetentionDaysField: JBTextField? = null
+    private var indexMaxDatabaseMbField: JBTextField? = null
+    private var rebuildIndexButton: JButton? = null
     private var permissionModeCombo: JComboBox<String>? = null
     private var approvedToolsArea: JBTextArea? = null
     private var protectExternalWritesCheckbox: JBCheckBox? = null
@@ -38,6 +51,31 @@ class CursorJConfigurable : Configurable {
         autoAttachCheckbox = JBCheckBox(
             CursorJBundle.message("settings.auto.attach"),
         )
+        projectIndexingCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.indexing.enable"),
+        )
+        lexicalPersistenceCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.indexing.persistence"),
+        )
+        semanticIndexingCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.indexing.semantic"),
+        )
+        showIndexingStatusInChatCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.indexing.showStatusInChat"),
+        )
+        retrievalMaxCandidatesField = JBTextField()
+        retrievalSnippetBudgetField = JBTextField()
+        retrievalTimeoutField = JBTextField()
+        indexRetentionDaysField = JBTextField()
+        indexMaxDatabaseMbField = JBTextField()
+        rebuildIndexButton = JButton(CursorJBundle.message("settings.indexing.rebuild")).apply {
+            addActionListener {
+                val openProjects = ProjectManager.getInstance().openProjects
+                for (project in openProjects) {
+                    CursorJService.getInstance(project)?.workspaceIndexOrchestrator?.requestRebuild("settings-trigger")
+                }
+            }
+        }
         permissionModeCombo = JComboBox(arrayOf(
             CursorJBundle.message("permission.mode.askEveryTime"),
             CursorJBundle.message("permission.mode.runEverything"),
@@ -69,6 +107,41 @@ class CursorJConfigurable : Configurable {
                 false,
             )
             .addComponent(autoAttachCheckbox!!, 1)
+            .addComponent(projectIndexingCheckbox!!, 1)
+            .addComponent(lexicalPersistenceCheckbox!!, 1)
+            .addComponent(semanticIndexingCheckbox!!, 1)
+            .addComponent(showIndexingStatusInChatCheckbox!!, 1)
+            .addLabeledComponent(
+                JBLabel(CursorJBundle.message("settings.indexing.maxCandidates")),
+                retrievalMaxCandidatesField!!,
+                1,
+                false,
+            )
+            .addLabeledComponent(
+                JBLabel(CursorJBundle.message("settings.indexing.snippetBudget")),
+                retrievalSnippetBudgetField!!,
+                1,
+                false,
+            )
+            .addLabeledComponent(
+                JBLabel(CursorJBundle.message("settings.indexing.timeoutMs")),
+                retrievalTimeoutField!!,
+                1,
+                false,
+            )
+            .addLabeledComponent(
+                JBLabel(CursorJBundle.message("settings.indexing.retentionDays")),
+                indexRetentionDaysField!!,
+                1,
+                false,
+            )
+            .addLabeledComponent(
+                JBLabel(CursorJBundle.message("settings.indexing.maxDbMb")),
+                indexMaxDatabaseMbField!!,
+                1,
+                false,
+            )
+            .addComponent(rebuildIndexButton!!, 1)
             .addLabeledComponent(
                 JBLabel(CursorJBundle.message("settings.permission.mode")),
                 permissionModeCombo!!,
@@ -93,6 +166,15 @@ class CursorJConfigurable : Configurable {
         return agentPathField?.text != settings.agentPath ||
             defaultModelField?.text != settings.defaultModel ||
             autoAttachCheckbox?.isSelected != settings.autoAttachActiveFile ||
+            projectIndexingCheckbox?.isSelected != settings.enableProjectIndexing ||
+            lexicalPersistenceCheckbox?.isSelected != settings.enableLexicalPersistence ||
+            semanticIndexingCheckbox?.isSelected != settings.enableSemanticIndexing ||
+            showIndexingStatusInChatCheckbox?.isSelected != settings.showIndexingStatusInChat ||
+            readIntField(retrievalMaxCandidatesField, settings.retrievalMaxCandidates, 1, 200) != settings.retrievalMaxCandidates ||
+            readIntField(retrievalSnippetBudgetField, settings.retrievalSnippetCharBudget, 500, 30000) != settings.retrievalSnippetCharBudget ||
+            readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000) != settings.retrievalTimeoutMs ||
+            readIntField(indexRetentionDaysField, settings.indexRetentionDays, 1, 365) != settings.indexRetentionDays ||
+            readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096) != settings.indexMaxDatabaseMb ||
             selectedPermissionMode() != settings.permissionMode ||
             protectExternalWritesCheckbox?.isSelected != settings.protectExternalFileWrites ||
             readApprovedTools() != settings.getApprovedPermissionKeys()
@@ -103,6 +185,15 @@ class CursorJConfigurable : Configurable {
         settings.agentPath = agentPathField?.text ?: ""
         settings.defaultModel = defaultModelField?.text ?: ""
         settings.autoAttachActiveFile = autoAttachCheckbox?.isSelected ?: true
+        settings.enableProjectIndexing = projectIndexingCheckbox?.isSelected ?: true
+        settings.enableLexicalPersistence = lexicalPersistenceCheckbox?.isSelected ?: true
+        settings.enableSemanticIndexing = semanticIndexingCheckbox?.isSelected ?: false
+        settings.showIndexingStatusInChat = showIndexingStatusInChatCheckbox?.isSelected ?: true
+        settings.retrievalMaxCandidates = readIntField(retrievalMaxCandidatesField, settings.retrievalMaxCandidates, 1, 200)
+        settings.retrievalSnippetCharBudget = readIntField(retrievalSnippetBudgetField, settings.retrievalSnippetCharBudget, 500, 30000)
+        settings.retrievalTimeoutMs = readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000)
+        settings.indexRetentionDays = readIntField(indexRetentionDaysField, settings.indexRetentionDays, 1, 365)
+        settings.indexMaxDatabaseMb = readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096)
         settings.permissionMode = selectedPermissionMode()
         settings.protectExternalFileWrites = protectExternalWritesCheckbox?.isSelected ?: true
         settings.setApprovedPermissionKeys(readApprovedTools())
@@ -113,6 +204,15 @@ class CursorJConfigurable : Configurable {
         agentPathField?.text = settings.agentPath
         defaultModelField?.text = settings.defaultModel
         autoAttachCheckbox?.isSelected = settings.autoAttachActiveFile
+        projectIndexingCheckbox?.isSelected = settings.enableProjectIndexing
+        lexicalPersistenceCheckbox?.isSelected = settings.enableLexicalPersistence
+        semanticIndexingCheckbox?.isSelected = settings.enableSemanticIndexing
+        showIndexingStatusInChatCheckbox?.isSelected = settings.showIndexingStatusInChat
+        retrievalMaxCandidatesField?.text = settings.retrievalMaxCandidates.toString()
+        retrievalSnippetBudgetField?.text = settings.retrievalSnippetCharBudget.toString()
+        retrievalTimeoutField?.text = settings.retrievalTimeoutMs.toString()
+        indexRetentionDaysField?.text = settings.indexRetentionDays.toString()
+        indexMaxDatabaseMbField?.text = settings.indexMaxDatabaseMb.toString()
         permissionModeCombo?.selectedIndex = when (PermissionMode.fromId(settings.permissionMode)) {
             PermissionMode.RUN_EVERYTHING -> 1
             else -> 0
@@ -137,10 +237,25 @@ class CursorJConfigurable : Configurable {
             ?: emptySet()
     }
 
+    private fun readIntField(field: JBTextField?, fallback: Int, min: Int, max: Int): Int {
+        val parsed = field?.text?.trim()?.toIntOrNull() ?: fallback
+        return parsed.coerceIn(min, max)
+    }
+
     override fun disposeUIResources() {
         agentPathField = null
         defaultModelField = null
         autoAttachCheckbox = null
+        projectIndexingCheckbox = null
+        lexicalPersistenceCheckbox = null
+        semanticIndexingCheckbox = null
+        showIndexingStatusInChatCheckbox = null
+        retrievalMaxCandidatesField = null
+        retrievalSnippetBudgetField = null
+        retrievalTimeoutField = null
+        indexRetentionDaysField = null
+        indexMaxDatabaseMbField = null
+        rebuildIndexButton = null
         permissionModeCombo = null
         approvedToolsArea = null
         protectExternalWritesCheckbox = null

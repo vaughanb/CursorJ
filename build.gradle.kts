@@ -27,6 +27,7 @@ repositories {
 dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.sqlite.jdbc)
     testImplementation(kotlin("test"))
     testRuntimeOnly("junit:junit:4.13.2")
 

@@ -4,6 +4,7 @@ import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.messages.ContentBlock
+import com.cursorj.indexing.WorkspaceIndexOrchestrator
 import com.cursorj.ui.chat.ChatPanel
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.icons.AllIcons
@@ -200,6 +201,19 @@ class SessionTabManager(
     fun getActiveSession(): AcpSession? = getActiveTab()?.session
 
     fun getActiveConnection(): AgentConnection? = getActiveTab()?.connection
+
+    fun showIndexLifecycle(update: WorkspaceIndexOrchestrator.IndexLifecycleUpdate) {
+        val message = when (update.state) {
+            WorkspaceIndexOrchestrator.IndexLifecycleState.STARTUP_BUILD -> update.message
+            WorkspaceIndexOrchestrator.IndexLifecycleState.INCREMENTAL_BUILD -> update.message
+            WorkspaceIndexOrchestrator.IndexLifecycleState.STALE_REBUILDING -> update.message
+            WorkspaceIndexOrchestrator.IndexLifecycleState.FAILED -> update.message
+            WorkspaceIndexOrchestrator.IndexLifecycleState.READY -> update.message
+        }
+        for (tab in tabs) {
+            tab.chatPanel.showStatus(message)
+        }
+    }
 
     fun addSelectionToActiveChat(label: String, blocks: List<ContentBlock>): Boolean {
         if (blocks.isEmpty()) return false

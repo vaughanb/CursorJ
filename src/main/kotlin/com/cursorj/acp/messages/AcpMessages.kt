@@ -60,12 +60,22 @@ data class ClientInfo(
 data class FsCapabilities(
     val readTextFile: Boolean = true,
     val writeTextFile: Boolean = true,
+    val findTextInFiles: Boolean = true,
+)
+
+@Serializable
+data class EditorCapabilities(
+    val getOpenFiles: Boolean = true,
+    val findSymbol: Boolean = true,
+    val listFileSymbols: Boolean = true,
+    val findReferences: Boolean = true,
 )
 
 @Serializable
 data class ClientCapabilities(
     val fs: FsCapabilities = FsCapabilities(),
     val terminal: Boolean = true,
+    val editor: EditorCapabilities = EditorCapabilities(),
 )
 
 @Serializable
@@ -320,6 +330,91 @@ data class ReadTextFileResult(
 data class WriteTextFileParams(
     val path: String,
     val content: String,
+)
+
+@Serializable
+data class FindTextInFilesParams(
+    val query: String? = null,
+    val pattern: String? = null,
+    val path: String? = null,
+    val caseSensitive: Boolean = false,
+    val maxResults: Int = 50,
+    val contextLines: Int = 2,
+)
+
+@Serializable
+data class TextSearchMatch(
+    val path: String,
+    val line: Int,
+    val column: Int = 1,
+    val snippet: String,
+    val before: List<String> = emptyList(),
+    val after: List<String> = emptyList(),
+    val score: Double? = null,
+)
+
+@Serializable
+data class FindTextInFilesResult(
+    val matches: List<TextSearchMatch> = emptyList(),
+    val truncated: Boolean = false,
+)
+
+@Serializable
+data class OpenFilesResult(
+    val files: List<String> = emptyList(),
+)
+
+@Serializable
+data class SymbolQueryParams(
+    val query: String,
+    val path: String? = null,
+    val maxResults: Int = 25,
+)
+
+@Serializable
+data class FileSymbolsParams(
+    val path: String,
+    val maxResults: Int = 200,
+)
+
+@Serializable
+data class ReferencesParams(
+    val path: String,
+    val line: Int,
+    val column: Int,
+    val maxResults: Int = 100,
+)
+
+@Serializable
+data class SymbolLocation(
+    val path: String,
+    val startLine: Int,
+    val startColumn: Int,
+    val endLine: Int,
+    val endColumn: Int,
+)
+
+@Serializable
+data class SymbolInfo(
+    val id: String,
+    val kind: String,
+    val name: String,
+    val displayName: String? = null,
+    val fqName: String? = null,
+    val location: SymbolLocation? = null,
+    val score: Double? = null,
+)
+
+@Serializable
+data class SymbolQueryResult(
+    val symbols: List<SymbolInfo> = emptyList(),
+    val truncated: Boolean = false,
+)
+
+@Serializable
+data class ReferencesResult(
+    val references: List<SymbolLocation> = emptyList(),
+    val truncated: Boolean = false,
 )
 
 @Serializable

@@ -264,6 +264,7 @@ class ChatPanel(private val service: CursorJService) : Disposable {
                 RollbackStatus.SUCCESS -> {
                     showStatus(CursorJBundle.message("chat.rollback.success"))
                     refreshProjectTreeThrottled(force = true)
+                    service.workspaceIndexOrchestrator.notifyRollback()
                 }
                 RollbackStatus.NO_CHECKPOINT -> {
                     showStatus(CursorJBundle.message("chat.rollback.unavailable"))
@@ -468,7 +469,7 @@ class ChatPanel(private val service: CursorJService) : Disposable {
         }
     }
 
-    private fun buildContentBlocks(text: String): List<ContentBlock> {
+    private suspend fun buildContentBlocks(text: String): List<ContentBlock> {
         val blocks = mutableListOf<ContentBlock>()
         blocks.add(TextContent(text = text))
 
@@ -479,8 +480,47 @@ class ChatPanel(private val service: CursorJService) : Disposable {
             blocks.add(file)
         }
         blocks.addAll(pendingSelectionQueue.flattenBlocks())
+        blocks.addAll(buildRetrievedContext(text))
 
         return blocks
+    }
+
+    private suspend fun buildRetrievedContext(text: String): List<ContentBlock> {
+        val settings = CursorJSettings.instance
+        if (!settings.enableProjectIndexing) return emptyList()
+
+        val openFiles = FileEditorManager.getInstance(service.project).openFiles
+            .map { it.path.replace('\\', '/') }
+        val pathHint = service.activeFileProvider.activeFile?.path
+        val retrieval = service.workspaceIndexOrchestrator.retrieveForPrompt(
+            text = text,
+            pathHint = pathHint,
+            openFiles = openFiles,
+        )
+        if (retrieval.hits.isEmpty()) return emptyList()
+
+        var remainingBudget = settings.retrievalSnippetCharBudget
+        val selectedHits = mutableListOf<com.cursorj.indexing.model.RetrievalHit>()
+        for (hit in retrieval.hits) {
+            if (remainingBudget <= 0) break
+            val cost = hit.snippet.length + 120
+            if (cost > remainingBudget && selectedHits.isNotEmpty()) break
+            selectedHits.add(hit)
+            remainingBudget -= cost
+        }
+        if (selectedHits.isEmpty()) return emptyList()
+
+        val mergedText = buildString {
+            appendLine("Indexed project context:")
+            for ((index, hit) in selectedHits.withIndex()) {
+                appendLine()
+                appendLine("[$index] ${hit.path}:${hit.startLine}-${hit.endLine} (${hit.source}, score=${"%.2f".format(hit.score)})")
+                appendLine("```")
+                appendLine(hit.snippet)
+                appendLine("```")
+            }
+        }
+        return listOf(TextContent(mergedText))
     }
 
     private fun clearQueuedSelectionContext() {

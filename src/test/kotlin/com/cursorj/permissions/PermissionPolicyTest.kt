@@ -73,6 +73,33 @@ class PermissionPolicyTest {
     }
 
     @Test
+    fun `ask mode allows read-only indexing methods without approval`() {
+        val allowed = PermissionPolicy.shouldAllowMethodExecution(
+            mode = PermissionMode.ASK_EVERY_TIME,
+            approvedKeys = emptySet(),
+            method = "fs/find_text_in_files",
+            params = buildJsonObject {
+                put("query", "symbol")
+            },
+        )
+        assertTrue(allowed)
+    }
+
+    @Test
+    fun `ask mode allows editor symbol lookup methods without approval`() {
+        val methodList = listOf("editor/get_open_files", "editor/find_symbol", "editor/list_file_symbols", "editor/find_references")
+        for (method in methodList) {
+            val allowed = PermissionPolicy.shouldAllowMethodExecution(
+                mode = PermissionMode.ASK_EVERY_TIME,
+                approvedKeys = emptySet(),
+                method = method,
+                params = buildJsonObject {},
+            )
+            assertTrue(allowed, "Expected read-only method to be allowed: $method")
+        }
+    }
+
+    @Test
     fun `approved shell command base allows terminal create`() {
         val allowed = PermissionPolicy.shouldAllowMethodExecution(
             mode = PermissionMode.ASK_EVERY_TIME,

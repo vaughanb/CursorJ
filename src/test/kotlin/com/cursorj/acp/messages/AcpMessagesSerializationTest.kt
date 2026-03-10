@@ -51,7 +51,17 @@ class AcpMessagesSerializationTest {
         assertEquals(1, params.protocolVersion)
         assertTrue(params.clientCapabilities.fs.readTextFile)
         assertTrue(params.clientCapabilities.fs.writeTextFile)
+        assertTrue(params.clientCapabilities.fs.findTextInFiles)
         assertTrue(params.clientCapabilities.terminal)
+        assertTrue(params.clientCapabilities.editor.getOpenFiles)
+        assertTrue(params.clientCapabilities.editor.findSymbol)
         assertEquals("cursorj", params.clientInfo.name)
+    }
+
+    @Test
+    fun `find text params support query or pattern`() {
+        val params = FindTextInFilesParams(pattern = "TODO", maxResults = 20)
+        assertEquals("TODO", params.pattern)
+        assertEquals(20, params.maxResults)
     }
 }

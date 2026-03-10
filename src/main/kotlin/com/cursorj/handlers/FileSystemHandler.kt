@@ -7,6 +7,7 @@ import com.cursorj.acp.messages.WriteTextFileParams
 import com.cursorj.permissions.PermissionMode
 import com.cursorj.permissions.PermissionPolicy
 import com.cursorj.settings.CursorJSettings
+import com.cursorj.ui.toolwindow.CursorJService
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -72,6 +73,7 @@ class FileSystemHandler(private val project: Project) {
         ioFile.writeText(request.content, Charsets.UTF_8)
 
         refreshAfterFileChange(ioFile)
+        CursorJService.getInstance(project)?.workspaceIndexOrchestrator?.notifyFileWritten(ioFile.absolutePath)
         return JsonObject(emptyMap())
     }
 
@@ -154,6 +156,7 @@ class FileSystemHandler(private val project: Project) {
         dir.mkdirs()
 
         refreshAfterFileChange(dir)
+        CursorJService.getInstance(project)?.workspaceIndexOrchestrator?.notifyFileWritten(dir.absolutePath)
         return JsonObject(emptyMap())
     }
 

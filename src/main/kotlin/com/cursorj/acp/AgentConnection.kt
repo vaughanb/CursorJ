@@ -4,8 +4,10 @@ import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ConfigOptionValue
 import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.handlers.FileSystemHandler
+import com.cursorj.handlers.IndexSearchHandler
 import com.cursorj.handlers.PermissionHandler
 import com.cursorj.handlers.TerminalHandler
+import com.cursorj.indexing.WorkspaceIndexOrchestrator
 import com.cursorj.rollback.TurnRollbackManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
@@ -23,6 +25,7 @@ class AgentConnection(
     private val project: Project,
     private val parentDisposable: Disposable,
     modelInfos: List<AcpProcessManager.ModelInfo>,
+    private val workspaceIndexOrchestrator: WorkspaceIndexOrchestrator? = null,
     initialModel: String? = null,
 ) : Disposable {
     private val log = Logger.getInstance(AgentConnection::class.java)
@@ -39,6 +42,7 @@ class AgentConnection(
     private val fileSystemHandler = FileSystemHandler(project)
     private val terminalHandler = TerminalHandler(project)
     private val permissionHandler = PermissionHandler()
+    private val indexSearchHandler = workspaceIndexOrchestrator?.let { IndexSearchHandler(it) }
 
     var session: AcpSession? = null
         private set
@@ -186,15 +190,14 @@ class AgentConnection(
         terminalHandler.register(client)
         permissionHandler.register(client)
         client.addServerRequestHandler { method, params ->
+            indexSearchHandler?.handle(method, params)?.let { return@addServerRequestHandler it }
             when (method) {
                 "_cursor/create_plan" -> {
                     log.info("_cursor/create_plan received, params keys: ${(params as? JsonObject)?.keys}")
                     session?.handleCreatePlan(params)
                     JsonObject(emptyMap())
                 }
-                "fs/find_text_in_files",
-                "editor/apply_edit",
-                "editor/get_open_files" -> {
+                "editor/apply_edit" -> {
                     log.info("Stub response for unimplemented method: $method")
                     JsonObject(emptyMap())
                 }
