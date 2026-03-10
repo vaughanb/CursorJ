@@ -18,6 +18,7 @@ import com.intellij.openapi.project.Project
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
@@ -55,6 +56,7 @@ class WorkspaceIndexOrchestrator(
     private val lifecycleListeners = CopyOnWriteArrayList<(IndexLifecycleUpdate) -> Unit>()
     private val reindexQueue = Channel<ReindexTask>(Channel.UNLIMITED)
     private val queueDepth = AtomicLong(0)
+    private val reconcileQueued = AtomicBoolean(false)
 
     private val settings: CursorJSettings
         get() = settingsProvider()
@@ -288,7 +290,13 @@ class WorkspaceIndexOrchestrator(
             is ReindexTask.StartupWarmup -> runStartupWarmup()
             is ReindexTask.Upsert -> runIncrementalUpsert(task.path)
             is ReindexTask.Remove -> runIncrementalRemove(task.path)
-            is ReindexTask.Reconcile -> runReconcile(task.reason)
+            is ReindexTask.Reconcile -> {
+                try {
+                    runReconcile(task.reason)
+                } finally {
+                    reconcileQueued.set(false)
+                }
+            }
         }
     }
 
@@ -389,9 +397,18 @@ class WorkspaceIndexOrchestrator(
     }
 
     private fun enqueueTask(task: ReindexTask) {
-        queueDepth.incrementAndGet()
-        telemetry.recordQueueDepth(queueDepth.get())
-        reindexQueue.trySend(task)
+        if (task is ReindexTask.Reconcile && !reconcileQueued.compareAndSet(false, true)) {
+            return
+        }
+        val queued = reindexQueue.trySend(task).isSuccess
+        if (!queued) {
+            if (task is ReindexTask.Reconcile) {
+                reconcileQueued.set(false)
+            }
+            return
+        }
+        val depth = queueDepth.incrementAndGet()
+        telemetry.recordQueueDepth(depth)
     }
 
     private fun emitLifecycle(update: IndexLifecycleUpdate) {

@@ -5,6 +5,7 @@ import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class StoredDocument(
     val path: String,
@@ -34,6 +35,7 @@ class SQLiteIndexStore(
     fun open() {
         if (connection != null) return
         dbFile.parentFile?.mkdirs()
+        ensureDriverRegistered()
         val jdbcUrl = "jdbc:sqlite:${dbFile.absolutePath.replace('\\', '/')}"
         connection = DriverManager.getConnection(jdbcUrl).apply {
             autoCommit = true
@@ -260,5 +262,22 @@ class SQLiteIndexStore(
         runCatching { connection?.close() }
             .onFailure { log.warn("Failed closing SQLite connection", it) }
         connection = null
+    }
+
+    private fun ensureDriverRegistered() {
+        if (driverLoaded.get()) return
+        synchronized(driverLoaded) {
+            if (driverLoaded.get()) return
+            try {
+                Class.forName("org.sqlite.JDBC")
+                driverLoaded.set(true)
+            } catch (e: ClassNotFoundException) {
+                throw IllegalStateException("SQLite JDBC driver not found on classpath", e)
+            }
+        }
+    }
+
+    companion object {
+        private val driverLoaded = AtomicBoolean(false)
     }
 }

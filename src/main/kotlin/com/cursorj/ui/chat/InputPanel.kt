@@ -164,6 +164,8 @@ class InputPanel {
     var onSelectionChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
     var onModelChanged: ((configId: String, value: String) -> Unit)? = null
+    var onHistoryPrev: ((String) -> String?)? = null
+    var onHistoryNext: ((String) -> String?)? = null
 
     val component: JComponent get() = rootPanel
     val dropTargetComponent: JComponent get() = textArea
@@ -215,6 +217,27 @@ class InputPanel {
                 if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
                     e.consume()
                     doSend()
+                    return
+                }
+
+                if (!e.isShiftDown && !e.isControlDown && !e.isAltDown && !e.isMetaDown) {
+                    if (e.keyCode == KeyEvent.VK_UP && isCaretOnFirstLine()) {
+                        val replacement = onHistoryPrev?.invoke(getInputText())
+                        if (replacement != null) {
+                            e.consume()
+                            setInputText(replacement)
+                        }
+                        return
+                    }
+
+                    if (e.keyCode == KeyEvent.VK_DOWN && isCaretOnLastLine()) {
+                        val replacement = onHistoryNext?.invoke(getInputText())
+                        if (replacement != null) {
+                            e.consume()
+                            setInputText(replacement)
+                        }
+                        return
+                    }
                 }
             }
         })
@@ -311,9 +334,17 @@ class InputPanel {
         rollbackButton.isEnabled = rollbackAvailable && !processing
         textArea.isEditable = !processing
         if (!processing) {
-            textArea.text = ""
+            setInputText("")
             textArea.requestFocusInWindow()
         }
+    }
+
+    fun getInputText(): String = textArea.text
+
+    fun setInputText(text: String) {
+        textArea.text = text
+        textArea.caretPosition = textArea.document.length
+        adjustTextAreaHeight()
     }
 
     fun setRollbackEnabled(enabled: Boolean) {
@@ -401,12 +432,42 @@ class InputPanel {
     }
 
     private fun doSend() {
-        val text = textArea.text.trim()
+        val text = getInputText().trim()
         if (text.isNotEmpty()) {
-            textArea.text = ""
-            adjustTextAreaHeight()
+            setInputText("")
             onSend?.invoke(text)
         }
+    }
+
+    private fun isCaretOnFirstLine(): Boolean {
+        return isCaretOnVisualBoundary(first = true)
+    }
+
+    private fun isCaretOnLastLine(): Boolean {
+        return isCaretOnVisualBoundary(first = false)
+    }
+
+    private fun isCaretOnVisualBoundary(first: Boolean): Boolean {
+        return runCatching {
+            val length = textArea.document.length
+            val caretPos = textArea.caretPosition.coerceIn(0, length)
+            val caretY = modelY(caretPos) ?: return@runCatching true
+            val edgeY = if (first) {
+                modelY(0)
+            } else {
+                modelY(length) ?: modelY((length - 1).coerceAtLeast(0))
+            } ?: return@runCatching true
+            if (first) {
+                caretY <= edgeY + visualLineEpsilonPx
+            } else {
+                caretY >= edgeY - visualLineEpsilonPx
+            }
+        }.getOrDefault(true)
+    }
+
+    private fun modelY(offset: Int): Double? {
+        val bounded = offset.coerceIn(0, textArea.document.length)
+        return textArea.modelToView2D(bounded)?.y
     }
 
     private fun adjustTextAreaHeight() {
@@ -430,5 +491,9 @@ class InputPanel {
             rootPanel.revalidate()
             rootPanel.repaint()
         }
+    }
+
+    companion object {
+        private const val visualLineEpsilonPx = 0.5
     }
 }

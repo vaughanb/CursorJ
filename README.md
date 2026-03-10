@@ -91,7 +91,7 @@ Configuration is available in **Settings > Tools > CursorJ**, including:
 - Retrieval limits and timeout
 - Retention days and max DB size
 - Manual "Rebuild index now"
-- Optional chat-surface indexing status messages
+- Status-bar indexing lifecycle updates
 
 ## Building
 

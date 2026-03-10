@@ -419,8 +419,18 @@ data class ReferencesResult(
 
 @Serializable
 data class TerminalCreateParams(
+    val sessionId: String? = null,
     val command: String,
+    val args: List<String> = emptyList(),
+    val env: List<TerminalEnvVar> = emptyList(),
     val cwd: String? = null,
+    val outputByteLimit: Int? = null,
+)
+
+@Serializable
+data class TerminalEnvVar(
+    val name: String,
+    val value: String,
 )
 
 @Serializable
@@ -430,21 +440,32 @@ data class TerminalCreateResult(
 
 @Serializable
 data class TerminalGetOutputParams(
+    val sessionId: String? = null,
     val terminalId: String,
+)
+
+@Serializable
+data class TerminalExitStatus(
+    val exitCode: Int? = null,
+    val signal: String? = null,
 )
 
 @Serializable
 data class TerminalGetOutputResult(
     val output: String,
     val exitCode: Int? = null,
+    val truncated: Boolean = false,
+    val exitStatus: TerminalExitStatus? = null,
 )
 
 @Serializable
 data class TerminalIdParams(
+    val sessionId: String? = null,
     val terminalId: String,
 )
 
 @Serializable
 data class TerminalWaitResult(
-    val exitCode: Int,
+    val exitCode: Int? = null,
+    val signal: String? = null,
 )

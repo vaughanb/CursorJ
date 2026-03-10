@@ -137,16 +137,60 @@ class AgentConnection(
             result.configOptions + buildModelConfigOption()
         }
 
+        val previous = session
         val newSession = AcpSession(result.sessionId, client, rollbackManager, configOptions)
         session = newSession
+        previous?.dispose()
 
         return newSession
+    }
+
+    suspend fun loadSession(sessionId: String): AcpSession {
+        val normalizedSessionId = sessionId.trim()
+        require(normalizedSessionId.isNotBlank()) { "sessionId must not be blank" }
+        log.info("Loading ACP session: $normalizedSessionId")
+
+        // Register a provisional visible session first so any in-flight session/update
+        // notifications emitted during session/load are routed and captured.
+        val previous = session
+        val provisional = AcpSession(
+            sessionId = normalizedSessionId,
+            client = client,
+            rollbackManager = rollbackManager,
+            initialConfigOptions = buildModelConfigOption(),
+        )
+        session = provisional
+        previous?.dispose()
+
+        return try {
+            val result = client.sessionLoad(normalizedSessionId)
+            if (result.sessionId == normalizedSessionId) {
+                provisional
+            } else {
+                val canonical = AcpSession(
+                    sessionId = result.sessionId,
+                    client = client,
+                    rollbackManager = rollbackManager,
+                    initialConfigOptions = buildModelConfigOption(),
+                )
+                session = canonical
+                provisional.dispose()
+                canonical
+            }
+        } catch (e: Exception) {
+            if (session === provisional) {
+                session = null
+            }
+            provisional.dispose()
+            throw e
+        }
     }
 
     fun changeModel(modelId: String) {
         log.info("Changing model to: $modelId")
         selectedModel = modelId
         processManager.modelOverride = modelId
+        session?.dispose()
         session = null
 
         scope.launch {
@@ -195,6 +239,10 @@ class AgentConnection(
                 "_cursor/create_plan" -> {
                     log.info("_cursor/create_plan received, params keys: ${(params as? JsonObject)?.keys}")
                     session?.handleCreatePlan(params)
+                    JsonObject(emptyMap())
+                }
+                "_cursor/update_todos" -> {
+                    session?.handleUpdateTodos(params)
                     JsonObject(emptyMap())
                 }
                 "editor/apply_edit" -> {
@@ -301,6 +349,8 @@ class AgentConnection(
 
     override fun dispose() {
         scope.cancel()
+        session?.dispose()
+        session = null
         terminalHandler.disposeAll()
     }
 }

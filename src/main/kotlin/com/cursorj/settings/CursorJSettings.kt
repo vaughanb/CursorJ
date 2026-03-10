@@ -32,6 +32,7 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         var permissionMode: String = "ask-every-time",
         var approvedPermissionKeys: MutableList<String> = mutableListOf(),
         var protectExternalFileWrites: Boolean = true,
+        var enableAcpRawLogging: Boolean = false,
         var runEverythingConfirmationAcknowledged: Boolean = false,
         var savedSessionIds: MutableList<String> = mutableListOf(),
     )
@@ -170,6 +171,13 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         get() = synchronized(stateLock) { myState.protectExternalFileWrites }
         set(value) {
             synchronized(stateLock) { myState.protectExternalFileWrites = value }
+            fireSettingsChanged()
+        }
+
+    var enableAcpRawLogging: Boolean
+        get() = synchronized(stateLock) { myState.enableAcpRawLogging }
+        set(value) {
+            synchronized(stateLock) { myState.enableAcpRawLogging = value }
             fireSettingsChanged()
         }
 

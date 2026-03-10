@@ -59,6 +59,28 @@ class MessageListPanel {
         scrollToBottom()
     }
 
+    fun replaceConversation(messages: List<ChatMessage>) {
+        progressIndicator?.stop()
+        progressIndicator = null
+        buildButtonPanel = null
+        permissionCards.clear()
+        toolCallLabels.clear()
+        streamingRenderer = null
+        innerPanel.removeAll()
+        messageComponents.clear()
+
+        for (message in messages) {
+            if (message.content.isBlank()) continue
+            val renderer = MessageRenderer(message.copy(isStreaming = false))
+            innerPanel.add(renderer.component)
+            messageComponents.add(renderer)
+        }
+
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
     fun showProgress(text: String = "Agent is working...", color: Color? = null) {
         if (progressIndicator != null) {
             progressIndicator!!.updateText(text)

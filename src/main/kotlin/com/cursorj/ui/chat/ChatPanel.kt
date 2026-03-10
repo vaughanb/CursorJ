@@ -3,6 +3,7 @@ package com.cursorj.ui.chat
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
+import com.cursorj.acp.ChatMessage
 import com.cursorj.acp.SessionMode
 import com.cursorj.acp.ToolActivity
 import com.cursorj.acp.messages.*
@@ -27,17 +28,20 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
-import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
-class ChatPanel(private val service: CursorJService) : Disposable {
+class ChatPanel(
+    private val service: CursorJService,
+    initialHistorySessionKey: String,
+) : Disposable {
     private val log = Logger.getInstance(ChatPanel::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val rootPanel = JPanel(BorderLayout())
     private val messageListPanel = MessageListPanel()
     private val inputPanel = InputPanel()
+    private var historySessionKey: String = initialHistorySessionKey
 
     private var connection: AgentConnection? = null
     private var session: AcpSession? = null
@@ -47,6 +51,7 @@ class ChatPanel(private val service: CursorJService) : Disposable {
     private val permissionRequestSeq = AtomicInteger(1)
     private val pendingPermissionResponses = ConcurrentHashMap<String, CompletableFuture<String>>()
     private var desiredMode: SessionMode = SessionMode.AGENT
+    private var firstPromptCarryoverContext: String? = null
     private var lastProjectTreeRefreshAt = 0L
     private val minRefreshIntervalMs = 750L
 
@@ -61,8 +66,6 @@ class ChatPanel(private val service: CursorJService) : Disposable {
     }
 
     var onFirstPrompt: ((String) -> Unit)? = null
-    var tabLabel: JLabel? = null
-
     val component: JComponent get() = rootPanel
 
     init {
@@ -81,6 +84,12 @@ class ChatPanel(private val service: CursorJService) : Disposable {
         inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onModelChanged = { configId, value -> handleConfigOptionChange(configId, value) }
+        inputPanel.onHistoryPrev = { currentInput ->
+            service.promptHistoryManager.previous(historySessionKey, currentInput)
+        }
+        inputPanel.onHistoryNext = { currentInput ->
+            service.promptHistoryManager.next(historySessionKey, currentInput)
+        }
 
         val dragDrop = DragDropProvider { blocks ->
             for (block in blocks) {
@@ -114,7 +123,21 @@ class ChatPanel(private val service: CursorJService) : Disposable {
 
     fun bindSession(session: AcpSession) {
         this.session = session
+        val existingMessages = session.messages.filter { !it.isStreaming && it.content.isNotBlank() }
+        if (existingMessages.isNotEmpty()) {
+            service.chatTranscriptManager.replaceSession(historySessionKey, existingMessages)
+            firstPromptCarryoverContext = null
+        }
+        SwingUtilities.invokeLater {
+            if (existingMessages.isNotEmpty()) {
+                messageListPanel.replaceConversation(existingMessages)
+            }
+            refreshRollbackAvailability()
+        }
         session.addMessageListener { message ->
+            if (!message.isStreaming) {
+                service.chatTranscriptManager.addMessage(historySessionKey, message)
+            }
             SwingUtilities.invokeLater {
                 if (message.isStreaming) {
                     commitPendingToolCall()
@@ -173,12 +196,16 @@ class ChatPanel(private val service: CursorJService) : Disposable {
                         log.warn("Failed to set mode before prompt", e)
                     }
                 }
-                val contentBlocks = buildContentBlocks(text)
+                val carryoverContext = firstPromptCarryoverContext
+                val contentBlocks = buildContentBlocks(text, carryoverContext)
                 SwingUtilities.invokeLater {
                     inputPanel.setProcessing(true)
                     refreshRollbackAvailability()
                 }
                 s.sendPrompt(contentBlocks)
+                if (!carryoverContext.isNullOrBlank()) {
+                    firstPromptCarryoverContext = null
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -219,6 +246,8 @@ class ChatPanel(private val service: CursorJService) : Disposable {
 
     private fun handleSend(text: String) {
         if (text.isBlank()) return
+        service.promptHistoryManager.addPrompt(historySessionKey, text)
+        service.promptHistoryManager.clearNavigation(historySessionKey)
         if (session == null) {
             onFirstPrompt?.invoke(text)
         } else {
@@ -232,8 +261,23 @@ class ChatPanel(private val service: CursorJService) : Disposable {
             SwingUtilities.invokeLater {
                 clearQueuedSelectionContext()
                 inputPanel.setProcessing(false)
+                service.promptHistoryManager.clearNavigation(historySessionKey)
                 refreshRollbackAvailability()
             }
+        }
+    }
+
+    fun updateHistorySessionKey(sessionKey: String) {
+        historySessionKey = sessionKey
+        service.promptHistoryManager.clearNavigation(historySessionKey)
+    }
+
+    fun applyLocalTranscriptFallback(messages: List<ChatMessage>, carryoverContext: String?) {
+        if (messages.isEmpty()) return
+        firstPromptCarryoverContext = carryoverContext
+        SwingUtilities.invokeLater {
+            messageListPanel.replaceConversation(messages)
+            refreshRollbackAvailability()
         }
     }
 
@@ -469,9 +513,12 @@ class ChatPanel(private val service: CursorJService) : Disposable {
         }
     }
 
-    private suspend fun buildContentBlocks(text: String): List<ContentBlock> {
+    private suspend fun buildContentBlocks(text: String, carryoverContext: String?): List<ContentBlock> {
         val blocks = mutableListOf<ContentBlock>()
         blocks.add(TextContent(text = text))
+        if (!carryoverContext.isNullOrBlank()) {
+            blocks.add(TextContent(carryoverContext))
+        }
 
         if (CursorJSettings.instance.autoAttachActiveFile) {
             blocks.addAll(service.activeFileProvider.buildContextBlocks())

@@ -4,6 +4,8 @@ import com.cursorj.acp.messages.*
 import com.cursorj.rollback.RollbackResult
 import com.cursorj.rollback.TurnRollbackManager
 import com.intellij.openapi.diagnostic.Logger
+import kotlinx.coroutines.*
+import kotlinx.coroutines.selects.select
 import kotlinx.serialization.json.*
 
 enum class SessionMode(val value: String) {
@@ -36,6 +38,7 @@ class AcpSession(
 ) {
     private val log = Logger.getInstance(AcpSession::class.java)
     private val json = Json { ignoreUnknownKeys = true }
+    private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     var mode: SessionMode = SessionMode.AGENT
         private set
@@ -53,6 +56,9 @@ class AcpSession(
     private val _planEntries = mutableListOf<PlanEntry>()
     val planEntries: List<PlanEntry> get() = _planEntries.toList()
 
+    private val _todos = mutableListOf<TodoItem>()
+    val todos: List<TodoItem> get() = _todos.toList()
+
     private val _toolCallContents = mutableMapOf<String, StringBuilder>()
     val toolCallContents: Map<String, String>
         get() = _toolCallContents.mapValues { it.value.toString() }
@@ -65,6 +71,24 @@ class AcpSession(
 
     private val _thoughtContent = StringBuilder()
     val thoughtContent: String get() = _thoughtContent.toString()
+
+    private data class TrackedToolCall(
+        val toolCallId: String,
+        var kind: String? = null,
+        var commandPreview: String? = null,
+        var inProgressSinceMs: Long? = null,
+        var lastWarnedAtMs: Long = 0L,
+        var failFastTriggered: Boolean = false,
+    )
+
+    private data class ToolCallWatchdogSignal(
+        val toolCallId: String,
+        val commandPreview: String?,
+        val elapsedMs: Long,
+    )
+
+    private val toolCallStateLock = Any()
+    private val trackedToolCalls = linkedMapOf<String, TrackedToolCall>()
 
     private val updateListeners = mutableListOf<(SessionUpdate) -> Unit>()
     private val messageListeners = mutableListOf<(ChatMessage) -> Unit>()
@@ -139,6 +163,17 @@ class AcpSession(
                     val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
                     val status = obj["status"]?.jsonPrimitive?.contentOrNull
                     log.info("tool_call: id=$toolCallId kind=$kind status=$status hasContent=${obj.containsKey("content")} hasRawOutput=${obj.containsKey("rawOutput")}")
+                    if (kind == "execute") {
+                        extractExecuteCommandPreview(obj)?.let { cmd ->
+                            log.info("tool_call execute command: $cmd")
+                        }
+                    }
+                    updateTrackedToolCall(
+                        toolCallId = toolCallId,
+                        kind = kind,
+                        status = status,
+                        commandPreview = extractExecuteCommandPreview(obj),
+                    )
                     captureToolCallContent(toolCallId, obj)
                     formatToolActivity(obj)?.let { activity ->
                         notifyActivityListeners(activity.text)
@@ -147,8 +182,21 @@ class AcpSession(
                 }
                 "tool_call_update" -> {
                     val toolCallId = obj["toolCallId"]?.jsonPrimitive?.contentOrNull ?: return
+                    val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
                     val status = obj["status"]?.jsonPrimitive?.contentOrNull
                     log.info("tool_call_update: id=$toolCallId status=$status hasContent=${obj.containsKey("content")} hasRawOutput=${obj.containsKey("rawOutput")}")
+                    val commandPreview = extractExecuteCommandPreview(obj)
+                    if (status == "in_progress") {
+                        commandPreview?.let { cmd ->
+                            log.info("tool_call_update execute command: $cmd")
+                        }
+                    }
+                    updateTrackedToolCall(
+                        toolCallId = toolCallId,
+                        kind = kind,
+                        status = status,
+                        commandPreview = commandPreview,
+                    )
                     captureToolCallContent(toolCallId, obj)
                     formatToolActivity(obj)?.let { activity ->
                         notifyActivityListeners(activity.text)
@@ -233,6 +281,19 @@ class AcpSession(
             }
         } catch (e: Exception) {
             log.warn("Error handling create_plan", e)
+        }
+    }
+
+    fun handleUpdateTodos(params: JsonElement) {
+        try {
+            val obj = params.jsonObject
+            val todosElement = obj["todos"] ?: return
+            val parsedTodos = json.decodeFromJsonElement<List<TodoItem>>(todosElement)
+            _todos.clear()
+            _todos.addAll(parsedTodos)
+            log.info("Updated todos from _cursor/update_todos: ${parsedTodos.size} item(s)")
+        } catch (e: Exception) {
+            log.warn("Error handling _cursor/update_todos", e)
         }
     }
 
@@ -335,6 +396,20 @@ class AcpSession(
             ?: AcpContentExtractor.extractTextFromContent(updateObj["message"])
     }
 
+    private fun extractExecuteCommandPreview(obj: JsonObject): String? {
+        val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
+        if (kind != "execute") return null
+        val rawInput = obj["rawInput"]?.jsonObject ?: return null
+        val command = rawInput["command"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        val args = rawInput["args"]?.jsonArray
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull?.trim() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        if (command.isBlank()) return null
+        val full = if (args.isEmpty()) command else (sequenceOf(command) + args.asSequence()).joinToString(" ")
+        return if (full.length > 300) full.take(297) + "..." else full
+    }
+
     suspend fun sendPrompt(content: List<ContentBlock>): SessionPromptResult {
         val textContent = content.filterIsInstance<TextContent>().joinToString(" ") { it.text }
         if (title == "New Chat" && textContent.isNotBlank()) {
@@ -352,18 +427,56 @@ class AcpSession(
         _planContent.setLength(0)
         _thoughtContent.setLength(0)
         planCreated = false
+        clearTrackedToolCalls()
 
         var interrupted = false
-        return try {
+        val stuckToolSignal = CompletableDeferred<ToolCallWatchdogSignal>()
+        val promptDeferred = sessionScope.async(start = CoroutineStart.LAZY) {
             client.sessionPrompt(sessionId, content)
+        }
+        val watchdogJob = sessionScope.launch {
+            monitorToolCalls(stuckToolSignal)
+        }
+        return try {
+            promptDeferred.start()
+            select {
+                promptDeferred.onAwait { result ->
+                    result
+                }
+                stuckToolSignal.onAwait { signal ->
+                    interrupted = true
+                    val message = buildFailFastMessage(signal)
+                    log.warn(
+                        "Tool call watchdog fail-fast for session=$sessionId " +
+                            "toolCallId=${signal.toolCallId} elapsedMs=${signal.elapsedMs} " +
+                            "command=${signal.commandPreview ?: "<unknown>"}",
+                    )
+                    notifyActivityListeners(message)
+                    notifyToolCallListeners(
+                        signal.toolCallId,
+                        ToolActivity(text = message),
+                    )
+                    sessionScope.launch {
+                        runCatching { client.sessionCancel(sessionId) }
+                            .onFailure { e ->
+                                log.info("session/cancel after watchdog trigger failed: ${e.message}")
+                            }
+                    }
+                    promptDeferred.cancel(CancellationException(message))
+                    throw AcpException(TOOL_WATCHDOG_ERROR_CODE, message)
+                }
+            }
         } catch (e: AcpException) {
-            if (e.code == -1) {
+            if (e.code == -1 || e.code == TOOL_WATCHDOG_ERROR_CODE) {
                 interrupted = true
             }
             throw e
         } finally {
+            watchdogJob.cancel()
+            promptDeferred.cancel()
             isProcessing = false
             finalizeCurrentText()
+            clearTrackedToolCalls()
             rollbackManager.completeTurn(sessionId, turnId, interrupted = interrupted)
         }
     }
@@ -458,5 +571,132 @@ class AcpSession(
                 log.warn("Activity listener error", e)
             }
         }
+    }
+
+    private fun updateTrackedToolCall(
+        toolCallId: String,
+        kind: String?,
+        status: String?,
+        commandPreview: String?,
+    ) {
+        if (toolCallId.isBlank() || toolCallId == "unknown") return
+        synchronized(toolCallStateLock) {
+            val normalizedStatus = status?.trim()?.lowercase()
+            if (isTerminalToolCallStatus(normalizedStatus)) {
+                trackedToolCalls.remove(toolCallId)
+                return
+            }
+            val tracked = trackedToolCalls.getOrPut(toolCallId) {
+                TrackedToolCall(toolCallId = toolCallId)
+            }
+            if (!kind.isNullOrBlank()) tracked.kind = kind
+            if (!commandPreview.isNullOrBlank()) tracked.commandPreview = commandPreview
+            if (normalizedStatus == "in_progress" && tracked.inProgressSinceMs == null) {
+                tracked.inProgressSinceMs = System.currentTimeMillis()
+            }
+        }
+    }
+
+    private fun isTerminalToolCallStatus(status: String?): Boolean {
+        return when (status) {
+            "completed", "failed", "error", "cancelled", "canceled" -> true
+            else -> false
+        }
+    }
+
+    private suspend fun monitorToolCalls(stuckSignal: CompletableDeferred<ToolCallWatchdogSignal>) {
+        while (currentCoroutineContext().isActive && isProcessing && !stuckSignal.isCompleted) {
+            delay(TOOL_WATCHDOG_POLL_INTERVAL_MS)
+            val now = System.currentTimeMillis()
+            val warningMessages = mutableListOf<Pair<String, String>>()
+            var failFastSignal: ToolCallWatchdogSignal? = null
+
+            synchronized(toolCallStateLock) {
+                for (tracked in trackedToolCalls.values) {
+                    val startedAt = tracked.inProgressSinceMs ?: continue
+                    val elapsed = now - startedAt
+                    if (elapsed >= TOOL_WATCHDOG_WARN_AFTER_MS &&
+                        (tracked.lastWarnedAtMs == 0L || now - tracked.lastWarnedAtMs >= TOOL_WATCHDOG_WARN_REPEAT_MS)
+                    ) {
+                        tracked.lastWarnedAtMs = now
+                        val message = buildWatchdogStatusLine(tracked.toolCallId, tracked.commandPreview, elapsed)
+                        warningMessages += tracked.toolCallId to message
+                    }
+                    val failFastThresholdMs = failFastThresholdFor(tracked)
+                    if (!tracked.failFastTriggered && elapsed >= failFastThresholdMs) {
+                        tracked.failFastTriggered = true
+                        failFastSignal = ToolCallWatchdogSignal(
+                            toolCallId = tracked.toolCallId,
+                            commandPreview = tracked.commandPreview,
+                            elapsedMs = elapsed,
+                        )
+                        break
+                    }
+                }
+            }
+
+            for ((toolCallId, message) in warningMessages) {
+                log.warn("Tool call still in progress: $message")
+                notifyActivityListeners(message)
+                notifyToolCallListeners(toolCallId, ToolActivity(text = message))
+            }
+
+            val signal = failFastSignal ?: continue
+            if (!stuckSignal.isCompleted) {
+                stuckSignal.complete(signal)
+            }
+            return
+        }
+    }
+
+    private fun buildWatchdogStatusLine(toolCallId: String, commandPreview: String?, elapsedMs: Long): String {
+        val elapsedSeconds = (elapsedMs / 1000L).coerceAtLeast(1L)
+        val commandText = commandPreview?.takeIf { it.isNotBlank() } ?: "<command unavailable>"
+        val hint = buildCommandHint(commandPreview)
+        return "Tool call stuck: id=$toolCallId, elapsed=${elapsedSeconds}s, command=$commandText$hint"
+    }
+
+    private fun buildFailFastMessage(signal: ToolCallWatchdogSignal): String {
+        val elapsedSeconds = (signal.elapsedMs / 1000L).coerceAtLeast(1L)
+        val commandText = signal.commandPreview?.takeIf { it.isNotBlank() } ?: "<command unavailable>"
+        val hint = buildCommandHint(signal.commandPreview)
+        return "Stopped waiting on stuck tool call ${signal.toolCallId} after ${elapsedSeconds}s. Command: $commandText$hint"
+    }
+
+    private fun clearTrackedToolCalls() {
+        synchronized(toolCallStateLock) {
+            trackedToolCalls.clear()
+        }
+    }
+
+    fun dispose() {
+        sessionScope.cancel()
+        clearTrackedToolCalls()
+    }
+
+    private fun failFastThresholdFor(tracked: TrackedToolCall): Long {
+        val cmd = tracked.commandPreview?.lowercase().orEmpty()
+        return if ("gradlew" in cmd || "gradle build" in cmd) {
+            GRADLE_FAIL_FAST_MS
+        } else {
+            TOOL_WATCHDOG_FAIL_FAST_MS
+        }
+    }
+
+    private fun buildCommandHint(commandPreview: String?): String {
+        val cmd = commandPreview?.lowercase().orEmpty()
+        if (!("gradlew" in cmd || "gradle build" in cmd)) {
+            return ""
+        }
+        return " | Gradle hint: ensure JDK 17 is installed/detected and prefer --no-daemon --console=plain."
+    }
+
+    companion object {
+        private const val TOOL_WATCHDOG_POLL_INTERVAL_MS = 2_000L
+        private const val TOOL_WATCHDOG_WARN_AFTER_MS = 30_000L
+        private const val TOOL_WATCHDOG_WARN_REPEAT_MS = 30_000L
+        private const val TOOL_WATCHDOG_FAIL_FAST_MS = 5L * 60L * 1000L
+        private const val GRADLE_FAIL_FAST_MS = 90_000L
+        private const val TOOL_WATCHDOG_ERROR_CODE = -32001
     }
 }

@@ -141,6 +141,29 @@ class WorkspaceIndexOrchestratorTest {
     }
 
     @Test
+    fun `duplicate rebuild requests are coalesced`() = runBlocking {
+        val settings = CursorJSettings().apply {
+            enableLexicalPersistence = true
+            enableSemanticIndexing = false
+        }
+        val fakeLexical = FakeLexicalSearchIndex(projectWithBasePath(null))
+        val orchestrator = WorkspaceIndexOrchestrator(
+            project = projectWithBasePath(null),
+            settingsProvider = { settings },
+            lexicalOverride = fakeLexical,
+        )
+
+        orchestrator.requestRebuild("manual-a")
+        orchestrator.requestRebuild("manual-b")
+        assertEquals(1, orchestrator.queueDepthForTest())
+        assertTrue(orchestrator.processSingleQueuedTaskForTest())
+        assertEquals(0, orchestrator.queueDepthForTest())
+        assertTrue(fakeLexical.warmupCalls >= 1)
+        assertFalse(orchestrator.processSingleQueuedTaskForTest())
+        orchestrator.dispose()
+    }
+
+    @Test
     fun `retrieveForPrompt fuses lexical symbol and semantic hits`() = runBlocking {
         val settings = CursorJSettings().apply {
             enableProjectIndexing = true

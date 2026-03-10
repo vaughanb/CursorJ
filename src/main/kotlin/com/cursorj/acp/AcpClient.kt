@@ -1,6 +1,7 @@
 package com.cursorj.acp
 
 import com.cursorj.acp.messages.*
+import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.Disposer
@@ -40,6 +41,9 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     private var readJob: Job? = null
     private var writer: BufferedWriter? = null
     private var reader: BufferedReader? = null
+
+    private val acpRawLogEnabled: Boolean
+        get() = runCatching { CursorJSettings.instance.enableAcpRawLogging }.getOrDefault(false)
 
     var isConnected = false
         private set
@@ -124,16 +128,27 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         val request = JsonRpcRequest(id = id, method = method, params = params)
         val deferred = CompletableDeferred<JsonElement>()
         pendingRequests[id] = deferred
-
-        val line = json.encodeToString(request)
-        withContext(Dispatchers.IO) {
-            synchronized(writer!!) {
-                writer!!.write(line)
-                writer!!.newLine()
-                writer!!.flush()
+        deferred.invokeOnCompletion { cause ->
+            if (cause is CancellationException) {
+                pendingRequests.remove(id, deferred)
             }
         }
-        log.debug("ACP request: $method (id=$id)")
+
+        try {
+            val line = json.encodeToString(request)
+            logRawAcp("ACP raw -> request(id=$id, method=$method): ", line)
+            withContext(Dispatchers.IO) {
+                synchronized(writer!!) {
+                    writer!!.write(line)
+                    writer!!.newLine()
+                    writer!!.flush()
+                }
+            }
+            log.debug("ACP request: $method (id=$id)")
+        } catch (e: Exception) {
+            pendingRequests.remove(id)
+            throw e
+        }
 
         return deferred.await()
     }
@@ -141,6 +156,7 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     private suspend fun sendNotification(method: String, params: JsonElement) {
         val notification = JsonRpcNotification(method = method, params = params)
         val line = json.encodeToString(notification)
+        logRawAcp("ACP raw -> notification(method=$method): ", line)
         withContext(Dispatchers.IO) {
             synchronized(writer!!) {
                 writer!!.write(line)
@@ -154,6 +170,7 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     fun respondToServerRequest(id: Int, result: JsonElement?) {
         val response = JsonRpcServerResponse(id = id, result = result)
         val line = json.encodeToString(response)
+        logRawAcp("ACP raw -> server_response(id=$id): ", line)
         synchronized(writer!!) {
             writer!!.write(line)
             writer!!.newLine()
@@ -168,6 +185,7 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
             error = JsonRpcError(code = code, message = message),
         )
         val line = json.encodeToString(response)
+        logRawAcp("ACP raw -> server_response_error(id=$id, code=$code): ", line)
         synchronized(writer!!) {
             writer!!.write(line)
             writer!!.newLine()
@@ -200,6 +218,7 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
 
     private fun handleMessage(line: String) {
         try {
+            logRawAcp("ACP raw <- ", line)
             val element = json.parseToJsonElement(line)
             val obj = element.jsonObject
 
@@ -288,9 +307,27 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         }
     }
 
+    private fun logRawAcp(prefix: String, payload: String) {
+        if (!acpRawLogEnabled) return
+        val sanitized = payload
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+        val rendered = if (sanitized.length <= RAW_ACP_LOG_LIMIT_CHARS) {
+            sanitized
+        } else {
+            val omitted = sanitized.length - RAW_ACP_LOG_LIMIT_CHARS
+            sanitized.take(RAW_ACP_LOG_LIMIT_CHARS) + "... [truncated $omitted chars]"
+        }
+        log.info("$prefix$rendered")
+    }
+
     override fun dispose() {
         disconnect()
         serverRequestExecutor.shutdownNow()
+    }
+
+    companion object {
+        private const val RAW_ACP_LOG_LIMIT_CHARS = 8000
     }
 }
 

@@ -27,7 +27,6 @@ class CursorJConfigurable : Configurable {
     private var projectIndexingCheckbox: JBCheckBox? = null
     private var lexicalPersistenceCheckbox: JBCheckBox? = null
     private var semanticIndexingCheckbox: JBCheckBox? = null
-    private var showIndexingStatusInChatCheckbox: JBCheckBox? = null
     private var retrievalMaxCandidatesField: JBTextField? = null
     private var retrievalSnippetBudgetField: JBTextField? = null
     private var retrievalTimeoutField: JBTextField? = null
@@ -37,6 +36,7 @@ class CursorJConfigurable : Configurable {
     private var permissionModeCombo: JComboBox<String>? = null
     private var approvedToolsArea: JBTextArea? = null
     private var protectExternalWritesCheckbox: JBCheckBox? = null
+    private var acpRawLoggingCheckbox: JBCheckBox? = null
     private var mainPanel: JPanel? = null
 
     override fun getDisplayName(): String = CursorJBundle.message("settings.title")
@@ -70,9 +70,6 @@ class CursorJConfigurable : Configurable {
         semanticIndexingCheckbox = JBCheckBox(
             CursorJBundle.message("settings.indexing.semantic"),
         )
-        showIndexingStatusInChatCheckbox = JBCheckBox(
-            CursorJBundle.message("settings.indexing.showStatusInChat"),
-        )
         retrievalMaxCandidatesField = JBTextField()
         retrievalSnippetBudgetField = JBTextField()
         retrievalTimeoutField = JBTextField()
@@ -98,6 +95,9 @@ class CursorJConfigurable : Configurable {
         protectExternalWritesCheckbox = JBCheckBox(
             CursorJBundle.message("settings.permission.protectExternalWrites"),
         )
+        acpRawLoggingCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.acp.rawLogging"),
+        )
 
         val approvedToolsScroll = JBScrollPane(approvedToolsArea).apply {
             preferredSize = Dimension(400, 130)
@@ -120,7 +120,6 @@ class CursorJConfigurable : Configurable {
             .addComponent(projectIndexingCheckbox!!, 1)
             .addComponent(lexicalPersistenceCheckbox!!, 1)
             .addComponent(semanticIndexingCheckbox!!, 1)
-            .addComponent(showIndexingStatusInChatCheckbox!!, 1)
             .addLabeledComponent(
                 JBLabel(CursorJBundle.message("settings.indexing.maxCandidates")),
                 retrievalMaxCandidatesField!!,
@@ -159,6 +158,7 @@ class CursorJConfigurable : Configurable {
                 false,
             )
             .addComponent(protectExternalWritesCheckbox!!, 1)
+            .addComponent(acpRawLoggingCheckbox!!, 1)
             .addLabeledComponent(
                 JBLabel(CursorJBundle.message("settings.permission.approvedTools")),
                 approvedToolsScroll,
@@ -179,7 +179,6 @@ class CursorJConfigurable : Configurable {
             projectIndexingCheckbox?.isSelected != settings.enableProjectIndexing ||
             lexicalPersistenceCheckbox?.isSelected != settings.enableLexicalPersistence ||
             semanticIndexingCheckbox?.isSelected != settings.enableSemanticIndexing ||
-            showIndexingStatusInChatCheckbox?.isSelected != settings.showIndexingStatusInChat ||
             readIntField(retrievalMaxCandidatesField, settings.retrievalMaxCandidates, 1, 200) != settings.retrievalMaxCandidates ||
             readIntField(retrievalSnippetBudgetField, settings.retrievalSnippetCharBudget, 500, 30000) != settings.retrievalSnippetCharBudget ||
             readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000) != settings.retrievalTimeoutMs ||
@@ -187,6 +186,7 @@ class CursorJConfigurable : Configurable {
             readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096) != settings.indexMaxDatabaseMb ||
             selectedPermissionMode() != settings.permissionMode ||
             protectExternalWritesCheckbox?.isSelected != settings.protectExternalFileWrites ||
+            acpRawLoggingCheckbox?.isSelected != settings.enableAcpRawLogging ||
             readApprovedTools() != settings.getApprovedPermissionKeys()
     }
 
@@ -199,7 +199,6 @@ class CursorJConfigurable : Configurable {
         settings.enableProjectIndexing = projectIndexingCheckbox?.isSelected ?: true
         settings.enableLexicalPersistence = lexicalPersistenceCheckbox?.isSelected ?: true
         settings.enableSemanticIndexing = semanticIndexingCheckbox?.isSelected ?: false
-        settings.showIndexingStatusInChat = showIndexingStatusInChatCheckbox?.isSelected ?: true
         settings.retrievalMaxCandidates = readIntField(retrievalMaxCandidatesField, settings.retrievalMaxCandidates, 1, 200)
         settings.retrievalSnippetCharBudget = readIntField(retrievalSnippetBudgetField, settings.retrievalSnippetCharBudget, 500, 30000)
         settings.retrievalTimeoutMs = readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000)
@@ -207,6 +206,7 @@ class CursorJConfigurable : Configurable {
         settings.indexMaxDatabaseMb = readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096)
         settings.permissionMode = selectedPermissionMode()
         settings.protectExternalFileWrites = protectExternalWritesCheckbox?.isSelected ?: true
+        settings.enableAcpRawLogging = acpRawLoggingCheckbox?.isSelected ?: false
         settings.setApprovedPermissionKeys(readApprovedTools())
         val knownModelIds = knownModelIdsFromOpenProjects()
         if (defaultModel.isNotBlank() && knownModelIds.isNotEmpty() && defaultModel !in knownModelIds) {
@@ -225,7 +225,6 @@ class CursorJConfigurable : Configurable {
         projectIndexingCheckbox?.isSelected = settings.enableProjectIndexing
         lexicalPersistenceCheckbox?.isSelected = settings.enableLexicalPersistence
         semanticIndexingCheckbox?.isSelected = settings.enableSemanticIndexing
-        showIndexingStatusInChatCheckbox?.isSelected = settings.showIndexingStatusInChat
         retrievalMaxCandidatesField?.text = settings.retrievalMaxCandidates.toString()
         retrievalSnippetBudgetField?.text = settings.retrievalSnippetCharBudget.toString()
         retrievalTimeoutField?.text = settings.retrievalTimeoutMs.toString()
@@ -236,6 +235,7 @@ class CursorJConfigurable : Configurable {
             else -> 0
         }
         protectExternalWritesCheckbox?.isSelected = settings.protectExternalFileWrites
+        acpRawLoggingCheckbox?.isSelected = settings.enableAcpRawLogging
         approvedToolsArea?.text = settings.getApprovedPermissionKeys().sorted().joinToString("\n")
     }
 
@@ -281,7 +281,6 @@ class CursorJConfigurable : Configurable {
         projectIndexingCheckbox = null
         lexicalPersistenceCheckbox = null
         semanticIndexingCheckbox = null
-        showIndexingStatusInChatCheckbox = null
         retrievalMaxCandidatesField = null
         retrievalSnippetBudgetField = null
         retrievalTimeoutField = null
@@ -291,6 +290,7 @@ class CursorJConfigurable : Configurable {
         permissionModeCombo = null
         approvedToolsArea = null
         protectExternalWritesCheckbox = null
+        acpRawLoggingCheckbox = null
         mainPanel = null
     }
 }

@@ -1,9 +1,14 @@
 package com.cursorj.ui.toolwindow
 
+import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpProcessManager
 import com.cursorj.context.ActiveFileProvider
 import com.cursorj.context.SelectionProvider
+import com.cursorj.history.PromptHistoryManager
+import com.cursorj.history.PromptHistoryStore
+import com.cursorj.history.ChatTranscriptManager
+import com.cursorj.history.ChatTranscriptStore
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
@@ -53,6 +58,8 @@ class CursorJService(
     val activeFileProvider = ActiveFileProvider(project)
     val selectionProvider = SelectionProvider(project)
     val workspaceIndexOrchestrator = WorkspaceIndexOrchestrator(project)
+    val promptHistoryManager = PromptHistoryManager(PromptHistoryStore(project.basePath))
+    val chatTranscriptManager = ChatTranscriptManager(ChatTranscriptStore(project.basePath))
 
     lateinit var tabManager: SessionTabManager
         private set
@@ -66,13 +73,21 @@ class CursorJService(
 
     fun initialize() {
         instances[project] = this
+        promptHistoryManager.load()
+        chatTranscriptManager.load()
         tabManager = SessionTabManager(this, toolWindow)
         tabManager.addInitialTab()
         val indexingListener: (WorkspaceIndexOrchestrator.IndexLifecycleUpdate) -> Unit = { update ->
-            CursorJConnectionStatus.updateIndexing(update.message)
-            if (CursorJSettings.instance.showIndexingStatusInChat) {
-                tabManager.showIndexLifecycle(update)
+            val detail = when (update.state) {
+                WorkspaceIndexOrchestrator.IndexLifecycleState.STARTUP_BUILD,
+                WorkspaceIndexOrchestrator.IndexLifecycleState.INCREMENTAL_BUILD,
+                WorkspaceIndexOrchestrator.IndexLifecycleState.STALE_REBUILDING,
+                -> CursorJBundle.message("status.indexing.inProgress")
+                WorkspaceIndexOrchestrator.IndexLifecycleState.READY -> CursorJBundle.message("status.indexing.ready")
+                WorkspaceIndexOrchestrator.IndexLifecycleState.FAILED ->
+                    update.message.ifBlank { CursorJBundle.message("status.indexing.failed") }
             }
+            CursorJConnectionStatus.updateIndexing(detail)
         }
         workspaceIndexOrchestrator.addLifecycleListener(indexingListener)
         Disposer.register(this) {
@@ -132,6 +147,8 @@ class CursorJService(
     }
 
     override fun dispose() {
+        promptHistoryManager.persist()
+        chatTranscriptManager.persist()
         instances.remove(project, this)
         scope.cancel()
     }
