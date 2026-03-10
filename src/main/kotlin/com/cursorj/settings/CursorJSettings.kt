@@ -1,5 +1,6 @@
 package com.cursorj.settings
 
+import com.cursorj.acp.AgentPathResolver
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.PersistentStateComponent
@@ -53,6 +54,12 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         set(value) {
             synchronized(stateLock) { myState.agentPath = value }
             fireSettingsChanged()
+        }
+
+    val effectiveAgentPath: String?
+        get() {
+            val configured = synchronized(stateLock) { myState.agentPath }
+            return AgentPathResolver.resolve(configured)
         }
 
     private fun migrateLegacyPermissionBehavior() {

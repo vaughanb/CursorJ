@@ -211,66 +211,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
 
     private fun resolveAgentPath(): String? {
         val settings = CursorJSettings.instance
-        if (settings.agentPath.isNotBlank()) {
-            val file = File(settings.agentPath)
-            if (file.isFile) return settings.agentPath
-        }
-
-        val osName = System.getProperty("os.name").lowercase()
-        val isWindows = osName.contains("win")
-        val isMac = osName.contains("mac") || osName.contains("darwin")
-        val candidates = if (isWindows) {
-            listOf("agent.cmd", "agent.bat", "agent.exe", "agent")
-        } else {
-            listOf("agent")
-        }
-
-        val pathValue = System.getenv("PATH") ?: System.getenv("Path")
-        val pathDirs = pathValue?.split(File.pathSeparator) ?: emptyList()
-        for (dir in pathDirs) {
-            for (name in candidates) {
-                val file = File(dir, name)
-                if (isRunnable(file, isWindows)) {
-                    log.info("Found agent in PATH: ${file.absolutePath}")
-                    return file.absolutePath
-                }
-            }
-        }
-
-        val home = System.getProperty("user.home")
-        val wellKnownPaths = buildList {
-            if (isWindows) {
-                add("$home\\AppData\\Local\\cursor-agent\\agent.cmd")
-                add("$home\\AppData\\Local\\cursor-agent\\agent.exe")
-                add("$home\\AppData\\Local\\Programs\\cursor-agent\\agent.cmd")
-                add("$home\\AppData\\Local\\Programs\\cursor-agent\\agent.exe")
-                add("$home\\.local\\bin\\agent.cmd")
-                add("$home\\.local\\bin\\agent.exe")
-            } else if (isMac) {
-                add("$home/.cursor/bin/agent")
-                add("$home/.local/bin/agent")
-                add("/opt/homebrew/bin/agent")
-                add("/usr/local/bin/agent")
-                add("/opt/local/bin/agent")
-            } else {
-                add("$home/.local/bin/agent")
-                add("$home/.cursor/bin/agent")
-                add("/usr/local/bin/agent")
-            }
-        }
-        for (path in wellKnownPaths) {
-            val file = File(path)
-            if (isRunnable(file, isWindows)) {
-                log.info("Found agent at well-known path: ${file.absolutePath}")
-                return file.absolutePath
-            }
-        }
-
-        return null
-    }
-
-    private fun isRunnable(file: File, isWindows: Boolean): Boolean {
-        return file.isFile && (isWindows || file.canExecute())
+        return AgentPathResolver.resolve(settings.agentPath)
     }
 
     override fun dispose() {

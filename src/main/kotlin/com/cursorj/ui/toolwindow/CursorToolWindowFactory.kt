@@ -33,6 +33,18 @@ class CursorJService(
         private val instances = ConcurrentHashMap<Project, CursorJService>()
 
         fun getInstance(project: Project): CursorJService? = instances[project]
+
+        internal fun selectInitialModel(
+            explicitModel: String?,
+            configuredDefaultModel: String?,
+            availableModelIds: Set<String>,
+        ): String? {
+            val normalizedExplicit = explicitModel?.trim()?.takeIf { it.isNotBlank() }
+            val normalizedDefault = configuredDefaultModel?.trim()?.takeIf { it.isNotBlank() }
+            val candidate = normalizedExplicit ?: normalizedDefault ?: return null
+            if (availableModelIds.isEmpty()) return candidate
+            return candidate.takeIf { it in availableModelIds }
+        }
     }
 
     private val log = Logger.getInstance(CursorJService::class.java)
@@ -100,12 +112,22 @@ class CursorJService(
     }
 
     fun createAgentConnection(parentDisposable: Disposable, model: String? = null): AgentConnection {
+        val configuredDefaultModel = CursorJSettings.instance.defaultModel
+        val availableIds = availableModelInfos.map { it.id }.toSet()
+        val initialModel = selectInitialModel(
+            explicitModel = model,
+            configuredDefaultModel = configuredDefaultModel,
+            availableModelIds = availableIds,
+        )
+        if (model.isNullOrBlank() && !configuredDefaultModel.isBlank() && initialModel == null && availableIds.isNotEmpty()) {
+            log.warn("Ignoring invalid default model '$configuredDefaultModel'; falling back to agent default")
+        }
         return AgentConnection(
             project = project,
             parentDisposable = parentDisposable,
             modelInfos = availableModelInfos,
             workspaceIndexOrchestrator = workspaceIndexOrchestrator,
-            initialModel = model,
+            initialModel = initialModel,
         )
     }
 

@@ -6,6 +6,7 @@ import com.cursorj.ui.toolwindow.CursorJService
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
@@ -46,8 +47,17 @@ class CursorJConfigurable : Configurable {
                 .withTitle("Select Cursor Agent Binary")
                 .withDescription(CursorJBundle.message("settings.agent.path.tooltip"))
             addBrowseFolderListener(null, descriptor)
+            textField.putClientProperty(
+                "JTextField.placeholderText",
+                CursorJBundle.message("settings.agent.path.placeholder"),
+            )
         }
-        defaultModelField = JBTextField()
+        defaultModelField = JBTextField().apply {
+            putClientProperty(
+                "JTextField.placeholderText",
+                CursorJBundle.message("settings.default.model.placeholder"),
+            )
+        }
         autoAttachCheckbox = JBCheckBox(
             CursorJBundle.message("settings.auto.attach"),
         )
@@ -163,7 +173,7 @@ class CursorJConfigurable : Configurable {
 
     override fun isModified(): Boolean {
         val settings = CursorJSettings.instance
-        return agentPathField?.text != settings.agentPath ||
+        return (agentPathField?.text ?: "") != displayAgentPath(settings) ||
             defaultModelField?.text != settings.defaultModel ||
             autoAttachCheckbox?.isSelected != settings.autoAttachActiveFile ||
             projectIndexingCheckbox?.isSelected != settings.enableProjectIndexing ||
@@ -182,8 +192,9 @@ class CursorJConfigurable : Configurable {
 
     override fun apply() {
         val settings = CursorJSettings.instance
-        settings.agentPath = agentPathField?.text ?: ""
-        settings.defaultModel = defaultModelField?.text ?: ""
+        settings.agentPath = agentPathField?.text?.trim().orEmpty()
+        val defaultModel = defaultModelField?.text?.trim().orEmpty()
+        settings.defaultModel = defaultModel
         settings.autoAttachActiveFile = autoAttachCheckbox?.isSelected ?: true
         settings.enableProjectIndexing = projectIndexingCheckbox?.isSelected ?: true
         settings.enableLexicalPersistence = lexicalPersistenceCheckbox?.isSelected ?: true
@@ -197,11 +208,18 @@ class CursorJConfigurable : Configurable {
         settings.permissionMode = selectedPermissionMode()
         settings.protectExternalFileWrites = protectExternalWritesCheckbox?.isSelected ?: true
         settings.setApprovedPermissionKeys(readApprovedTools())
+        val knownModelIds = knownModelIdsFromOpenProjects()
+        if (defaultModel.isNotBlank() && knownModelIds.isNotEmpty() && defaultModel !in knownModelIds) {
+            Messages.showWarningDialog(
+                CursorJBundle.message("settings.default.model.invalid.warning", defaultModel),
+                CursorJBundle.message("settings.title"),
+            )
+        }
     }
 
     override fun reset() {
         val settings = CursorJSettings.instance
-        agentPathField?.text = settings.agentPath
+        agentPathField?.text = displayAgentPath(settings)
         defaultModelField?.text = settings.defaultModel
         autoAttachCheckbox?.isSelected = settings.autoAttachActiveFile
         projectIndexingCheckbox?.isSelected = settings.enableProjectIndexing
@@ -240,6 +258,20 @@ class CursorJConfigurable : Configurable {
     private fun readIntField(field: JBTextField?, fallback: Int, min: Int, max: Int): Int {
         val parsed = field?.text?.trim()?.toIntOrNull() ?: fallback
         return parsed.coerceIn(min, max)
+    }
+
+    private fun displayAgentPath(settings: CursorJSettings): String {
+        val configured = settings.agentPath.trim()
+        if (configured.isNotBlank()) return configured
+        return settings.effectiveAgentPath.orEmpty()
+    }
+
+    private fun knownModelIdsFromOpenProjects(): Set<String> {
+        return ProjectManager.getInstance().openProjects
+            .asSequence()
+            .mapNotNull { CursorJService.getInstance(it) }
+            .flatMap { service -> service.availableModelInfos.asSequence().map { it.id } }
+            .toSet()
     }
 
     override fun disposeUIResources() {
