@@ -75,11 +75,15 @@ object MarkdownRenderer {
             "<code style='background: $bgColor; padding: 1px 4px; font-family: monospace; font-size: 12pt;'>${match.groupValues[1]}</code>"
         }
 
-        result = Regex("\\*\\*(.+?)\\*\\*").replace(result) { match ->
-            "<b>${match.groupValues[1]}</b>"
+        // Bold: **text** or __text__ (use span+font-weight for reliable Swing HTML rendering)
+        result = Regex("\\*\\*(.+?)\\*\\*").replace(result) { m ->
+            "<span style=\"font-weight: bold;\">${m.groupValues[1]}</span>"
         }
-        result = Regex("\\*(.+?)\\*").replace(result) { match ->
-            "<i>${match.groupValues[1]}</i>"
+        result = Regex("__(.+?)__").replace(result) { m ->
+            "<span style=\"font-weight: bold;\">${m.groupValues[1]}</span>"
+        }
+        result = Regex("\\*(.+?)\\*").replace(result) { m ->
+            "<i>${m.groupValues[1]}</i>"
         }
 
         result = Regex("\\[(.+?)]\\((.+?)\\)").replace(result) { match ->
@@ -95,5 +99,6 @@ object MarkdownRenderer {
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
+            .replace("'", "&#39;")
     }
 }

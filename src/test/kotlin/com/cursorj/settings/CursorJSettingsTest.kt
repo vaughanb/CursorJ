@@ -74,6 +74,15 @@ class CursorJSettingsTest {
         assertEquals("gpt-5", settings.defaultModel)
     }
 
+    @Test
+    fun `global user rules settings support list`() {
+        val settings = CursorJSettings()
+        assertTrue(settings.getGlobalUserRules().isEmpty())
+
+        settings.setGlobalUserRules(listOf("  rule one  ", "rule two\r\n", "  "))
+        assertEquals(listOf("rule one", "rule two"), settings.getGlobalUserRules())
+    }
+
     private fun isWindows(): Boolean {
         return System.getProperty("os.name").lowercase().contains("win")
     }

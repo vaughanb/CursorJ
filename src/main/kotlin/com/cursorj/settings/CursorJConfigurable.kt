@@ -13,6 +13,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.TitledSeparator
 import com.intellij.util.ui.FormBuilder
 import java.awt.Dimension
 import javax.swing.JButton
@@ -23,6 +24,7 @@ import javax.swing.JPanel
 class CursorJConfigurable : Configurable {
     private var agentPathField: TextFieldWithBrowseButton? = null
     private var defaultModelField: JBTextField? = null
+    private var globalUserRulesListPanel: GlobalUserRulesListPanel? = null
     private var autoAttachCheckbox: JBCheckBox? = null
     private var projectIndexingCheckbox: JBCheckBox? = null
     private var lexicalPersistenceCheckbox: JBCheckBox? = null
@@ -58,6 +60,7 @@ class CursorJConfigurable : Configurable {
                 CursorJBundle.message("settings.default.model.placeholder"),
             )
         }
+        globalUserRulesListPanel = GlobalUserRulesListPanel()
         autoAttachCheckbox = JBCheckBox(
             CursorJBundle.message("settings.auto.attach"),
         )
@@ -104,6 +107,7 @@ class CursorJConfigurable : Configurable {
         }
 
         mainPanel = FormBuilder.createFormBuilder()
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.section.agent")), 1)
             .addLabeledComponent(
                 JBLabel(CursorJBundle.message("settings.agent.path")),
                 agentPathField!!,
@@ -116,6 +120,9 @@ class CursorJConfigurable : Configurable {
                 1,
                 false,
             )
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.section.globalRules")), 1)
+            .addComponent(globalUserRulesListPanel!!, 1)
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.section.indexing")), 1)
             .addComponent(autoAttachCheckbox!!, 1)
             .addComponent(projectIndexingCheckbox!!, 1)
             .addComponent(lexicalPersistenceCheckbox!!, 1)
@@ -151,6 +158,7 @@ class CursorJConfigurable : Configurable {
                 false,
             )
             .addComponent(rebuildIndexButton!!, 1)
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.section.permissions")), 1)
             .addLabeledComponent(
                 JBLabel(CursorJBundle.message("settings.permission.mode")),
                 permissionModeCombo!!,
@@ -164,6 +172,7 @@ class CursorJConfigurable : Configurable {
                 1,
                 false,
             )
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.section.advanced")), 1)
             .addComponent(acpRawLoggingCheckbox!!, 1)
             .addComponentFillVertically(JPanel(), 0)
             .panel
@@ -175,6 +184,7 @@ class CursorJConfigurable : Configurable {
         val settings = CursorJSettings.instance
         return (agentPathField?.text ?: "") != displayAgentPath(settings) ||
             defaultModelField?.text != settings.defaultModel ||
+            readGlobalUserRules() != settings.getGlobalUserRules() ||
             autoAttachCheckbox?.isSelected != settings.autoAttachActiveFile ||
             projectIndexingCheckbox?.isSelected != settings.enableProjectIndexing ||
             lexicalPersistenceCheckbox?.isSelected != settings.enableLexicalPersistence ||
@@ -195,6 +205,7 @@ class CursorJConfigurable : Configurable {
         settings.agentPath = agentPathField?.text?.trim().orEmpty()
         val defaultModel = defaultModelField?.text?.trim().orEmpty()
         settings.defaultModel = defaultModel
+        settings.setGlobalUserRules(readGlobalUserRules())
         settings.autoAttachActiveFile = autoAttachCheckbox?.isSelected ?: true
         settings.enableProjectIndexing = projectIndexingCheckbox?.isSelected ?: true
         settings.enableLexicalPersistence = lexicalPersistenceCheckbox?.isSelected ?: true
@@ -221,6 +232,7 @@ class CursorJConfigurable : Configurable {
         val settings = CursorJSettings.instance
         agentPathField?.text = displayAgentPath(settings)
         defaultModelField?.text = settings.defaultModel
+        globalUserRulesListPanel?.setRules(settings.getGlobalUserRules())
         autoAttachCheckbox?.isSelected = settings.autoAttachActiveFile
         projectIndexingCheckbox?.isSelected = settings.enableProjectIndexing
         lexicalPersistenceCheckbox?.isSelected = settings.enableLexicalPersistence
@@ -244,6 +256,10 @@ class CursorJConfigurable : Configurable {
             1 -> PermissionMode.RUN_EVERYTHING.id
             else -> PermissionMode.ASK_EVERY_TIME.id
         }
+    }
+
+    private fun readGlobalUserRules(): List<String> {
+        return globalUserRulesListPanel?.getRules() ?: emptyList()
     }
 
     private fun readApprovedTools(): Set<String> {
@@ -277,6 +293,7 @@ class CursorJConfigurable : Configurable {
     override fun disposeUIResources() {
         agentPathField = null
         defaultModelField = null
+        globalUserRulesListPanel = null
         autoAttachCheckbox = null
         projectIndexingCheckbox = null
         lexicalPersistenceCheckbox = null

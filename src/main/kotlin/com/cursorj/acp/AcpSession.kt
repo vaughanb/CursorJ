@@ -473,17 +473,18 @@ class AcpSession(
         return if (full.length > 300) full.take(297) + "..." else full
     }
 
-    suspend fun sendPrompt(content: List<ContentBlock>): SessionPromptResult {
-        val textContent = content.filterIsInstance<TextContent>().joinToString(" ") { it.text }
-        if (title == "New Chat" && textContent.isNotBlank()) {
-            title = textContent.take(40).let { if (textContent.length > 40) "$it..." else it }
+    suspend fun sendPrompt(content: List<ContentBlock>, displayUserText: String? = null): SessionPromptResult {
+        val promptText = content.filterIsInstance<TextContent>().joinToString(" ") { it.text }
+        val displayText = displayUserText?.takeIf { it.isNotBlank() } ?: promptText
+        if (title == "New Chat" && displayText.isNotBlank()) {
+            title = displayText.take(40).let { if (displayText.length > 40) "$it..." else it }
         }
 
-        val userMessage = ChatMessage(role = "user", content = textContent)
+        val userMessage = ChatMessage(role = "user", content = displayText)
         _messages.add(userMessage)
         notifyMessageListeners(userMessage)
 
-        val turnId = rollbackManager.beginTurn(sessionId, textContent)
+        val turnId = rollbackManager.beginTurn(sessionId, displayText)
         isProcessing = true
         _currentAgentText.clear()
         _toolCallContents.clear()

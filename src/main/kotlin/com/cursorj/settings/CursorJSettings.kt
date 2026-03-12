@@ -17,6 +17,11 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
     data class State(
         var agentPath: String = "",
         var defaultModel: String = "",
+        @Deprecated("No longer used; rules are always injected when non-empty")
+        var enableGlobalUserRules: Boolean = true,
+        var globalUserRulesList: MutableList<String> = mutableListOf(),
+        @Deprecated("Migrated to globalUserRulesList")
+        var globalUserRulesText: String = "",
         var autoAttachActiveFile: Boolean = true,
         var enableProjectIndexing: Boolean = true,
         var enableLexicalPersistence: Boolean = true,
@@ -46,8 +51,22 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
     override fun loadState(state: State) {
         synchronized(stateLock) {
             myState = state
+            migrateGlobalUserRulesFromLegacy()
         }
         migrateLegacyPermissionBehavior()
+    }
+
+    private fun migrateGlobalUserRulesFromLegacy() {
+        val legacy = myState.globalUserRulesText
+        if (legacy.isNotBlank() && myState.globalUserRulesList.isEmpty()) {
+            myState.globalUserRulesList = legacy
+                .replace("\r\n", "\n")
+                .split("\n\n")
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toMutableList()
+        }
+        myState.globalUserRulesText = ""
     }
 
     var agentPath: String
@@ -79,6 +98,20 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
             synchronized(stateLock) { myState.defaultModel = value }
             fireSettingsChanged()
         }
+
+    fun getGlobalUserRules(): List<String> = synchronized(stateLock) {
+        myState.globalUserRulesList.map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    fun setGlobalUserRules(rules: List<String>) {
+        synchronized(stateLock) {
+            myState.globalUserRulesList = rules
+                .map { it.replace("\r\n", "\n").trim() }
+                .filter { it.isNotBlank() }
+                .toMutableList()
+        }
+        fireSettingsChanged()
+    }
 
     var autoAttachActiveFile: Boolean
         get() = synchronized(stateLock) { myState.autoAttachActiveFile }

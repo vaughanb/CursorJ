@@ -43,6 +43,11 @@ class ChatPanel(
     private val service: CursorJService,
     initialHistorySessionKey: String,
 ) : Disposable {
+    private data class PromptPayload(
+        val contentBlocks: List<ContentBlock>,
+        val displayUserText: String,
+    )
+
     private val log = Logger.getInstance(ChatPanel::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -61,8 +66,6 @@ class ChatPanel(
     private var desiredMode: SessionMode = SessionMode.AGENT
     private var activeHighlighters = mutableListOf<Pair<Editor, RangeHighlighter>>()
     private var firstPromptCarryoverContext: String? = null
-    @Volatile
-    private var pendingUserDisplayText: String? = null
     private var lastProjectTreeRefreshAt = 0L
     private val minRefreshIntervalMs = 750L
 
@@ -153,22 +156,11 @@ class ChatPanel(
             if (!message.isStreaming) {
                 service.chatTranscriptManager.addMessage(historySessionKey, message)
             }
-            val displayMessage = if (message.role == "user") {
-                val overrideText = pendingUserDisplayText
-                if (overrideText != null) {
-                    pendingUserDisplayText = null
-                    message.copy(content = overrideText)
-                } else {
-                    message
-                }
-            } else {
-                message
-            }
             SwingUtilities.invokeLater {
                 if (message.isStreaming) {
                     commitPendingToolCall()
                 }
-                messageListPanel.updateOrAddMessage(displayMessage)
+                messageListPanel.updateOrAddMessage(message)
                 if (!message.isStreaming && session.isProcessing) {
                     messageListPanel.showProgress(color = modeProgressColor())
                 }
@@ -234,15 +226,12 @@ class ChatPanel(
                     }
                 }
                 val carryoverContext = firstPromptCarryoverContext
-                if (!carryoverContext.isNullOrBlank()) {
-                    pendingUserDisplayText = text
-                }
-                val contentBlocks = buildContentBlocks(text, carryoverContext)
+                val promptPayload = buildPromptPayload(text, carryoverContext)
                 SwingUtilities.invokeLater {
                     inputPanel.setProcessing(true)
                     refreshRollbackAvailability()
                 }
-                s.sendPrompt(contentBlocks)
+                s.sendPrompt(promptPayload.contentBlocks, promptPayload.displayUserText)
                 if (!carryoverContext.isNullOrBlank()) {
                     firstPromptCarryoverContext = null
                 }
@@ -306,11 +295,11 @@ class ChatPanel(
 
             onSessionReplaced?.invoke(newSession)
 
-            val retryBlocks = buildContentBlocks(originalPromptText, carryover)
+            val retryPromptPayload = buildPromptPayload(originalPromptText, carryover)
             SwingUtilities.invokeLater {
                 inputPanel.setProcessing(true)
             }
-            newSession.sendPrompt(retryBlocks)
+            newSession.sendPrompt(retryPromptPayload.contentBlocks, retryPromptPayload.displayUserText)
         } catch (retryEx: CancellationException) {
             throw retryEx
         } catch (retryEx: Exception) {
@@ -653,23 +642,45 @@ class ChatPanel(
         activeHighlighters.clear()
     }
 
-    private suspend fun buildContentBlocks(text: String, carryoverContext: String?): List<ContentBlock> {
-        val blocks = mutableListOf<ContentBlock>()
+    private suspend fun buildPromptPayload(text: String, carryoverContext: String?): PromptPayload {
+        val visibleBlocks = mutableListOf<ContentBlock>()
         if (!carryoverContext.isNullOrBlank()) {
-            blocks.add(TextContent("Context from a previous chat:\n\n$carryoverContext\n\nCurrent prompt:"))
+            visibleBlocks.add(TextContent("Context from a previous chat:\n\n$carryoverContext\n\nCurrent prompt:"))
         }
-        blocks.add(TextContent(text = text))
+        visibleBlocks.add(TextContent(text = text))
 
         if (CursorJSettings.instance.autoAttachActiveFile) {
-            blocks.addAll(service.activeFileProvider.buildContextBlocks())
+            visibleBlocks.addAll(service.activeFileProvider.buildContextBlocks())
         }
         for (file in attachedFiles) {
-            blocks.add(file)
+            visibleBlocks.add(file)
         }
-        blocks.addAll(pendingSelectionQueue.flattenBlocks())
-        blocks.addAll(buildRetrievedContext(text))
+        visibleBlocks.addAll(pendingSelectionQueue.flattenBlocks())
+        visibleBlocks.addAll(buildRetrievedContext(text))
 
-        return blocks
+        val hiddenRuleBlocks = mutableListOf<ContentBlock>()
+        val settings = CursorJSettings.instance
+        val rulesText = settings.getGlobalUserRules().joinToString("\n\n")
+        if (rulesText.isNotBlank()) {
+            hiddenRuleBlocks.add(
+                TextContent(
+                    text = "Global user rules (hidden from chat display; always apply):\n\n$rulesText",
+                ),
+            )
+        }
+
+        val displayUserText = if (!carryoverContext.isNullOrBlank()) {
+            text
+        } else {
+            visibleBlocks
+                .filterIsInstance<TextContent>()
+                .joinToString(" ") { it.text }
+        }
+
+        return PromptPayload(
+            contentBlocks = hiddenRuleBlocks + visibleBlocks,
+            displayUserText = displayUserText,
+        )
     }
 
     private suspend fun buildRetrievedContext(text: String): List<ContentBlock> {
