@@ -247,6 +247,117 @@ class ChatHistoryIndexManagerTest {
     }
 
     @Test
+    fun `clearAll removes all entries and persists empty state`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-clearall").toFile()
+        try {
+            val (_, clock) = testClock()
+            val store = ChatHistoryStore(workspace.absolutePath)
+            val manager = ChatHistoryIndexManager(store, clock = clock)
+            manager.load()
+
+            manager.recordSession("a", "Alpha")
+            manager.recordSession("b", "Beta")
+            manager.recordSession("c", "Gamma")
+            assertEquals(3, manager.entryCount())
+
+            manager.clearAll()
+            assertEquals(0, manager.entryCount())
+            assertTrue(manager.listAll().isEmpty())
+
+            val reloaded = ChatHistoryIndexManager(store)
+            reloaded.load()
+            assertEquals(0, reloaded.entryCount())
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `removeSession then recordSession replaces old entry without duplicates`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-migrate").toFile()
+        try {
+            val (_, clock) = testClock()
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            manager.load()
+
+            manager.recordSession("old-session", "Build Todo App")
+            assertEquals(1, manager.entryCount())
+
+            manager.removeSession("old-session")
+            manager.recordSession("new-session", "Build Todo App")
+            assertEquals(1, manager.entryCount())
+
+            val entries = manager.listAll()
+            assertEquals("new-session", entries[0].sessionId)
+            assertEquals("Build Todo App", entries[0].title)
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `removeSession does not affect other entries`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-remove-other").toFile()
+        try {
+            val (_, clock) = testClock()
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            manager.load()
+
+            manager.recordSession("keep-me", "Important Chat")
+            manager.recordSession("old-session", "Migrating Chat")
+
+            manager.removeSession("old-session")
+            manager.recordSession("new-session", "Migrating Chat")
+
+            assertEquals(2, manager.entryCount())
+            val ids = manager.listAll().map { it.sessionId }.toSet()
+            assertTrue("keep-me" in ids)
+            assertTrue("new-session" in ids)
+            assertFalse("old-session" in ids)
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `recordSession preserves title when re-recording same session`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-same-title").toFile()
+        try {
+            val (_, clock) = testClock()
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            manager.load()
+
+            manager.recordSession("session-1", "Original Title")
+            manager.recordSession("session-1", "Original Title")
+
+            assertEquals(1, manager.entryCount())
+            assertEquals("Original Title", manager.listAll()[0].title)
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `clearAll followed by recordSession starts fresh`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-clear-then-add").toFile()
+        try {
+            val (_, clock) = testClock()
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            manager.load()
+
+            manager.recordSession("old", "Old Chat")
+            manager.clearAll()
+            manager.recordSession("new", "New Chat")
+
+            assertEquals(1, manager.entryCount())
+            assertEquals("new", manager.listAll()[0].sessionId)
+            assertEquals("New Chat", manager.listAll()[0].title)
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `load and persist round-trip preserves data`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-roundtrip").toFile()
         try {

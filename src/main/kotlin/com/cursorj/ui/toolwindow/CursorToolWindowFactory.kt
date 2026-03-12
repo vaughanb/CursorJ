@@ -79,6 +79,7 @@ class CursorJService(
         promptHistoryManager.load()
         chatTranscriptManager.load()
         chatHistoryIndexManager.load()
+        clearStaleSessionsIfDataMissing()
         backfillChatHistoryIfNeeded()
         tabManager = SessionTabManager(this, toolWindow)
         tabManager.addInitialTab()
@@ -104,6 +105,12 @@ class CursorJService(
         fetchModelsAsync()
     }
 
+    private fun clearStaleSessionsIfDataMissing() {
+        if (chatTranscriptManager.isEmpty() && promptHistoryManager.isEmpty() && chatHistoryIndexManager.entryCount() == 0) {
+            CursorJSettings.instance.savedSessionIds = mutableListOf()
+        }
+    }
+
     private fun backfillChatHistoryIfNeeded() {
         if (chatHistoryIndexManager.storeFileExists() || chatHistoryIndexManager.entryCount() > 0) return
 
@@ -119,15 +126,15 @@ class CursorJService(
                 .asReversed()
                 .firstOrNull { it.role == "user" && it.content.isNotBlank() }
                 ?.content
-                ?.let { firstLine ->
-                    firstLine.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(32) ?: "Chat"
+                ?.let { raw ->
+                    raw.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(32)
                 }
                 ?: promptHistoryManager.historyFor(historyKey)
                     .lastOrNull()
                     ?.let { prompt ->
-                        prompt.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(32) ?: "Chat"
+                        prompt.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(32)
                     }
-                ?: "Chat"
+                ?: continue
             chatHistoryIndexManager.recordSession(sessionId, title)
         }
     }

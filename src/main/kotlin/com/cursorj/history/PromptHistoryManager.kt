@@ -134,6 +134,9 @@ class PromptHistoryManager(
     }
 
     @Synchronized
+    fun isEmpty(): Boolean = promptsBySession.isEmpty()
+
+    @Synchronized
     fun snapshot(): Map<String, List<String>> =
         promptsBySession.mapValues { (_, prompts) -> prompts.toList() }
 

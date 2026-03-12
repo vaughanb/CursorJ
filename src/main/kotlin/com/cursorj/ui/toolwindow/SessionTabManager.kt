@@ -26,7 +26,6 @@ import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.*
 
 class SessionTabManager(
@@ -290,6 +289,16 @@ class SessionTabManager(
         chatPanel.onFirstPrompt = { prompt ->
             ensureConnectionAndSend(entry, prompt)
         }
+        chatPanel.onSessionReplaced = { newSession ->
+            entry.session = newSession
+            val newHistoryKey = "session:${newSession.sessionId}"
+            service.chatTranscriptManager.migrateSessionKey(entry.historyKey, newHistoryKey)
+            service.promptHistoryManager.migrateSessionKey(entry.historyKey, newHistoryKey)
+            entry.historyKey = newHistoryKey
+            chatPanel.updateHistorySessionKey(newHistoryKey)
+            service.chatHistoryIndexManager.recordSession(newSession.sessionId, entry.title)
+            persistSavedSessions()
+        }
 
         connectEagerly(entry, restoreSessionId)
 
@@ -452,6 +461,7 @@ class SessionTabManager(
                             val restoredHistoryKey = "session:${restoredSession.sessionId}"
                             if (requestedHistoryKey != restoredHistoryKey) {
                                 service.chatTranscriptManager.migrateSessionKey(requestedHistoryKey, restoredHistoryKey)
+                                service.chatHistoryIndexManager.removeSession(restoreSessionId)
                             }
                             entry.historyKey = restoredHistoryKey
                             entry.chatPanel.updateHistorySessionKey(restoredHistoryKey)
@@ -567,10 +577,17 @@ class SessionTabManager(
     }
 
     private fun showHistoryPopup() {
-        val popup = ChatHistoryPopup(service.chatHistoryIndexManager) { sessionId ->
-            openHistoryEntry(sessionId)
-        }
+        val popup = ChatHistoryPopup(
+            indexManager = service.chatHistoryIndexManager,
+            onEntrySelected = { sessionId -> openHistoryEntry(sessionId) },
+            onClearHistory = { clearAllHistory() },
+        )
         popup.show(historyButton)
+    }
+
+    private fun clearAllHistory() {
+        service.chatHistoryIndexManager.clearAll()
+        CursorJSettings.instance.savedSessionIds = mutableListOf()
     }
 
     private fun openHistoryEntry(sessionId: String) {
@@ -595,30 +612,25 @@ class SessionTabManager(
                 }
 
                 if (entry.session == null) {
-                    val heuristicTitle = buildHeuristicTitle(prompt)
-                    applyTabTitle(entry, heuristicTitle)
+                    val defaultTitle = CursorJBundle.message("chat.tab.new")
+                    val titleToUse = if (entry.title != defaultTitle) entry.title else buildHeuristicTitle(prompt)
+                    val oldSessionId = entry.historyKey.removePrefix("session:")
+                        .takeIf { entry.historyKey.startsWith("session:") && it.isNotBlank() }
+
                     entry.session = conn.createSession()
                     val sessionId = entry.session!!.sessionId
                     val sessionHistoryKey = "session:$sessionId"
                     service.promptHistoryManager.migrateSessionKey(entry.historyKey, sessionHistoryKey)
                     service.chatTranscriptManager.migrateSessionKey(entry.historyKey, sessionHistoryKey)
+                    if (oldSessionId != null && oldSessionId != sessionId) {
+                        service.chatHistoryIndexManager.removeSession(oldSessionId)
+                    }
                     entry.historyKey = sessionHistoryKey
                     entry.chatPanel.updateHistorySessionKey(sessionHistoryKey)
                     entry.chatPanel.bindSession(entry.session!!)
-                    service.chatHistoryIndexManager.recordSession(sessionId, heuristicTitle)
+                    service.chatHistoryIndexManager.recordSession(sessionId, titleToUse)
+                    applyTabTitle(entry, titleToUse)
                     persistSavedSessions()
-
-                    val agentTitleApplied = AtomicBoolean(false)
-                    entry.session!!.addMessageListener { message ->
-                        if (message.role == "assistant" && !message.isStreaming && message.content.isNotBlank()
-                            && agentTitleApplied.compareAndSet(false, true)
-                        ) {
-                            val agentTitle = buildAgentResponseTitle(message.content)
-                            if (agentTitle.isNotBlank()) {
-                                applyTabTitle(entry, agentTitle)
-                            }
-                        }
-                    }
                 }
 
                 entry.session?.sessionId?.let { service.chatHistoryIndexManager.touchActivity(it) }
@@ -711,58 +723,6 @@ class SessionTabManager(
             }
         } else {
             withoutPrefix.take(30).trim()
-        }
-
-        return core.take(32).let { if (core.length > 32) "$it..." else it }
-    }
-
-    private fun buildAgentResponseTitle(agentText: String): String {
-        val firstSentence = agentText
-            .lineSequence()
-            .firstOrNull { it.isNotBlank() }
-            ?.trim()
-            ?.replace(Regex("""^#+\s*"""), "")
-            ?.replace(Regex("""[*_`~]"""), "")
-            ?.split(Regex("""(?<=[.!?])\s"""))
-            ?.firstOrNull()
-            ?.trim()
-            ?: return ""
-
-        val withoutPrefix = firstSentence
-            .replace(
-                Regex(
-                    """^(I'll|I will|I'm going to|I can|Let me|Sure,?\s*I'll|Sure,?\s*let me|""" +
-                        """OK,?\s*|Okay,?\s*|Alright,?\s*|Great,?\s*|Yes,?\s*)\s*""",
-                    RegexOption.IGNORE_CASE,
-                ),
-                "",
-            )
-            .replace(
-                Regex("""^(help you|start by|begin by|go ahead and)\s+""", RegexOption.IGNORE_CASE),
-                "",
-            )
-            .trim()
-
-        if (withoutPrefix.length < 5) return ""
-
-        val stopWords = setOf(
-            "a", "an", "the", "to", "for", "of", "in", "on", "with", "and", "or",
-            "by", "from", "this", "that", "these", "those", "is", "are", "was", "were",
-            "be", "been", "being", "have", "has", "had", "do", "does", "did",
-            "it", "its", "your", "their", "our", "so", "now",
-        )
-
-        val tokens = Regex("""[A-Za-z0-9+#./_-]+""")
-            .findAll(withoutPrefix)
-            .map { it.value }
-            .filter { it.length > 1 && it.lowercase() !in stopWords }
-            .toList()
-
-        if (tokens.size < 2) return ""
-
-        val core = tokens.take(5).joinToString(" ") { token ->
-            if (token.all { it.isUpperCase() } || token.any { it.isDigit() }) token
-            else token.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
         }
 
         return core.take(32).let { if (core.length > 32) "$it..." else it }

@@ -21,6 +21,7 @@ import javax.swing.event.DocumentListener
 class ChatHistoryPopup(
     private val indexManager: ChatHistoryIndexManager,
     private val onEntrySelected: (sessionId: String) -> Unit,
+    private val onClearHistory: (() -> Unit)? = null,
 ) {
     private val listPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -90,6 +91,10 @@ class ChatHistoryPopup(
                     addEntryRow(entry)
                 }
             }
+
+            if (onClearHistory != null) {
+                addClearHistoryFooter()
+            }
         }
 
         listPanel.revalidate()
@@ -112,7 +117,6 @@ class ChatHistoryPopup(
 
     private fun addEntryRow(entry: ChatHistoryEntry) {
         val hoverBg = JBColor(Color(0xE8E8E8), Color(0x3C3F41))
-        val normalBg = JBColor(Color(0, 0, 0, 0), Color(0, 0, 0, 0))
 
         val truncatedTitle = if (entry.title.length > 40) {
             entry.title.take(38) + "..."
@@ -124,8 +128,7 @@ class ChatHistoryPopup(
             override fun getMaximumSize(): Dimension =
                 Dimension(Int.MAX_VALUE, preferredSize.height)
         }
-        row.isOpaque = true
-        row.background = normalBg
+        row.isOpaque = false
         row.border = JBUI.Borders.empty(4, 8)
         row.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         row.alignmentX = Component.LEFT_ALIGNMENT
@@ -137,20 +140,65 @@ class ChatHistoryPopup(
 
         row.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
-                popup?.cancel()
-                onEntrySelected(entry.sessionId)
+                val p = popup
+                val sid = entry.sessionId
+                p?.cancel()
+                SwingUtilities.invokeLater {
+                    onEntrySelected(sid)
+                }
             }
 
             override fun mouseEntered(e: MouseEvent) {
+                row.isOpaque = true
                 row.background = hoverBg
+                row.repaint()
             }
 
             override fun mouseExited(e: MouseEvent) {
-                row.background = normalBg
+                row.isOpaque = false
+                row.repaint()
             }
         })
 
         listPanel.add(row)
+    }
+
+    private fun addClearHistoryFooter() {
+        listPanel.add(Box.createVerticalStrut(4))
+
+        val separator = JSeparator(SwingConstants.HORIZONTAL)
+        separator.maximumSize = Dimension(Int.MAX_VALUE, 1)
+        separator.alignmentX = Component.LEFT_ALIGNMENT
+        listPanel.add(separator)
+
+        val clearLabel = JLabel(CursorJBundle.message("chat.history.clear")).apply {
+            foreground = JBColor.RED
+            font = font.deriveFont(font.size2D - 1)
+            border = JBUI.Borders.empty(6, 8)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        clearLabel.maximumSize = Dimension(Int.MAX_VALUE, clearLabel.preferredSize.height)
+
+        clearLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val p = popup
+                p?.cancel()
+                SwingUtilities.invokeLater {
+                    onClearHistory?.invoke()
+                }
+            }
+
+            override fun mouseEntered(e: MouseEvent) {
+                clearLabel.foreground = JBColor(Color(0xCC0000), Color(0xFF6666))
+            }
+
+            override fun mouseExited(e: MouseEvent) {
+                clearLabel.foreground = JBColor.RED
+            }
+        })
+
+        listPanel.add(clearLabel)
     }
 
     companion object {

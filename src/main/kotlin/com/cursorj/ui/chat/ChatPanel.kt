@@ -1,6 +1,7 @@
 package com.cursorj.ui.chat
 
 import com.cursorj.CursorJBundle
+import com.cursorj.acp.AcpException
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.ChatMessage
@@ -15,7 +16,14 @@ import com.cursorj.ui.toolwindow.CursorJService
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.openapi.editor.markup.RangeHighlighter
+import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
@@ -51,7 +59,10 @@ class ChatPanel(
     private val permissionRequestSeq = AtomicInteger(1)
     private val pendingPermissionResponses = ConcurrentHashMap<String, CompletableFuture<String>>()
     private var desiredMode: SessionMode = SessionMode.AGENT
+    private var activeHighlighters = mutableListOf<Pair<Editor, RangeHighlighter>>()
     private var firstPromptCarryoverContext: String? = null
+    @Volatile
+    private var pendingUserDisplayText: String? = null
     private var lastProjectTreeRefreshAt = 0L
     private val minRefreshIntervalMs = 750L
 
@@ -66,6 +77,7 @@ class ChatPanel(
     }
 
     var onFirstPrompt: ((String) -> Unit)? = null
+    var onSessionReplaced: ((AcpSession) -> Unit)? = null
     val component: JComponent get() = rootPanel
 
     init {
@@ -106,6 +118,9 @@ class ChatPanel(
         messageListPanel.onToolCallFileClick = { path ->
             openFileInEditor(path)
         }
+        messageListPanel.onDiffFileClick = { path, line, addedLines ->
+            openFileInEditorWithHighlights(path, line, addedLines)
+        }
     }
 
     fun updateConfigOptions(options: List<ConfigOption>) {
@@ -138,11 +153,22 @@ class ChatPanel(
             if (!message.isStreaming) {
                 service.chatTranscriptManager.addMessage(historySessionKey, message)
             }
+            val displayMessage = if (message.role == "user") {
+                val overrideText = pendingUserDisplayText
+                if (overrideText != null) {
+                    pendingUserDisplayText = null
+                    message.copy(content = overrideText)
+                } else {
+                    message
+                }
+            } else {
+                message
+            }
             SwingUtilities.invokeLater {
                 if (message.isStreaming) {
                     commitPendingToolCall()
                 }
-                messageListPanel.updateOrAddMessage(message)
+                messageListPanel.updateOrAddMessage(displayMessage)
                 if (!message.isStreaming && session.isProcessing) {
                     messageListPanel.showProgress(color = modeProgressColor())
                 }
@@ -159,6 +185,11 @@ class ChatPanel(
 
         session.addToolCallListener { id, activity ->
             SwingUtilities.invokeLater {
+                if (activity.kind == "edit") {
+                    if (activity.path != null) refreshProjectTreeThrottled()
+                    refreshRollbackAvailability()
+                    return@invokeLater
+                }
                 val pending = pendingToolCall
                 if (pending != null && pending.first != id) {
                     messageListPanel.addOrUpdateToolCallLine(
@@ -172,6 +203,12 @@ class ChatPanel(
                     refreshProjectTreeThrottled()
                 }
                 refreshRollbackAvailability()
+            }
+        }
+
+        session.addEditDiffListener { diff ->
+            SwingUtilities.invokeLater {
+                messageListPanel.addDiffPanel(diff.path, diff.oldText, diff.newText)
             }
         }
 
@@ -197,6 +234,9 @@ class ChatPanel(
                     }
                 }
                 val carryoverContext = firstPromptCarryoverContext
+                if (!carryoverContext.isNullOrBlank()) {
+                    pendingUserDisplayText = text
+                }
                 val contentBlocks = buildContentBlocks(text, carryoverContext)
                 SwingUtilities.invokeLater {
                     inputPanel.setProcessing(true)
@@ -209,8 +249,12 @@ class ChatPanel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                log.warn("Error sending prompt", e)
-                showError(e.message ?: "Failed to send prompt")
+                if (isContextExhausted(e)) {
+                    recoverFromContextExhaustion(text)
+                } else {
+                    log.warn("Error sending prompt", e)
+                    showError(e.message ?: "Failed to send prompt")
+                }
             } finally {
                 refreshProjectTreeThrottled(force = true)
                 SwingUtilities.invokeLater {
@@ -229,6 +273,49 @@ class ChatPanel(
                     }
                 }
             }
+        }
+    }
+
+    private fun isContextExhausted(e: Exception): Boolean {
+        val message = e.message?.lowercase() ?: return false
+        return message.contains("resource_exhausted") ||
+            message.contains("context_length_exceeded") ||
+            message.contains("maximum context length")
+    }
+
+    private suspend fun recoverFromContextExhaustion(originalPromptText: String) {
+        val conn = connection
+        if (conn == null || !conn.isConnected) {
+            showError("Context limit reached but no active connection for recovery.")
+            return
+        }
+
+        log.info("Context exhausted — recovering with new session and conversation summary")
+        showStatus("Context limit reached. Continuing in a new session\u2026")
+
+        try {
+            val carryover = service.chatTranscriptManager.buildCarryoverContext(historySessionKey)
+            val newSession = conn.createSession()
+
+            session = newSession
+            bindSession(newSession)
+
+            if (newSession.mode != desiredMode) {
+                try { newSession.setMode(desiredMode) } catch (_: Exception) {}
+            }
+
+            onSessionReplaced?.invoke(newSession)
+
+            val retryBlocks = buildContentBlocks(originalPromptText, carryover)
+            SwingUtilities.invokeLater {
+                inputPanel.setProcessing(true)
+            }
+            newSession.sendPrompt(retryBlocks)
+        } catch (retryEx: CancellationException) {
+            throw retryEx
+        } catch (retryEx: Exception) {
+            log.warn("Recovery after context exhaustion failed", retryEx)
+            showError("Context recovery failed: ${retryEx.message}")
         }
     }
 
@@ -306,6 +393,7 @@ class ChatPanel(
             val result = s.rollbackLastTurn()
             when (result.status) {
                 RollbackStatus.SUCCESS -> {
+                    clearDiffHighlights()
                     showStatus(CursorJBundle.message("chat.rollback.success"))
                     refreshProjectTreeThrottled(force = true)
                     service.workspaceIndexOrchestrator.notifyRollback()
@@ -501,24 +589,76 @@ class ChatPanel(
     }
 
     private fun openFileInEditor(path: String) {
+        openFileInEditorAtLine(path, -1)
+    }
+
+    private fun openFileInEditorAtLine(path: String, line: Int) {
+        openFileInEditorWithHighlights(path, line, emptyList())
+    }
+
+    private fun openFileInEditorWithHighlights(path: String, line: Int, addedLines: List<Int>) {
         val basePath = service.project.basePath ?: return
         val candidate = java.io.File(path)
         val resolved = if (candidate.isAbsolute) candidate else java.io.File(basePath, path)
         val normalizedPath = resolved.absolutePath.replace('\\', '/')
         ApplicationManager.getApplication().invokeLater {
-            val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
-            if (vf != null) {
-                FileEditorManager.getInstance(service.project).openFile(vf, true)
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath) ?: return@invokeLater
+            val editors = FileEditorManager.getInstance(service.project).openFile(vf, true)
+            val textEditor = editors.filterIsInstance<TextEditor>().firstOrNull()
+            val editor = textEditor?.editor ?: return@invokeLater
+
+            if (line > 0) {
+                val offset = editor.document.getLineStartOffset((line - 1).coerceIn(0, editor.document.lineCount - 1))
+                editor.caretModel.moveToOffset(offset)
+                editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
+            }
+
+            clearDiffHighlights()
+            if (addedLines.isNotEmpty()) {
+                applyDiffHighlights(editor, addedLines)
             }
         }
     }
 
+    private fun applyDiffHighlights(editor: Editor, addedLines: List<Int>) {
+        val addBg = JBColor(Color(0xEAF8EE), Color(0x14291A))
+        val stripeBg = JBColor(Color(0x28A745), Color(0x3FB950))
+        val lineCount = editor.document.lineCount
+        val markup = editor.markupModel
+
+        for (lineIdx in addedLines) {
+            if (lineIdx < 0 || lineIdx >= lineCount) continue
+            val attrs = TextAttributes().apply {
+                backgroundColor = addBg
+                errorStripeColor = stripeBg
+            }
+            val highlighter = markup.addLineHighlighter(
+                lineIdx,
+                HighlighterLayer.SELECTION - 1,
+                attrs,
+            )
+            highlighter.isGreedyToRight = true
+            activeHighlighters.add(editor to highlighter)
+        }
+    }
+
+    private fun clearDiffHighlights() {
+        for ((editor, highlighter) in activeHighlighters) {
+            try {
+                editor.markupModel.removeHighlighter(highlighter)
+            } catch (_: Exception) {
+                // editor may have been disposed
+            }
+        }
+        activeHighlighters.clear()
+    }
+
     private suspend fun buildContentBlocks(text: String, carryoverContext: String?): List<ContentBlock> {
         val blocks = mutableListOf<ContentBlock>()
-        blocks.add(TextContent(text = text))
         if (!carryoverContext.isNullOrBlank()) {
-            blocks.add(TextContent(carryoverContext))
+            blocks.add(TextContent("Context from a previous chat:\n\n$carryoverContext\n\nCurrent prompt:"))
         }
+        blocks.add(TextContent(text = text))
 
         if (CursorJSettings.instance.autoAttachActiveFile) {
             blocks.addAll(service.activeFileProvider.buildContextBlocks())
@@ -576,6 +716,7 @@ class ChatPanel(
     }
 
     override fun dispose() {
+        clearDiffHighlights()
         scope.cancel()
         pendingPermissionResponses.values.forEach { future ->
             if (!future.isDone) future.complete("reject-once")

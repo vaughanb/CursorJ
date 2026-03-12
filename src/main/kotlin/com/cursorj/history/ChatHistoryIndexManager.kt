@@ -61,6 +61,12 @@ class ChatHistoryIndexManager(
     }
 
     @Synchronized
+    fun clearAll() {
+        entries.clear()
+        store.save(buildSnapshot())
+    }
+
+    @Synchronized
     fun removeSession(sessionId: String): Boolean {
         val removed = entries.removeAll { it.sessionId == sessionId.trim() }
         if (removed) {

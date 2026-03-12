@@ -3,6 +3,7 @@ package com.cursorj.acp
 import com.cursorj.acp.messages.*
 import com.cursorj.rollback.RollbackResult
 import com.cursorj.rollback.TurnRollbackManager
+import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.selects.select
@@ -28,6 +29,14 @@ data class ChatMessage(
 data class ToolActivity(
     val text: String,
     val path: String? = null,
+    val kind: String? = null,
+)
+
+data class EditDiffContent(
+    val toolCallId: String,
+    val path: String,
+    val oldText: String,
+    val newText: String,
 )
 
 class AcpSession(
@@ -38,6 +47,7 @@ class AcpSession(
 ) {
     private val log = Logger.getInstance(AcpSession::class.java)
     private val json = Json { ignoreUnknownKeys = true }
+    private val prettyJson = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     var mode: SessionMode = SessionMode.AGENT
@@ -96,6 +106,7 @@ class AcpSession(
     private val activityListeners = mutableListOf<(String) -> Unit>()
     private val toolCallListeners = mutableListOf<(String, ToolActivity) -> Unit>()
     private val planListeners = mutableListOf<(List<PlanEntry>) -> Unit>()
+    private val editDiffListeners = mutableListOf<(EditDiffContent) -> Unit>()
 
     private val _currentAgentText = StringBuilder()
 
@@ -117,6 +128,10 @@ class AcpSession(
 
     fun addToolCallListener(listener: (id: String, activity: ToolActivity) -> Unit) {
         toolCallListeners.add(listener)
+    }
+
+    fun addEditDiffListener(listener: (EditDiffContent) -> Unit) {
+        editDiffListeners.add(listener)
     }
 
     fun addPlanListener(listener: (List<PlanEntry>) -> Unit) {
@@ -163,6 +178,7 @@ class AcpSession(
                     val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
                     val status = obj["status"]?.jsonPrimitive?.contentOrNull
                     log.info("tool_call: id=$toolCallId kind=$kind status=$status hasContent=${obj.containsKey("content")} hasRawOutput=${obj.containsKey("rawOutput")}")
+                    debugDumpToolCall("tool_call", toolCallId, kind, obj)
                     if (kind == "execute") {
                         extractExecuteCommandPreview(obj)?.let { cmd ->
                             log.info("tool_call execute command: $cmd")
@@ -185,6 +201,7 @@ class AcpSession(
                     val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
                     val status = obj["status"]?.jsonPrimitive?.contentOrNull
                     log.info("tool_call_update: id=$toolCallId status=$status hasContent=${obj.containsKey("content")} hasRawOutput=${obj.containsKey("rawOutput")}")
+                    debugDumpToolCall("tool_call_update", toolCallId, kind, obj)
                     val commandPreview = extractExecuteCommandPreview(obj)
                     if (status == "in_progress") {
                         commandPreview?.let { cmd ->
@@ -198,6 +215,9 @@ class AcpSession(
                         commandPreview = commandPreview,
                     )
                     captureToolCallContent(toolCallId, obj)
+                    if (status == "completed") {
+                        extractEditDiffs(toolCallId, obj)
+                    }
                     formatToolActivity(obj)?.let { activity ->
                         notifyActivityListeners(activity.text)
                         notifyToolCallListeners(toolCallId, activity)
@@ -297,6 +317,49 @@ class AcpSession(
         }
     }
 
+    private fun extractEditDiffs(toolCallId: String, obj: JsonObject) {
+        val contentArray = obj["content"]?.let {
+            if (it is JsonArray) it else null
+        } ?: return
+        for (element in contentArray) {
+            val entry = (element as? JsonObject) ?: continue
+            val type = entry["type"]?.jsonPrimitive?.contentOrNull ?: continue
+            if (type != "diff") continue
+            val path = entry["path"]?.jsonPrimitive?.contentOrNull ?: continue
+            val oldTextElement = entry["oldText"]
+            val oldText = if (oldTextElement == null || oldTextElement is JsonNull) ""
+                else oldTextElement.jsonPrimitive.contentOrNull ?: ""
+            val newTextElement = entry["newText"]
+            val newText = if (newTextElement == null || newTextElement is JsonNull) continue
+                else newTextElement.jsonPrimitive.contentOrNull ?: continue
+            if (oldText == newText) continue
+            val diff = EditDiffContent(toolCallId, path, oldText, newText)
+            for (listener in editDiffListeners) {
+                try {
+                    listener(diff)
+                } catch (e: Exception) {
+                    log.warn("Error in edit diff listener", e)
+                }
+            }
+        }
+    }
+
+    private fun debugDumpToolCall(event: String, toolCallId: String, kind: String?, obj: JsonObject) {
+        if (!runCatching { CursorJSettings.instance.enableAcpRawLogging }.getOrDefault(false)) return
+        try {
+            val formatted = prettyJson.encodeToString(JsonObject.serializer(), obj)
+            val entry = "=== $event id=$toolCallId kind=$kind ===\n$formatted\n\n"
+            log.info("DEBUG_TOOL_CALL [$event] id=$toolCallId kind=$kind keys=${obj.keys}")
+            debugLogFile?.let { file ->
+                file.parentFile?.mkdirs()
+                file.appendText(entry)
+            }
+        } catch (e: Exception) {
+            log.info("DEBUG_TOOL_CALL [$event] id=$toolCallId kind=$kind (dump failed: ${e.message})")
+        }
+    }
+
+
     private fun captureToolCallContent(toolCallId: String, obj: JsonObject) {
         val text = AcpContentExtractor.extractTextFromContent(obj["content"])
             ?: extractRawOutputText(obj["rawOutput"])
@@ -387,7 +450,7 @@ class AcpSession(
             }
         }
 
-        return ToolActivity(text = text, path = path)
+        return ToolActivity(text = text, path = path, kind = kind)
     }
 
     private fun extractUpdateText(updateObj: JsonObject): String? {
@@ -698,5 +761,10 @@ class AcpSession(
         private const val TOOL_WATCHDOG_FAIL_FAST_MS = 5L * 60L * 1000L
         private const val GRADLE_FAIL_FAST_MS = 90_000L
         private const val TOOL_WATCHDOG_ERROR_CODE = -32001
+
+        val debugLogFile: java.io.File? by lazy {
+            val home = System.getProperty("user.home") ?: return@lazy null
+            java.io.File(home, ".cursorj/debug/tool-calls.log")
+        }
     }
 }

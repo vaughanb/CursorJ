@@ -77,4 +77,41 @@ class ChatTranscriptManagerTest {
             workspace.deleteRecursively()
         }
     }
+
+    @Test
+    fun `isEmpty returns true before any messages are added`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-empty").toFile()
+        try {
+            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            manager.load()
+            assertTrue(manager.isEmpty())
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `isEmpty returns false after adding a message`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-notempty").toFile()
+        try {
+            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            manager.load()
+            manager.addMessage("session:one", ChatMessage("user", "hello"))
+            assertFalse(manager.isEmpty())
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `isEmpty returns true when loaded from missing file`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-no-file").toFile()
+        try {
+            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            manager.load()
+            assertTrue(manager.isEmpty())
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
 }

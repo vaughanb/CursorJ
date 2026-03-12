@@ -5,6 +5,7 @@ import com.cursorj.acp.ChatMessage
 import com.cursorj.acp.messages.PermissionOption
 import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.permissions.PermissionPolicy
+import com.cursorj.ui.components.CollapsibleDiffPanel
 import com.cursorj.ui.components.MessageRenderer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -144,6 +145,16 @@ class MessageListPanel {
             toolCallLabels[id] = line
             innerPanel.add(line.panel)
         }
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    var onDiffFileClick: ((path: String, line: Int, addedLines: List<Int>) -> Unit)? = null
+
+    fun addDiffPanel(filePath: String, oldText: String, newText: String) {
+        val diffPanel = CollapsibleDiffPanel(filePath, oldText, newText, onFileClick = onDiffFileClick)
+        innerPanel.add(diffPanel.component)
         innerPanel.revalidate()
         innerPanel.repaint()
         scrollToBottom()
@@ -328,9 +339,9 @@ class MessageListPanel {
         val panel = line.panel
         panel.removeAll()
 
-        val textColor = JBColor(Color(0x7A8A99), Color(0x7A8A99))
-        val linkColor = JBColor(Color(0x6B9BD2), Color(0x6B9BD2))
-        val baseFont = panel.font.deriveFont(panel.font.size2D - 1)
+        val textColor = JBColor(Color(0x8E9BAA), Color(0x6B7785))
+        val linkColor = JBColor(Color(0x7FAED4), Color(0x5A88B0))
+        val baseFont = panel.font.deriveFont(panel.font.size2D - 2)
 
         fun textLabel(value: String): JLabel = JLabel(value).apply {
             foreground = textColor
@@ -344,7 +355,7 @@ class MessageListPanel {
 
         if (path != null && filename != null) {
             val idx = text.indexOf(filename)
-            val prefix = if (idx >= 0) "▸ ${text.substring(0, idx)}" else "▸ $text "
+            val prefix = if (idx >= 0) "\u25B8 ${text.substring(0, idx)}" else "\u25B8 $text "
             val suffix = if (idx >= 0) text.substring(idx + filename.length) else ""
 
             if (prefix.isNotEmpty()) panel.add(textLabel(prefix))
@@ -364,7 +375,7 @@ class MessageListPanel {
 
             if (suffix.isNotEmpty()) panel.add(textLabel(suffix))
         } else {
-            panel.add(textLabel("▸ $text"))
+            panel.add(textLabel("\u25B8 $text"))
         }
 
         panel.toolTipText = path

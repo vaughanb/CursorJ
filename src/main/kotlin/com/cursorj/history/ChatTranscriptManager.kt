@@ -88,6 +88,9 @@ class ChatTranscriptManager(
     }
 
     @Synchronized
+    fun isEmpty(): Boolean = transcriptBySession.isEmpty()
+
+    @Synchronized
     fun transcriptFor(sessionKey: String): List<ChatMessage> {
         return transcriptBySession[sessionKey.trim()]
             ?.map { ChatMessage(role = it.role, content = it.content) }

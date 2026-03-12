@@ -110,7 +110,12 @@ tasks {
         val runIdeSystemDir = File(runIdeSandboxRoot, "system").absolutePath
         val runIdeLogDir = File(runIdeSandboxRoot, "log").absolutePath
 
-        // Keep interactive runIde state isolated from verification/search tasks.
+        doFirst {
+            File(runIdeConfigDir).mkdirs()
+            File(runIdeSystemDir).mkdirs()
+            File(runIdeLogDir).mkdirs()
+        }
+
         jvmArgs(
             "-Didea.config.path=$runIdeConfigDir",
             "-Didea.system.path=$runIdeSystemDir",

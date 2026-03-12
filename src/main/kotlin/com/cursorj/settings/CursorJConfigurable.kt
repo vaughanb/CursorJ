@@ -158,13 +158,13 @@ class CursorJConfigurable : Configurable {
                 false,
             )
             .addComponent(protectExternalWritesCheckbox!!, 1)
-            .addComponent(acpRawLoggingCheckbox!!, 1)
             .addLabeledComponent(
                 JBLabel(CursorJBundle.message("settings.permission.approvedTools")),
                 approvedToolsScroll,
                 1,
                 false,
             )
+            .addComponent(acpRawLoggingCheckbox!!, 1)
             .addComponentFillVertically(JPanel(), 0)
             .panel
 

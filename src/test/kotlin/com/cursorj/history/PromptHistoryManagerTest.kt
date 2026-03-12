@@ -93,4 +93,41 @@ class PromptHistoryManagerTest {
             workspace.deleteRecursively()
         }
     }
+
+    @Test
+    fun `isEmpty returns true before any prompts are added`() {
+        val workspace = Files.createTempDirectory("cursorj-prompt-history-manager-empty").toFile()
+        try {
+            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            manager.load()
+            assertTrue(manager.isEmpty())
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `isEmpty returns false after adding a prompt`() {
+        val workspace = Files.createTempDirectory("cursorj-prompt-history-manager-notempty").toFile()
+        try {
+            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            manager.load()
+            manager.addPrompt("session:one", "hello")
+            assertFalse(manager.isEmpty())
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `isEmpty returns true when loaded from missing file`() {
+        val workspace = Files.createTempDirectory("cursorj-prompt-history-manager-no-file").toFile()
+        try {
+            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            manager.load()
+            assertTrue(manager.isEmpty())
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
 }
