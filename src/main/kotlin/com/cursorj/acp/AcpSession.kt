@@ -238,6 +238,9 @@ class AcpSession(
                         log.info("Decoded ${entries.size} plan entries")
                         _planEntries.clear()
                         _planEntries.addAll(entries)
+                        if (entries.isNotEmpty()) {
+                            planCreated = true
+                        }
                         notifyPlanListeners(entries)
                     }
                 }
