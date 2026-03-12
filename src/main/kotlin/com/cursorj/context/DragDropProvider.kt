@@ -19,6 +19,9 @@ class DragDropProvider(
         component.transferHandler = FileDropTransferHandler()
     }
 
+    internal fun extractBlocksFromTransferable(transferable: Transferable): List<ContentBlock> =
+        extractDroppedBlocks(transferable)
+
     private inner class FileDropTransferHandler : TransferHandler() {
         override fun canImport(support: TransferSupport): Boolean {
             val canImport = support.dataFlavors.any(::isSupportedFlavor)
@@ -32,7 +35,7 @@ class DragDropProvider(
             if (!canImport(support)) return false
 
             return try {
-                val blocks = extractDroppedBlocks(support.transferable)
+                val blocks = extractBlocksFromTransferable(support.transferable)
                 if (blocks.isEmpty()) return false
                 onFilesDropped(blocks)
                 true
@@ -40,8 +43,9 @@ class DragDropProvider(
                 false
             }
         }
+    }
 
-        private fun extractDroppedBlocks(transferable: Transferable): List<ContentBlock> {
+    private fun extractDroppedBlocks(transferable: Transferable): List<ContentBlock> {
             val resourcesByPath = linkedMapOf<String, ResourceLinkContent>()
 
             fun addFile(file: File) {
@@ -128,15 +132,14 @@ class DragDropProvider(
             }
 
             return emptyList()
-        }
+    }
 
-        private fun isSupportedFlavor(flavor: DataFlavor): Boolean {
-            return flavor == DataFlavor.javaFileListFlavor ||
+    private fun isSupportedFlavor(flavor: DataFlavor): Boolean {
+        return flavor == DataFlavor.javaFileListFlavor ||
                 flavor == DataFlavor.stringFlavor ||
                 flavor.mimeType.startsWith("text/uri-list") ||
                 flavor.representationClass == VirtualFile::class.java ||
-                (flavor.representationClass.isArray &&
-                    flavor.representationClass.componentType == VirtualFile::class.java)
-        }
+            (flavor.representationClass.isArray &&
+                flavor.representationClass.componentType == VirtualFile::class.java)
     }
 }

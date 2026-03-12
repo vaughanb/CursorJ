@@ -118,8 +118,11 @@ Run all tests:
 ./gradlew build
 ```
 
-Current indexing-focused tests validate:
+Current tests validate:
 
+- **TerminalHandler**: process command building (args vs shell), timeout extraction
+- **DragDropProvider**: file list and string flavor extraction, deduplication, install
+- **ProjectRulesService**: getRulesDirectory and listRuleFiles when rules dir is absent
 - lexical search behavior (matching, scope filters, case sensitivity, truncation, binary/size skipping)
 - SQLite persistence behavior (migration, reopen persistence, pruning, normalization, ordering)
 - orchestrator lifecycle/queue behavior (startup, incremental updates, reconcile, telemetry)
