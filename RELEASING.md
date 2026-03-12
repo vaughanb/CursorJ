@@ -46,7 +46,7 @@ Then validate at least:
 - CursorJ tool window opens.
 - Chat can start a session.
 - File and terminal tool calls work.
-- API key can be saved/loaded from settings.
+- Authentication works (run `agent login` beforehand).
 
 ## 5) Publish to JetBrains Marketplace
 

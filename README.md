@@ -7,14 +7,18 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 ## Features
 
 - **Full Agentic Coding**: File editing, terminal commands, and codebase understanding powered by Cursor's AI agent
-- **Active File Context**: Automatically attaches the currently open file as context
+- **Active File Context**: Optionally attach the currently open file as context
+- **Selection Context**: Add selected text to chat via `Ctrl+Shift+J` or the editor context menu
 - **Drag-and-Drop**: Drop files onto the chat panel to add them as context
 - **Multiple Chat Sessions**: Open multiple concurrent chat tabs, each with independent sessions
 - **Native IntelliJ UI**: Consistent look and feel with syntax-highlighted code blocks and diff rendering
-- **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic chunks
-- **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs
-- **Mode Switching**: Switch between Agent, Plan, and Ask modes
+- **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic reranking
+- **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs; choose "Ask Every Time" or "Run Everything"
+- **Rules**: Global user rules (injected into every prompt) and project rules (`.cursor/rules/`)
+- **Mode Switching**: Switch between Agent, Plan, and Ask modes (Plan mode includes Build and View Plan)
 - **Rollback Last Turn**: Revert files to the state before the most recent agent turn using Local History
+- **Chat History**: Searchable chat history grouped by time; restore previous chats; clear history
+- **Status Bar**: Connection and indexing status (Connected, Processing, Indexing, Index ready, etc.)
 
 ## Prerequisites
 
@@ -74,7 +78,7 @@ CursorJ uses a hybrid local-first indexing model:
 
 - **Lexical index (default)**: File-content indexing with SQLite persistence for warm starts and incremental updates
 - **Symbol index**: IntelliJ PSI/index-based symbol and reference lookup
-- **Semantic index (optional)**: In-memory chunk index for semantic retrieval (memory-only storage)
+- **Semantic reranking (optional, experimental)**: In-memory chunk index for semantic reranking of retrieval results
 - **Hybrid ranking**: Retrieval results are fused and ranked before prompt context is assembled
 
 Persistence details:
@@ -83,15 +87,18 @@ Persistence details:
 - Semantic vectors/chunks are currently memory-only
 - Index lifecycle states include startup build, incremental build, stale rebuild, ready, and failed
 
-Configuration is available in **Settings > Tools > CursorJ**, including:
+### Configuration
 
-- Enable/disable project indexing
-- Enable lexical persistence
-- Enable semantic indexing
-- Retrieval limits and timeout
-- Retention days and max DB size
-- Manual "Rebuild index now"
-- Status-bar indexing lifecycle updates
+Settings are available in **Settings > Tools > CursorJ** (application-level) and **Project Settings > Tools > CursorJ** (project-level):
+
+- **Agent**: Path to agent binary (auto-detect from PATH when empty), default model
+- **Global User Rules**: Inject custom rules into every prompt
+- **Project Rules**: Manage rule files in `.cursor/rules/` (project-level settings)
+- **Context & Indexing**: Auto-attach active file; enable project indexing; lexical persistence; semantic reranking; retrieval limits (max candidates, snippet budget, timeout); index retention days and max DB size; manual "Rebuild index now"
+- **Permissions**: Tool permission mode (Ask Every Time / Run Everything); approved tools allowlist; protect writes outside workspace
+- **Advanced**: ACP raw JSON debug logging (diagnostics)
+
+The status bar shows connection and indexing lifecycle (Connected, Disconnected, Processing, Indexing, Index ready, Indexing failed).
 
 ## Building
 
