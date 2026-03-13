@@ -3,10 +3,11 @@ package com.cursorj.ui.components
 import com.intellij.ui.JBColor
 
 object MarkdownRenderer {
-    fun renderToHtml(markdown: String): String {
+    fun renderToHtml(markdown: String, baseFontSize: Int = 13): String {
         val lines = markdown.lines()
         val sb = StringBuilder()
-        sb.append("<html><body style='font-family: sans-serif; font-size: 13pt; margin: 0; padding: 0;'>")
+        val codeFontSize = baseFontSize - 1
+        sb.append("<html><body style='font-size: ${baseFontSize}pt; margin: 0; padding: 0;'>")
 
         var inCodeBlock = false
         var codeLanguage = ""
@@ -21,7 +22,7 @@ object MarkdownRenderer {
                 }
                 line.startsWith("```") && inCodeBlock -> {
                     inCodeBlock = false
-                    sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage))
+                    sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage, codeFontSize))
                     codeBuffer.clear()
                 }
                 inCodeBlock -> {
@@ -29,50 +30,50 @@ object MarkdownRenderer {
                     codeBuffer.append(line)
                 }
                 line.startsWith("### ") -> {
-                    sb.append("<h4 style='margin: 4px 0 2px 0;'>${escapeHtml(line.removePrefix("### "))}</h4>")
+                    sb.append("<h4 style='margin: 4px 0 2px 0; font-size: ${baseFontSize + 1}pt;'>${escapeHtml(line.removePrefix("### "))}</h4>")
                 }
                 line.startsWith("## ") -> {
-                    sb.append("<h3 style='margin: 6px 0 2px 0;'>${escapeHtml(line.removePrefix("## "))}</h3>")
+                    sb.append("<h3 style='margin: 6px 0 2px 0; font-size: ${baseFontSize + 3}pt;'>${escapeHtml(line.removePrefix("## "))}</h3>")
                 }
                 line.startsWith("# ") -> {
-                    sb.append("<h2 style='margin: 6px 0 2px 0;'>${escapeHtml(line.removePrefix("# "))}</h2>")
+                    sb.append("<h2 style='margin: 6px 0 2px 0; font-size: ${baseFontSize + 5}pt;'>${escapeHtml(line.removePrefix("# "))}</h2>")
                 }
                 line.startsWith("- ") || line.startsWith("* ") -> {
-                    sb.append("<p style='margin: 2px 0 2px 16px;'>&bull; ${renderInline(line.drop(2))}</p>")
+                    sb.append("<p style='margin: 2px 0 2px 16px;'>&bull; ${renderInline(line.drop(2), codeFontSize)}</p>")
                 }
                 line.isBlank() -> {
                     sb.append("<div style='margin: 0; padding: 0; line-height: 6px;'>&nbsp;</div>")
                 }
                 else -> {
-                    sb.append("<p style='margin: 2px 0;'>${renderInline(line)}</p>")
+                    sb.append("<p style='margin: 2px 0;'>${renderInline(line, codeFontSize)}</p>")
                 }
             }
         }
 
         if (inCodeBlock) {
-            sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage))
+            sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage, codeFontSize))
         }
 
         sb.append("</body></html>")
         return sb.toString()
     }
 
-    private fun renderCodeBlock(code: String, language: String): String {
+    private fun renderCodeBlock(code: String, language: String, codeFontSize: Int): String {
         val bgColor = if (JBColor.isBright()) "#f6f8fa" else "#1e1e1e"
         val textColor = if (JBColor.isBright()) "#24292e" else "#d4d4d4"
         return """
             <div style='background: $bgColor; padding: 8px; margin: 4px 0;'>
-                <pre style='font-family: monospace; font-size: 12pt; color: $textColor; margin: 0;'>${escapeHtml(code)}</pre>
+                <pre style='font-family: monospace; font-size: ${codeFontSize}pt; color: $textColor; margin: 0;'>${escapeHtml(code)}</pre>
             </div>
         """.trimIndent()
     }
 
-    private fun renderInline(text: String): String {
+    private fun renderInline(text: String, codeFontSize: Int): String {
         var result = escapeHtml(text)
 
         result = Regex("`([^`]+)`").replace(result) { match ->
             val bgColor = if (JBColor.isBright()) "#f0f0f0" else "#3c3c3c"
-            "<code style='background: $bgColor; padding: 1px 4px; font-family: monospace; font-size: 12pt;'>${match.groupValues[1]}</code>"
+            "<code style='background: $bgColor; padding: 1px 4px; font-family: monospace; font-size: ${codeFontSize}pt;'>${match.groupValues[1]}</code>"
         }
 
         // Bold: **text** or __text__ (use span+font-weight for reliable Swing HTML rendering)

@@ -33,24 +33,51 @@ class MessageRenderer(private var message: ChatMessage) {
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
     }
 
+    private val bubblePanel = object : JPanel(BorderLayout()) {
+        override fun getMaximumSize(): Dimension {
+            val pref = preferredSize
+            return Dimension(Int.MAX_VALUE, pref.height)
+        }
+    }.apply {
+        isOpaque = true
+        border = BorderFactory.createCompoundBorder(
+            JBUI.Borders.customLine(
+                JBColor(Color(0xDDDDDD), Color(0x3D3D3D)),
+                1,
+            ),
+            JBUI.Borders.empty(0),
+        )
+        add(contentArea, BorderLayout.CENTER)
+    }
+
     val component: JComponent get() = panel
 
     init {
-        render()
+        panel.add(bubblePanel, BorderLayout.CENTER)
+        applyBubbleColor()
+        updateContent()
     }
 
     fun update(newMessage: ChatMessage) {
+        val roleChanged = message.role != newMessage.role
         message = newMessage
-        render()
+        if (roleChanged) applyBubbleColor()
+        updateContent()
     }
 
-    private fun render() {
-        panel.removeAll()
-
+    private fun applyBubbleColor() {
         val isUser = message.role == "user"
         val isTool = message.role == "tool"
+        bubblePanel.background = when {
+            isUser -> JBColor(Color(0xE3F2FD), Color(0x1A3A5C))
+            isTool -> JBColor(Color(0xFFF3E0), Color(0x3C2A10))
+            else -> JBColor(Color(0xF5F5F5), Color(0x2D2D2D))
+        }
+    }
 
-        val html = MarkdownRenderer.renderToHtml(message.content)
+    private fun updateContent() {
+        val baseFontSize = contentArea.font?.size ?: 13
+        val html = MarkdownRenderer.renderToHtml(message.content, baseFontSize)
         try {
             contentArea.text = html
             contentArea.caretPosition = 0
@@ -59,31 +86,5 @@ class MessageRenderer(private var message: ChatMessage) {
             contentArea.contentType = "text/plain"
             contentArea.text = message.content
         }
-
-        val bubblePanel = object : JPanel(BorderLayout()) {
-            override fun getMaximumSize(): Dimension {
-                val pref = preferredSize
-                return Dimension(Int.MAX_VALUE, pref.height)
-            }
-        }.apply {
-            isOpaque = true
-            background = when {
-                isUser -> JBColor(Color(0xE3F2FD), Color(0x1A3A5C))
-                isTool -> JBColor(Color(0xFFF3E0), Color(0x3C2A10))
-                else -> JBColor(Color(0xF5F5F5), Color(0x2D2D2D))
-            }
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(
-                    JBColor(Color(0xDDDDDD), Color(0x3D3D3D)),
-                    1,
-                ),
-                JBUI.Borders.empty(0),
-            )
-            add(contentArea, BorderLayout.CENTER)
-        }
-
-        panel.add(bubblePanel, BorderLayout.CENTER)
-        panel.revalidate()
-        panel.repaint()
     }
 }
