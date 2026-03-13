@@ -160,6 +160,7 @@ class InputPanel {
 
     var onSend: ((String) -> Unit)? = null
     var onCancel: (() -> Unit)? = null
+    var onQueueMessage: ((String) -> Unit)? = null
     var onRollback: (() -> Unit)? = null
     var onSelectionChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
@@ -332,9 +333,12 @@ class InputPanel {
         sendButton.isVisible = !processing
         cancelButton.isVisible = processing
         rollbackButton.isEnabled = rollbackAvailable && !processing
-        textArea.isEditable = !processing
+        textArea.emptyText.text = if (processing) {
+            CursorJBundle.message("chat.queue.placeholder")
+        } else {
+            CursorJBundle.message("chat.input.placeholder")
+        }
         if (!processing) {
-            setInputText("")
             textArea.requestFocusInWindow()
         }
     }
@@ -435,7 +439,11 @@ class InputPanel {
         val text = getInputText().trim()
         if (text.isNotEmpty()) {
             setInputText("")
-            onSend?.invoke(text)
+            if (isProcessing) {
+                onQueueMessage?.invoke(text)
+            } else {
+                onSend?.invoke(text)
+            }
         }
     }
 

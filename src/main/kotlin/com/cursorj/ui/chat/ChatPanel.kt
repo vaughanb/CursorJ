@@ -54,6 +54,7 @@ class ChatPanel(
     private val rootPanel = JPanel(BorderLayout())
     private val messageListPanel = MessageListPanel()
     private val inputPanel = InputPanel()
+    private val messageQueuePanel = MessageQueuePanel()
     private var historySessionKey: String = initialHistorySessionKey
 
     private var connection: AgentConnection? = null
@@ -90,11 +91,16 @@ class ChatPanel(
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
 
+        val southPanel = JPanel(BorderLayout()).apply {
+            add(messageQueuePanel.component, BorderLayout.NORTH)
+            add(inputPanel.component, BorderLayout.CENTER)
+        }
         rootPanel.add(scrollPane, BorderLayout.CENTER)
-        rootPanel.add(inputPanel.component, BorderLayout.SOUTH)
+        rootPanel.add(southPanel, BorderLayout.SOUTH)
 
         inputPanel.onSend = { text -> handleSend(text) }
         inputPanel.onCancel = { handleCancel() }
+        inputPanel.onQueueMessage = { text -> handleQueueMessage(text) }
         inputPanel.onRollback = { handleRollback() }
         inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
@@ -105,6 +111,10 @@ class ChatPanel(
         inputPanel.onHistoryNext = { currentInput ->
             service.promptHistoryManager.next(historySessionKey, currentInput)
         }
+
+        messageQueuePanel.onRemove = { index -> handleQueueRemove(index) }
+        messageQueuePanel.onEdit = { index, newText -> handleQueueEdit(index, newText) }
+        messageQueuePanel.onSendNow = { index -> handleQueueSendNow(index) }
 
         val dragDrop = DragDropProvider { blocks ->
             for (block in blocks) {
@@ -156,6 +166,7 @@ class ChatPanel(
             if (!message.isStreaming) {
                 service.chatTranscriptManager.addMessage(historySessionKey, message)
             }
+            if (message.role == "user") return@addMessageListener
             SwingUtilities.invokeLater {
                 if (message.isStreaming) {
                     commitPendingToolCall()
@@ -215,6 +226,13 @@ class ChatPanel(
     }
 
     fun sendPrompt(text: String) {
+        SwingUtilities.invokeLater {
+            val userMessage = ChatMessage(role = "user", content = text)
+            messageListPanel.updateOrAddMessage(userMessage)
+            messageListPanel.showProgress(color = modeProgressColor())
+            inputPanel.setProcessing(true)
+            refreshRollbackAvailability()
+        }
         scope.launch {
             try {
                 val s = session ?: return@launch
@@ -227,10 +245,6 @@ class ChatPanel(
                 }
                 val carryoverContext = firstPromptCarryoverContext
                 val promptPayload = buildPromptPayload(text, carryoverContext)
-                SwingUtilities.invokeLater {
-                    inputPanel.setProcessing(true)
-                    refreshRollbackAvailability()
-                }
                 s.sendPrompt(promptPayload.contentBlocks, promptPayload.displayUserText)
                 if (!carryoverContext.isNullOrBlank()) {
                     firstPromptCarryoverContext = null
@@ -249,7 +263,6 @@ class ChatPanel(
                 SwingUtilities.invokeLater {
                     commitPendingToolCall()
                     messageListPanel.hideProgress()
-                    inputPanel.setProcessing(false)
                     refreshRollbackAvailability()
                     attachedFiles.clear()
                     inputPanel.clearFileChips()
@@ -260,6 +273,7 @@ class ChatPanel(
                             onViewPlan = { handleViewPlan() },
                         )
                     }
+                    drainNextQueuedMessage()
                 }
             }
         }
@@ -335,11 +349,57 @@ class ChatPanel(
         scope.launch {
             session?.cancel()
             SwingUtilities.invokeLater {
+                commitPendingToolCall()
+                messageListPanel.hideProgress()
                 clearQueuedSelectionContext()
+                messageQueuePanel.clear()
+                attachedFiles.clear()
+                inputPanel.clearFileChips()
                 inputPanel.setProcessing(false)
                 service.promptHistoryManager.clearNavigation(historySessionKey)
                 refreshRollbackAvailability()
             }
+        }
+    }
+
+    private fun handleQueueMessage(text: String) {
+        if (text.isBlank()) return
+        service.promptHistoryManager.addPrompt(historySessionKey, text)
+        messageQueuePanel.addEntry(text)
+    }
+
+    private fun handleQueueRemove(index: Int) {
+        messageQueuePanel.removeEntry(index)
+    }
+
+    private fun handleQueueEdit(index: Int, newText: String) {
+        messageQueuePanel.updateEntry(index, newText)
+    }
+
+    private fun handleQueueSendNow(index: Int) {
+        val text = messageQueuePanel.removeAndGet(index) ?: return
+        scope.launch {
+            session?.cancel()
+            SwingUtilities.invokeLater {
+                commitPendingToolCall()
+                messageListPanel.hideProgress()
+                refreshRollbackAvailability()
+                attachedFiles.clear()
+                inputPanel.clearFileChips()
+                clearQueuedSelectionContext()
+                service.promptHistoryManager.clearNavigation(historySessionKey)
+                sendPrompt(text)
+            }
+        }
+    }
+
+    private fun drainNextQueuedMessage() {
+        val nextText = messageQueuePanel.dequeue()
+        if (nextText != null) {
+            service.promptHistoryManager.clearNavigation(historySessionKey)
+            sendPrompt(nextText)
+        } else {
+            inputPanel.setProcessing(false)
         }
     }
 

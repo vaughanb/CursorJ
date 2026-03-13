@@ -65,7 +65,7 @@ class FileSystemHandler(private val project: Project) {
     private fun handleWriteTextFile(params: JsonElement): JsonElement {
         val request = json.decodeFromJsonElement<WriteTextFileParams>(params)
         val resolvedPath = resolvePath(request.path)
-        ensureExecutionAllowed("fs/write_text_file", params, resolvedPath)
+        ensurePathInsideWorkspace(resolvedPath)
         log.info("fs/write_text_file: ${request.path} -> $resolvedPath")
 
         val ioFile = File(resolvedPath)
@@ -149,7 +149,7 @@ class FileSystemHandler(private val project: Project) {
         val path = params.jsonObject["path"]?.jsonPrimitive?.contentOrNull
             ?: throw IllegalArgumentException("Missing 'path' parameter")
         val resolvedPath = resolvePath(path)
-        ensureExecutionAllowed("fs/create_directory", params, resolvedPath)
+        ensurePathInsideWorkspace(resolvedPath)
         log.info("fs/create_directory: $path -> $resolvedPath")
 
         val dir = File(resolvedPath)
@@ -212,18 +212,13 @@ class FileSystemHandler(private val project: Project) {
         return Regex(regex, RegexOption.IGNORE_CASE)
     }
 
-    private fun ensureExecutionAllowed(method: String, params: JsonElement, resolvedPath: String? = null) {
+    private fun ensurePathInsideWorkspace(resolvedPath: String) {
         val settings = CursorJSettings.instance
         val mode = PermissionMode.fromId(settings.permissionMode)
-        if (resolvedPath != null && settings.protectExternalFileWrites && mode != PermissionMode.RUN_EVERYTHING) {
+        if (settings.protectExternalFileWrites && mode != PermissionMode.RUN_EVERYTHING) {
             if (!PermissionPolicy.isPathInsideWorkspace(resolvedPath, project.basePath)) {
                 throw IllegalStateException("Blocked by protection: cannot modify files outside the workspace")
             }
-        }
-
-        val approvedKeys = settings.getApprovedPermissionKeys()
-        if (!PermissionPolicy.shouldAllowMethodExecution(mode, approvedKeys, method, params)) {
-            throw IllegalStateException("Permission denied for $method")
         }
     }
 }

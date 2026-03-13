@@ -59,25 +59,31 @@ intellijPlatform {
         }
 
         description = """
-            <p>CursorJ brings Cursor's AI agent into JetBrains IDEs via the Agent Client Protocol (ACP).</p>
+            <p>CursorJ brings Cursor's AI agent into JetBrains IDEs via the
+            <a href="https://agentclientprotocol.com/">Agent Client Protocol (ACP)</a>.</p>
             <ul>
                 <li>Full agentic coding with file editing, terminal commands, and codebase understanding</li>
-                <li>Active file and selection context injection</li>
-                <li>Drag-and-drop file references</li>
-                <li>Multiple concurrent chat sessions</li>
-                <li>Native IntelliJ UI with syntax-highlighted code blocks and diff rendering</li>
+                <li>Project indexing with lexical search, symbol lookup, and optional semantic reranking</li>
+                <li>Active file and selection context injection with drag-and-drop file references</li>
+                <li>Multiple concurrent chat sessions with intelligent tab naming</li>
+                <li>Chat history with search and restore; prompt history</li>
+                <li>Global user rules and project rules (<code>.cursor/rules/</code>)</li>
+                <li>Agent, Plan, and Ask modes with native IntelliJ UI</li>
+                <li>Permission control with per-turn rollback via Local History</li>
             </ul>
             <p>Project home: <a href="$projectUrl">$projectUrl</a></p>
             <p>Support and issues: <a href="$issuesUrl">$issuesUrl</a></p>
         """.trimIndent()
 
-        // Keep synchronized with CHANGELOG.md for each release.
         changeNotes = """
-            <p>Beta release with publishing and release pipeline hardening.</p>
+            <h3>0.7.0</h3>
             <ul>
-                <li>Configured explicit Marketplace token/channel publishing flow</li>
-                <li>Added release token preflight validation in GitHub Actions</li>
-                <li>Improved GitHub-hosted runner reliability with disk cleanup and split jobs</li>
+                <li>Added chat history dropdown with search, persistence, and restore</li>
+                <li>Added global user rules support (injected into every prompt)</li>
+                <li>Fixed race condition on model switching</li>
+                <li>Fixed chat history bugs</li>
+                <li>Added unit tests for DragDropProvider, TerminalHandler, and ProjectRulesService</li>
+                <li>Upgraded Gradle to 9.0.0</li>
             </ul>
         """.trimIndent()
     }

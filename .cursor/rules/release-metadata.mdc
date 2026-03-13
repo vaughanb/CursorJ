@@ -1,0 +1,45 @@
+---
+description: Keep release metadata in sync across CHANGELOG.md, build.gradle.kts, and gradle.properties
+globs: "{CHANGELOG.md,build.gradle.kts,gradle.properties}"
+alwaysApply: false
+---
+
+# Release Metadata
+
+Three files must stay in sync when preparing a release:
+
+| File | What to update |
+|---|---|
+| `gradle.properties` | `pluginVersion` |
+| `CHANGELOG.md` | New version section with date and categorized changes |
+| `build.gradle.kts` | `changeNotes` (latest release highlights) and `description` (if the feature set changed) |
+
+## Workflow
+
+1. Bump `pluginVersion` in `gradle.properties`.
+2. Add a new section to `CHANGELOG.md` following the existing Keep a Changelog format (`Added`, `Changed`, `Fixed`, `Security`).
+3. Update `changeNotes` in `build.gradle.kts` → `intellijPlatform.pluginConfiguration` to match the new changelog entry as HTML.
+4. If the release introduces or removes a user-facing feature, update `description` in the same block.
+
+## changeNotes format
+
+`changeNotes` is an HTML string rendered on the JetBrains Marketplace "What's New" panel. Use a `<h3>` for the version and a `<ul>` for bullet points:
+
+```kotlin
+changeNotes = """
+    <h3>X.Y.Z</h3>
+    <ul>
+        <li>Highlight one</li>
+        <li>Highlight two</li>
+    </ul>
+""".trimIndent()
+```
+
+## description format
+
+`description` is an HTML string rendered on the Marketplace plugin page. Keep it concise: a one-line summary, a `<ul>` of key features, and links to the project home and issue tracker.
+
+## Reminders
+
+- Always update all three files together; never bump the version without updating the changelog and change notes.
+- See `RELEASING.md` for the full release checklist.

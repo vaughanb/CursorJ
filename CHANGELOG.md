@@ -2,6 +2,55 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.7.0] - 2026-03-12
+
+### Added
+
+- Chat history dropdown with search and persistence; restore previous chats.
+- Global user rules support (injected into every prompt).
+- Unit tests for DragDropProvider, TerminalHandler, and ProjectRulesService.
+
+### Changed
+
+- Upgraded Gradle to 9.0.0.
+- Updated documentation.
+
+### Fixed
+
+- Race condition on model switching.
+- Chat history bugs.
+
+## [0.6.0] - 2026-03-10
+
+### Added
+
+- Project indexing with SQLite-backed lexical search, symbol lookup, and optional semantic reranking.
+- Prompt history (recall previous prompts).
+- Intelligent tab naming.
+- Compatibility for 2025.3.* IDE builds.
+
+### Changed
+
+- Improved tool settings UI.
+
+## [0.5.0] - 2026-03-09
+
+### Changed
+
+- Build tooling and Makefile updates.
+
+## [0.4.0] - 2026-03-09
+
+### Changed
+
+- Release pipeline refinements.
+
+## [0.3.0] - 2026-03-09
+
+### Changed
+
+- Version bump and release metadata preparation.
+
 ## [0.2.0] - 2026-03-09
 
 ### Changed

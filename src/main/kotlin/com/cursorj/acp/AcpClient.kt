@@ -168,8 +168,12 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     }
 
     fun respondToServerRequest(id: Int, result: JsonElement?) {
-        val response = JsonRpcServerResponse(id = id, result = result)
-        val line = json.encodeToString(response)
+        val response = buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            put("result", result ?: JsonNull)
+        }
+        val line = json.encodeToString(JsonObject.serializer(), response)
         logRawAcp("ACP raw -> server_response(id=$id): ", line)
         synchronized(writer!!) {
             writer!!.write(line)
@@ -180,11 +184,15 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     }
 
     fun respondToServerRequestWithError(id: Int, code: Int, message: String) {
-        val response = JsonRpcServerResponse(
-            id = id,
-            error = JsonRpcError(code = code, message = message),
-        )
-        val line = json.encodeToString(response)
+        val response = buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            putJsonObject("error") {
+                put("code", code)
+                put("message", message)
+            }
+        }
+        val line = json.encodeToString(JsonObject.serializer(), response)
         logRawAcp("ACP raw -> server_response_error(id=$id, code=$code): ", line)
         synchronized(writer!!) {
             writer!!.write(line)
@@ -266,16 +274,19 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         val method = obj["method"]?.jsonPrimitive?.contentOrNull ?: return
         val params = obj["params"] ?: JsonObject(emptyMap())
 
+        log.info("ACP server request: method=$method id=$id params_keys=${(params as? JsonObject)?.keys}")
+
         serverRequestExecutor.submit {
             for (handler in serverRequestHandlers) {
                 try {
                     val result = handler(method, params)
                     if (result != null) {
+                        log.info("ACP server request handled: method=$method id=$id result_keys=${(result as? JsonObject)?.keys}")
                         respondToServerRequest(id, result)
                         return@submit
                     }
                 } catch (e: Exception) {
-                    log.warn("Server request handler error for $method", e)
+                    log.warn("Server request handler error for $method (id=$id): ${e.javaClass.simpleName}: ${e.message}", e)
                     respondToServerRequestWithError(id, -32603, e.message ?: "Internal error")
                     return@submit
                 }

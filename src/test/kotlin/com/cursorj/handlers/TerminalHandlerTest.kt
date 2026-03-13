@@ -75,6 +75,21 @@ class TerminalHandlerTest {
     }
 
     @Test
+    fun `resolveShellPathFallback returns valid shell`() {
+        val handler = TerminalHandler(projectWithBasePath(null))
+
+        val path = invokePrivate<String>(handler, "resolveShellPathFallback")
+
+        assertTrue(path.isNotBlank(), "Shell path should not be blank")
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        if (isWindows) {
+            assertTrue(path.lowercase().endsWith(".exe"), "Windows shell should end with .exe")
+        } else {
+            assertTrue(path.startsWith("/"), "Unix shell should be an absolute path")
+        }
+    }
+
+    @Test
     fun `extractTimeoutMs returns null when absent`() {
         val handler = TerminalHandler(projectWithBasePath(null))
         val params = buildJsonObject { put("terminalId", "term-1") }

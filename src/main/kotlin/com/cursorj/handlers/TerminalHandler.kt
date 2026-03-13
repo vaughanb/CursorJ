@@ -2,12 +2,10 @@ package com.cursorj.handlers
 
 import com.cursorj.acp.AcpClient
 import com.cursorj.acp.messages.*
-import com.cursorj.permissions.PermissionMode
-import com.cursorj.permissions.PermissionPolicy
-import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.serialization.json.*
+import org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -42,11 +40,11 @@ class TerminalHandler(private val project: Project) {
     }
 
     private fun handleCreate(params: JsonElement): JsonElement {
-        ensureExecutionAllowed("terminal/create", params)
+        log.info("terminal/create raw params: $params")
         val request = json.decodeFromJsonElement<TerminalCreateParams>(params)
         val terminalId = "term-${nextTerminalId.getAndIncrement()}"
         val commandForLog = buildCommandPreview(request)
-        log.info("terminal/create: command='$commandForLog', cwd=${request.cwd}")
+        log.info("terminal/create: id=$terminalId command='$commandForLog' args=${request.args} cwd=${request.cwd}")
 
         val process = startProcessWithFallback(request)
         val managed = ManagedTerminal(
@@ -146,15 +144,6 @@ class TerminalHandler(private val project: Project) {
         terminals.clear()
     }
 
-    private fun ensureExecutionAllowed(method: String, params: JsonElement) {
-        val settings = CursorJSettings.instance
-        val mode = PermissionMode.fromId(settings.permissionMode)
-        val approvedKeys = settings.getApprovedPermissionKeys()
-        if (!PermissionPolicy.shouldAllowMethodExecution(mode, approvedKeys, method, params)) {
-            throw IllegalStateException("Permission denied for $method")
-        }
-    }
-
     private fun buildProcessCommand(request: TerminalCreateParams): List<String> {
         val args = request.args.filter { it.isNotBlank() }
         if (args.isNotEmpty()) {
@@ -209,6 +198,7 @@ class TerminalHandler(private val project: Project) {
             ?: project.basePath?.let { File(it) }
         workDir?.let { pb.directory(it) }
         pb.redirectErrorStream(true)
+        mergeIdeTerminalEnvironment(pb)
         for (envVar in request.env) {
             if (envVar.name.isNotBlank()) {
                 pb.environment()[envVar.name] = envVar.value
@@ -223,14 +213,29 @@ class TerminalHandler(private val project: Project) {
         return if (isWindows) {
             listOf("cmd.exe", "/d", "/s", "/c", tokens.joinToString(" ") { quoteForCmd(it) })
         } else {
-            val shellPath = resolveUnixShellPath()
+            val shellPath = resolveShellPath()
             val shellName = File(shellPath).name.lowercase()
             val shellFlag = if (shellName in loginCapableShellNames) "-lc" else "-c"
             listOf(shellPath, shellFlag, tokens.joinToString(" ") { quoteForPosixShell(it) })
         }
     }
 
-    private fun resolveUnixShellPath(): String {
+    private fun resolveShellPath(): String {
+        try {
+            val idePath = TerminalProjectOptionsProvider.getInstance(project).shellPath
+            if (idePath.isNotBlank()) {
+                log.info("Using IntelliJ terminal shell path: $idePath")
+                return idePath
+            }
+        } catch (e: Exception) {
+            log.info("Could not read IntelliJ terminal shell path, using fallback: ${e.message}")
+        }
+        return resolveShellPathFallback()
+    }
+
+    private fun resolveShellPathFallback(): String {
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        if (isWindows) return "powershell.exe"
         val configured = System.getenv("SHELL")
         if (!configured.isNullOrBlank() && File(configured).exists()) {
             return configured
@@ -238,6 +243,22 @@ class TerminalHandler(private val project: Project) {
         val bash = File("/bin/bash")
         if (bash.exists()) return bash.path
         return "/bin/sh"
+    }
+
+    private fun mergeIdeTerminalEnvironment(pb: ProcessBuilder) {
+        try {
+            val envData = TerminalProjectOptionsProvider.getInstance(project).getEnvData()
+            for ((key, value) in envData.envs) {
+                if (key.isNotBlank()) {
+                    pb.environment()[key] = value
+                }
+            }
+            if (envData.envs.isNotEmpty()) {
+                log.info("Merged ${envData.envs.size} env var(s) from IntelliJ terminal settings")
+            }
+        } catch (e: Exception) {
+            log.info("Could not read IntelliJ terminal environment: ${e.message}")
+        }
     }
 
     private fun quoteForPosixShell(value: String): String {

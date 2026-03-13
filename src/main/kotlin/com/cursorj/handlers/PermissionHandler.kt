@@ -3,8 +3,6 @@ package com.cursorj.handlers
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AcpClient
 import com.cursorj.acp.messages.PermissionOption
-import com.cursorj.acp.messages.PermissionOutcome
-import com.cursorj.acp.messages.PermissionResult
 import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.permissions.PermissionMode
 import com.cursorj.permissions.PermissionPolicy
@@ -103,10 +101,12 @@ class PermissionHandler {
     }
 
     private fun buildPermissionResult(optionId: String): JsonElement {
-        val result = PermissionResult(
-            outcome = PermissionOutcome(outcome = "selected", optionId = optionId),
-        )
-        return json.encodeToJsonElement(result)
+        return buildJsonObject {
+            putJsonObject("outcome") {
+                put("outcome", "selected")
+                put("optionId", optionId)
+            }
+        }
     }
 
     private class PermissionDialog(
