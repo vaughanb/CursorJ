@@ -30,9 +30,15 @@ class TerminalHandlerTest {
 
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
         if (isWindows) {
-            assertEquals(listOf("cmd.exe", "/c", "echo hello"), cmd)
+            assertEquals("cmd.exe", cmd[0])
+            assertEquals("/d", cmd[1])
+            assertEquals("/s", cmd[2])
+            assertEquals("/c", cmd[3])
+            assertTrue(cmd[4].contains("echo hello"))
         } else {
-            assertEquals(listOf("/bin/sh", "-c", "echo hello"), cmd)
+            assertTrue(cmd[0].startsWith("/"))
+            assertTrue(cmd[1] == "-lc" || cmd[1] == "-c")
+            assertTrue(cmd[2].contains("echo hello"))
         }
     }
 

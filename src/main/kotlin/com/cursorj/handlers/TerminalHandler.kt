@@ -8,6 +8,8 @@ import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.serialization.json.*
+import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -46,18 +48,7 @@ class TerminalHandler(private val project: Project) {
         val commandForLog = buildCommandPreview(request)
         log.info("terminal/create: command='$commandForLog', cwd=${request.cwd}")
 
-        val pb = ProcessBuilder(buildProcessCommand(request))
-        val workDir = request.cwd?.let { java.io.File(it) }
-            ?: project.basePath?.let { java.io.File(it) }
-        workDir?.let { pb.directory(it) }
-        pb.redirectErrorStream(true)
-        for (envVar in request.env) {
-            if (envVar.name.isNotBlank()) {
-                pb.environment()[envVar.name] = envVar.value
-            }
-        }
-
-        val process = pb.start()
+        val process = startProcessWithFallback(request)
         val managed = ManagedTerminal(
             process = process,
             outputByteLimit = request.outputByteLimit?.takeIf { it > 0 },
@@ -169,9 +160,7 @@ class TerminalHandler(private val project: Project) {
         if (args.isNotEmpty()) {
             return listOf(request.command) + args
         }
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
-        val shell = if (isWindows) listOf("cmd.exe", "/c") else listOf("/bin/sh", "-c")
-        return shell + request.command
+        return buildShellCommand(request.command)
     }
 
     private fun buildCommandPreview(request: TerminalCreateParams): String {
@@ -191,6 +180,77 @@ class TerminalHandler(private val project: Project) {
         return timeoutElement.jsonPrimitive.longOrNull
     }
 
+    private fun startProcessWithFallback(request: TerminalCreateParams): Process {
+        val primaryCommand = buildProcessCommand(request)
+        return try {
+            processBuilderFor(primaryCommand, request).start()
+        } catch (primaryError: IOException) {
+            val fallbackCommand = buildShellCommand(
+                command = request.command,
+                args = request.args.filter { it.isNotBlank() },
+            )
+            if (fallbackCommand == primaryCommand) throw primaryError
+            log.warn(
+                "terminal/create primary launch failed; retrying via shell. " +
+                    "primary='${primaryCommand.joinToString(" ")}' error='${primaryError.message}'",
+            )
+            try {
+                processBuilderFor(fallbackCommand, request).start()
+            } catch (fallbackError: IOException) {
+                fallbackError.addSuppressed(primaryError)
+                throw fallbackError
+            }
+        }
+    }
+
+    private fun processBuilderFor(command: List<String>, request: TerminalCreateParams): ProcessBuilder {
+        val pb = ProcessBuilder(command)
+        val workDir = request.cwd?.let { File(it) }
+            ?: project.basePath?.let { File(it) }
+        workDir?.let { pb.directory(it) }
+        pb.redirectErrorStream(true)
+        for (envVar in request.env) {
+            if (envVar.name.isNotBlank()) {
+                pb.environment()[envVar.name] = envVar.value
+            }
+        }
+        return pb
+    }
+
+    private fun buildShellCommand(command: String, args: List<String> = emptyList()): List<String> {
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val tokens = sequenceOf(command) + args.asSequence()
+        return if (isWindows) {
+            listOf("cmd.exe", "/d", "/s", "/c", tokens.joinToString(" ") { quoteForCmd(it) })
+        } else {
+            val shellPath = resolveUnixShellPath()
+            val shellName = File(shellPath).name.lowercase()
+            val shellFlag = if (shellName in loginCapableShellNames) "-lc" else "-c"
+            listOf(shellPath, shellFlag, tokens.joinToString(" ") { quoteForPosixShell(it) })
+        }
+    }
+
+    private fun resolveUnixShellPath(): String {
+        val configured = System.getenv("SHELL")
+        if (!configured.isNullOrBlank() && File(configured).exists()) {
+            return configured
+        }
+        val bash = File("/bin/bash")
+        if (bash.exists()) return bash.path
+        return "/bin/sh"
+    }
+
+    private fun quoteForPosixShell(value: String): String {
+        if (value.isEmpty()) return "''"
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+    }
+
+    private fun quoteForCmd(value: String): String {
+        if (value.isEmpty()) return "\"\""
+        if (value.none { it.isWhitespace() || it == '"' }) return value
+        return "\"" + value.replace("\"", "\\\"") + "\""
+    }
+
     private fun trimOutputIfNeeded(managed: ManagedTerminal) {
         val maxBytes = managed.outputByteLimit ?: return
         val output = managed.outputBuilder
@@ -207,6 +267,7 @@ class TerminalHandler(private val project: Project) {
     }
 
     companion object {
+        private val loginCapableShellNames = setOf("bash", "zsh", "ksh", "fish")
         private const val DEFAULT_WAIT_TIMEOUT_MS = 5L * 60L * 1000L
         private const val MAX_WAIT_TIMEOUT_MS = 15L * 60L * 1000L
         private const val KILL_GRACE_TIMEOUT_MS = 5_000L
