@@ -137,11 +137,10 @@ class AgentConnection(
         val result = client.sessionNew(cwd)
         log.info("Session created with ${result.configOptions.size} config options")
 
-        val configOptions = if (result.configOptions.any { it.category == "model" }) {
-            result.configOptions
-        } else {
-            result.configOptions + buildModelConfigOption()
-        }
+        val configOptions = ConfigOptionUiSupport.mergeWithSyntheticModel(
+            result.configOptions,
+            buildModelConfigOption(),
+        )
 
         val previous = session
         val newSession = AcpSession(result.sessionId, client, rollbackManager, configOptions)
@@ -225,7 +224,7 @@ class AgentConnection(
             ?: return emptyList()
         return listOf(
             ConfigOption(
-                id = "model",
+                id = SYNTHETIC_MODEL_CONFIG_ID,
                 name = "Model",
                 category = "model",
                 type = "select",
@@ -371,5 +370,10 @@ class AgentConnection(
         session?.dispose()
         session = null
         terminalHandler.disposeAll()
+    }
+
+    companion object {
+        /** Used when the agent doesn't expose a native model config option. */
+        const val SYNTHETIC_MODEL_CONFIG_ID: String = "_cursorj_model_override"
     }
 }

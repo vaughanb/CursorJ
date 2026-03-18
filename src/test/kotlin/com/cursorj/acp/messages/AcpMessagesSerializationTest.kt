@@ -64,4 +64,43 @@ class AcpMessagesSerializationTest {
         assertEquals("TODO", params.pattern)
         assertEquals(20, params.maxResults)
     }
+
+    @Test
+    fun `session new result decodes toggle and multi config options`() {
+        val raw = """
+            {
+              "sessionId": "s1",
+              "configOptions": [
+                {
+                  "id": "max_mode",
+                  "name": "MAX Mode",
+                  "type": "toggle",
+                  "currentValue": "false"
+                },
+                {
+                  "id": "use_multiple_models",
+                  "name": "Use Multiple Models",
+                  "type": "toggle",
+                  "currentValue": "true"
+                },
+                {
+                  "id": "model",
+                  "name": "Model",
+                  "category": "model",
+                  "type": "select",
+                  "currentValue": "opus-max",
+                  "options": [
+                    { "value": "opus-max", "name": "Opus 4.6 Max" }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        val result = json.decodeFromString(SessionNewResult.serializer(), raw)
+        assertEquals("s1", result.sessionId)
+        assertEquals(3, result.configOptions.size)
+        assertEquals("max_mode", result.configOptions[0].id)
+        assertEquals("toggle", result.configOptions[0].type)
+        assertEquals("model", result.configOptions[2].category)
+    }
 }

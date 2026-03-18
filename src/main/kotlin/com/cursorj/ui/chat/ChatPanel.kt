@@ -4,6 +4,7 @@ import com.cursorj.CursorJBundle
 import com.cursorj.acp.AcpException
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
+import com.cursorj.acp.ConfigOptionUiSupport
 import com.cursorj.acp.ChatMessage
 import com.cursorj.acp.SessionMode
 import com.cursorj.acp.ToolActivity
@@ -104,7 +105,7 @@ class ChatPanel(
         inputPanel.onRollback = { handleRollback() }
         inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
-        inputPanel.onModelChanged = { configId, value -> handleConfigOptionChange(configId, value) }
+        inputPanel.onConfigOptionChanged = { configId, value -> handleConfigOptionChange(configId, value) }
         inputPanel.onHistoryPrev = { currentInput ->
             service.promptHistoryManager.previous(historySessionKey, currentInput)
         }
@@ -566,11 +567,55 @@ class ChatPanel(
     }
 
     private fun handleConfigOptionChange(configId: String, value: String) {
-        if (configId == "model") {
-            val conn = connection ?: return
+        val conn = connection ?: return
+        if (configId == AgentConnection.SYNTHETIC_MODEL_CONFIG_ID) {
             conn.changeModel(value)
             session = null
+            return
         }
+        scope.launch {
+            try {
+                val currentSession = session ?: return@launch
+                val modelOpt = currentSession.configOptions.firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
+                if (modelOpt?.id == configId) {
+                    maybeEnableMaxModeForModel(currentSession, value)
+                }
+                currentSession.setConfigOption(configId, value)
+            } catch (e: Exception) {
+                log.warn("setConfigOption failed", e)
+                val msg = e.message ?: e.javaClass.simpleName
+                SwingUtilities.invokeLater {
+                    showStatus(CursorJBundle.message("chat.config.option.failed", msg))
+                }
+            }
+        }
+    }
+
+    private suspend fun maybeEnableMaxModeForModel(currentSession: AcpSession, modelId: String) {
+        if (!looksLikeMaxTierModel(modelId)) return
+        val maxModeOpt = currentSession.configOptions.firstOrNull { opt ->
+            ConfigOptionUiSupport.isBooleanToggle(opt) && isLikelyMaxModeOption(opt)
+        } ?: return
+        if (ConfigOptionUiSupport.isToggleChecked(maxModeOpt)) return
+        val (_, onValue) = ConfigOptionUiSupport.toggleOffOnValues(maxModeOpt)
+        currentSession.setConfigOption(maxModeOpt.id, onValue)
+        SwingUtilities.invokeLater {
+            showStatus("Enabled MAX Mode for max-tier model.")
+        }
+    }
+
+    private fun looksLikeMaxTierModel(modelId: String): Boolean {
+        val normalized = modelId.lowercase()
+        return normalized.contains("-max") || normalized.endsWith("max") || normalized.contains("_max")
+    }
+
+    private fun isLikelyMaxModeOption(option: ConfigOption): Boolean {
+        val id = option.id.lowercase()
+        val name = option.name?.lowercase() ?: ""
+        val description = option.description?.lowercase() ?: ""
+        if (id == "max_mode" || id == "maxmode") return true
+        if (name.contains("max mode")) return true
+        return description.contains("max mode")
     }
 
     private fun enableRunEverything(): Boolean {

@@ -1,9 +1,11 @@
 package com.cursorj.ui.chat
 
 import com.cursorj.CursorJBundle
+import com.cursorj.acp.ConfigOptionUiSupport
 import com.cursorj.acp.SessionMode
 import com.cursorj.acp.messages.ConfigOption
 import com.intellij.icons.AllIcons
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
@@ -125,6 +127,10 @@ class InputPanel {
         isVisible = false
     }
 
+    private val configControlsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+        isOpaque = false
+    }
+
     private val rollbackButton = JButton(CursorJBundle.message("chat.rollback.action")).apply {
         minimumSize = Dimension(100, 26)
         preferredSize = Dimension(100, 26)
@@ -164,7 +170,8 @@ class InputPanel {
     var onRollback: (() -> Unit)? = null
     var onSelectionChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
-    var onModelChanged: ((configId: String, value: String) -> Unit)? = null
+    /** Model changes and ACP session config (MAX Mode, etc.) */
+    var onConfigOptionChanged: ((configId: String, value: String) -> Unit)? = null
     var onHistoryPrev: ((String) -> String?)? = null
     var onHistoryNext: ((String) -> String?)? = null
 
@@ -184,19 +191,13 @@ class InputPanel {
             isOpaque = false
             border = JBUI.Borders.empty(2, 8, 6, 8)
 
-            val leftControls = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
-                isOpaque = false
-                add(modeCombo)
-                add(modelCombo)
-            }
-
             val rightControls = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
                 isOpaque = false
                 add(sendButton)
                 add(cancelButton)
             }
 
-            add(leftControls, BorderLayout.WEST)
+            add(configControlsRow, BorderLayout.WEST)
             add(rightControls, BorderLayout.EAST)
         }
 
@@ -269,11 +270,10 @@ class InputPanel {
         }
 
         modelCombo.addActionListener {
-            if (updatingModelCombo) return@addActionListener
+            if (updatingModelCombo || updatingConfigWidgets) return@addActionListener
             val idx = modelCombo.selectedIndex
             if (idx in modelValues.indices) {
-                val modelConfigId = configOptions.firstOrNull { it.category == "model" }?.id ?: "model"
-                onModelChanged?.invoke(modelConfigId, modelValues[idx])
+                onConfigOptionChanged?.invoke(modelConfigIdForEvents, modelValues[idx])
             }
         }
 
@@ -304,26 +304,74 @@ class InputPanel {
     }
 
     private var configOptions: List<ConfigOption> = emptyList()
+    private var updatingConfigWidgets = false
+    private var modelConfigIdForEvents = "model"
 
     fun updateConfigOptions(options: List<ConfigOption>) {
         configOptions = options
-        val modelOption = options.firstOrNull { it.category == "model" }
-        if (modelOption != null && modelOption.options.isNotEmpty()) {
-            updatingModelCombo = true
-            modelCombo.removeAllItems()
-            modelValues = modelOption.options.map { it.value }
-            modelOption.options.forEach { opt ->
-                modelCombo.addItem(opt.name ?: opt.value)
+        updatingConfigWidgets = true
+        configControlsRow.removeAll()
+        configControlsRow.add(modeCombo)
+
+        val row = ConfigOptionUiSupport.optionsForInputBar(options)
+        var modelShown = false
+        for (opt in row) {
+            when {
+                ConfigOptionUiSupport.isModelSelector(opt) && !modelShown && opt.options.isNotEmpty() -> {
+                    modelConfigIdForEvents = opt.id
+                    updatingModelCombo = true
+                    modelCombo.removeAllItems()
+                    modelValues = opt.options.map { it.value }
+                    opt.options.forEach { o -> modelCombo.addItem(o.name ?: o.value) }
+                    val selectedIdx = modelValues.indexOf(opt.currentValue).coerceAtLeast(0)
+                    modelCombo.selectedIndex = selectedIdx
+                    val longestName = opt.options.maxOf { (it.name ?: it.value).length }
+                    modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 220), 26)
+                    configControlsRow.add(modelCombo)
+                    modelCombo.isVisible = true
+                    modelShown = true
+                    updatingModelCombo = false
+                }
+                ConfigOptionUiSupport.isBooleanToggle(opt) -> {
+                    val configId = opt.id
+                    val cb = JBCheckBox(opt.name ?: opt.id, ConfigOptionUiSupport.isToggleChecked(opt)).apply {
+                        font = font.deriveFont(font.size2D - 1)
+                        isOpaque = false
+                    }
+                    cb.addActionListener {
+                        if (updatingConfigWidgets) return@addActionListener
+                        val fresh = configOptions.firstOrNull { it.id == configId } ?: return@addActionListener
+                        val (off, on) = ConfigOptionUiSupport.toggleOffOnValues(fresh)
+                        val v = if (cb.isSelected) on else off
+                        onConfigOptionChanged?.invoke(configId, v)
+                    }
+                    configControlsRow.add(cb)
+                }
+                ConfigOptionUiSupport.isGenericSelect(opt) || opt.options.isNotEmpty() -> {
+                    val values = opt.options.map { it.value }
+                    val combo = JComboBox<String>().apply {
+                        minimumSize = Dimension(80, 26)
+                        font = font.deriveFont(font.size2D - 1)
+                        opt.options.forEach { o -> addItem(o.name ?: o.value) }
+                        val idx = values.indexOf(opt.currentValue).coerceAtLeast(0)
+                        selectedIndex = idx
+                    }
+                    val configId = opt.id
+                    combo.addActionListener {
+                        if (updatingConfigWidgets) return@addActionListener
+                        val i = combo.selectedIndex
+                        if (i in values.indices) {
+                            onConfigOptionChanged?.invoke(configId, values[i])
+                        }
+                    }
+                    configControlsRow.add(combo)
+                }
             }
-            val selectedIdx = modelValues.indexOf(modelOption.currentValue).coerceAtLeast(0)
-            modelCombo.selectedIndex = selectedIdx
-            val longestName = modelOption.options.maxOf { (it.name ?: it.value).length }
-            modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 200), 26)
-            modelCombo.isVisible = true
-            updatingModelCombo = false
-        } else {
+        }
+        if (!modelShown) {
             modelCombo.isVisible = false
         }
+        updatingConfigWidgets = false
         rootPanel.revalidate()
         rootPanel.repaint()
     }

@@ -565,11 +565,20 @@ class AcpSession(
             val result = client.sessionSetConfigOption(sessionId, configId, value)
             if (result.configOptions.isNotEmpty()) {
                 updateConfigOptions(result.configOptions)
-                return
+            } else {
+                applyLocalConfigOption(configId, value)
             }
-        } catch (e: Exception) {
-            log.info("session/set_config_option not supported by agent, updating locally: ${e.message}")
+        } catch (e: AcpException) {
+            if (e.code == -32601) {
+                log.info("session/set_config_option not supported, updating locally: ${e.message}")
+                applyLocalConfigOption(configId, value)
+            } else {
+                throw e
+            }
         }
+    }
+
+    private fun applyLocalConfigOption(configId: String, value: String) {
         val updated = _configOptions.map { option ->
             if (option.id == configId) option.copy(currentValue = value) else option
         }
