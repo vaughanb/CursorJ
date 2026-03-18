@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Concurrency stress test coverage for SQLite-backed indexing writes.
+
+### Changed
+
+- Consolidated global and project rules management into one settings page under **Settings > Tools > CursorJ**.
+
+### Fixed
+
+- SQLite index-store write operations are now serialized to avoid transaction-state errors during concurrent updates.
+
 ## [0.7.0] - 2026-03-12
 
 ### Added

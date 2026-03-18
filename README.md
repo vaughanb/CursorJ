@@ -89,11 +89,11 @@ Persistence details:
 
 ### Configuration
 
-Settings are available in **Settings > Tools > CursorJ** (application-level) and **Project Settings > Tools > CursorJ** (project-level):
+Settings are available in **Settings > Tools > CursorJ**:
 
 - **Agent**: Path to agent binary (auto-detect from PATH when empty), default model
 - **Global User Rules**: Inject custom rules into every prompt
-- **Project Rules**: Manage rule files in `.cursor/rules/` (project-level settings)
+- **Project Rules**: Manage rule files in `.cursor/rules/` from the same settings page (shown when an open project is available)
 - **Context & Indexing**: Auto-attach active file; enable project indexing; lexical persistence; semantic reranking; retrieval limits (max candidates, snippet budget, timeout); index retention days and max DB size; manual "Rebuild index now"
 - **Permissions**: Tool permission mode (Ask Every Time / Run Everything); approved tools allowlist; protect writes outside workspace
 - **Advanced**: ACP raw JSON debug logging (diagnostics)
@@ -124,7 +124,7 @@ Current tests validate:
 - **DragDropProvider**: file list and string flavor extraction, deduplication, install
 - **ProjectRulesService**: getRulesDirectory and listRuleFiles when rules dir is absent
 - lexical search behavior (matching, scope filters, case sensitivity, truncation, binary/size skipping)
-- SQLite persistence behavior (migration, reopen persistence, pruning, normalization, ordering)
+- SQLite persistence behavior (migration, reopen persistence, pruning, normalization, ordering, concurrent-write safety)
 - orchestrator lifecycle/queue behavior (startup, incremental updates, reconcile, telemetry)
 - hybrid retrieval behavior in orchestrator (lexical + symbol + semantic fusion, disabled/timeout fallbacks)
 - ACP handler routing and serialization for indexing methods
@@ -135,6 +135,8 @@ Thin IntelliJ fixture-based tests for PSI symbol/reference behavior are still re
 ## Releasing
 
 For release steps and publishing instructions, see [RELEASING.md](RELEASING.md).
+
+Maintainer note: before every release, update JetBrains Marketplace metadata in `build.gradle.kts` (`pluginConfiguration.description` and `pluginConfiguration.changeNotes`) so Marketplace text matches `CHANGELOG.md`.
 
 ## Privacy
 

@@ -25,6 +25,7 @@ class CursorJConfigurable : Configurable {
     private var agentPathField: TextFieldWithBrowseButton? = null
     private var defaultModelField: JBTextField? = null
     private var globalUserRulesListPanel: GlobalUserRulesListPanel? = null
+    private var projectRulesListPanel: ProjectRulesListPanel? = null
     private var autoAttachCheckbox: JBCheckBox? = null
     private var projectIndexingCheckbox: JBCheckBox? = null
     private var lexicalPersistenceCheckbox: JBCheckBox? = null
@@ -61,6 +62,18 @@ class CursorJConfigurable : Configurable {
             )
         }
         globalUserRulesListPanel = GlobalUserRulesListPanel()
+        val globalRulesDescription = JBLabel(
+            CursorJBundle.message("settings.globalRules.description"),
+        ).apply {
+            toolTipText = CursorJBundle.message("settings.globalRules.text.tooltip")
+        }
+        val projectRulesDescription = JBLabel(
+            CursorJBundle.message("settings.projectRules.description"),
+        )
+        val activeProject = ProjectManager.getInstance().openProjects.firstOrNull { !it.isDisposed }
+        projectRulesListPanel = activeProject?.let { ProjectRulesListPanel(it) }
+        val projectRulesContent: JComponent = projectRulesListPanel
+            ?: JBLabel(CursorJBundle.message("settings.projectRules.unavailable"))
         autoAttachCheckbox = JBCheckBox(
             CursorJBundle.message("settings.auto.attach"),
         )
@@ -120,8 +133,13 @@ class CursorJConfigurable : Configurable {
                 1,
                 false,
             )
-            .addComponent(TitledSeparator(CursorJBundle.message("settings.section.globalRules")), 1)
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.section.rules")), 1)
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.rules.global.title")), 1)
+            .addComponent(globalRulesDescription, 1)
             .addComponent(globalUserRulesListPanel!!, 1)
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.rules.project.title")), 1)
+            .addComponent(projectRulesDescription, 1)
+            .addComponent(projectRulesContent, 1)
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.indexing")), 1)
             .addComponent(autoAttachCheckbox!!, 1)
             .addComponent(projectIndexingCheckbox!!, 1)
@@ -249,6 +267,7 @@ class CursorJConfigurable : Configurable {
         protectExternalWritesCheckbox?.isSelected = settings.protectExternalFileWrites
         acpRawLoggingCheckbox?.isSelected = settings.enableAcpRawLogging
         approvedToolsArea?.text = settings.getApprovedPermissionKeys().sorted().joinToString("\n")
+        projectRulesListPanel?.refresh()
     }
 
     private fun selectedPermissionMode(): String {
@@ -294,6 +313,7 @@ class CursorJConfigurable : Configurable {
         agentPathField = null
         defaultModelField = null
         globalUserRulesListPanel = null
+        projectRulesListPanel = null
         autoAttachCheckbox = null
         projectIndexingCheckbox = null
         lexicalPersistenceCheckbox = null

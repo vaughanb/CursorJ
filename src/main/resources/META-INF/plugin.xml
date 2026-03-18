@@ -19,13 +19,6 @@
                 id="com.cursorj.settings"
                 displayName="CursorJ"/>
 
-        <projectConfigurable
-                parentId="tools"
-                instance="com.cursorj.settings.CursorJProjectConfigurable"
-                id="com.cursorj.projectSettings"
-                displayName="CursorJ"
-                nonDefaultProject="false"/>
-
         <applicationService
                 serviceImplementation="com.cursorj.settings.CursorJSettings"/>
 

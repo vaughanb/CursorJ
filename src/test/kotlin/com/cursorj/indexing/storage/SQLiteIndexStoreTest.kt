@@ -2,6 +2,10 @@ package com.cursorj.indexing.storage
 
 import java.nio.file.Files
 import java.sql.DriverManager
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -265,6 +269,62 @@ class SQLiteIndexStoreTest {
             assertEquals(2, topTwo.size)
             assertTrue(topTwo[0].scoreHint >= topTwo[1].scoreHint)
             assertEquals("target two", topTwo[0].snippet)
+            store.close()
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `concurrent writes do not fail with transaction state errors`() {
+        val workspace = Files.createTempDirectory("cursorj-sqlite-concurrent").toFile()
+        try {
+            val store = SQLiteIndexStore(workspace.absolutePath)
+            store.open()
+            val normalizedRoot = workspace.absolutePath.replace('\\', '/')
+            val targetPath = "$normalizedRoot/src/Race.kt"
+            val failures = ConcurrentLinkedQueue<Throwable>()
+            val workers = 8
+            val iterationsPerWorker = 80
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(workers)
+
+            repeat(workers) { worker ->
+                thread(start = true, name = "sqlite-race-$worker") {
+                    try {
+                        start.await()
+                        repeat(iterationsPerWorker) { i ->
+                            val contentHash = "hash-$worker-$i"
+                            store.upsertDocument(targetPath, contentHash, 100, i.toLong(), "kt")
+                            store.replaceLexicalHits(
+                                path = targetPath,
+                                hits = listOf(
+                                    StoredLexicalHit(
+                                        path = targetPath,
+                                        line = 1,
+                                        column = 1,
+                                        snippet = "val worker$worker = $i",
+                                        normalizedLine = "val worker$worker = $i",
+                                        scoreHint = 0.1,
+                                        tokenFingerprint = "worker|$worker",
+                                    ),
+                                ),
+                            )
+                        }
+                    } catch (t: Throwable) {
+                        failures.add(t)
+                    } finally {
+                        done.countDown()
+                    }
+                }
+            }
+
+            start.countDown()
+            assertTrue(done.await(45, TimeUnit.SECONDS), "Timed out waiting for concurrent SQLite writers")
+            assertTrue(
+                failures.isEmpty(),
+                "Concurrent writes produced failures: ${failures.firstOrNull()?.message}",
+            )
             store.close()
         } finally {
             workspace.deleteRecursively()
