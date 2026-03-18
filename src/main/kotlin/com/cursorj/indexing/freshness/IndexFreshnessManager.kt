@@ -18,6 +18,7 @@ class IndexFreshnessManager(
     private val onFileChanged: (String) -> Unit,
     private val onFileRemoved: (String) -> Unit,
     private val onBulkInvalidation: (String) -> Unit,
+    private val listenToPsiChanges: Boolean = false,
     private val connectMessageBus: (Disposable) -> MessageBusConnection = { disposable ->
         project.messageBus.connect(disposable)
     },
@@ -73,11 +74,13 @@ class IndexFreshnessManager(
                 VfsChangeKind.RENAMED -> onBulkInvalidation("file-rename")
             }
         }
-        registerPsiListener(
-            this,
-            { onBulkInvalidation("psi-children") },
-            { onBulkInvalidation("psi-property") },
-        )
+        if (listenToPsiChanges) {
+            registerPsiListener(
+                this,
+                { onBulkInvalidation("psi-children") },
+                { onBulkInvalidation("psi-property") },
+            )
+        }
     }
 
     fun notifyFileWritten(path: String) {

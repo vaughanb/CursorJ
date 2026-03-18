@@ -17,6 +17,7 @@ import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
@@ -56,6 +57,8 @@ class CursorJService(
 
     private val log = Logger.getInstance(CursorJService::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Volatile
+    private var serviceDisposed = false
 
     val activeFileProvider = ActiveFileProvider(project)
     val selectionProvider = SelectionProvider(project)
@@ -101,7 +104,10 @@ class CursorJService(
             CursorJConnectionStatus.updateIndexing(null)
         }
         Disposer.register(this, workspaceIndexOrchestrator)
-        workspaceIndexOrchestrator.start()
+        DumbService.getInstance(project).runWhenSmart {
+            if (project.isDisposed || serviceDisposed) return@runWhenSmart
+            workspaceIndexOrchestrator.start()
+        }
         fetchModelsAsync()
     }
 
@@ -187,6 +193,7 @@ class CursorJService(
     }
 
     override fun dispose() {
+        serviceDisposed = true
         promptHistoryManager.persist()
         chatTranscriptManager.persist()
         chatHistoryIndexManager.persist()

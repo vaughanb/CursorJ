@@ -68,6 +68,7 @@ class IndexFreshnessManagerTest {
             onFileChanged = { changed += it },
             onFileRemoved = { removed += it },
             onBulkInvalidation = { invalidations += it },
+            listenToPsiChanges = true,
             connectMessageBus = {
                 fakeConnection(
                     onDisconnect = { disconnected = true },
@@ -111,6 +112,7 @@ class IndexFreshnessManagerTest {
             onFileChanged = {},
             onFileRemoved = {},
             onBulkInvalidation = {},
+            listenToPsiChanges = true,
             connectMessageBus = {
                 connects++
                 fakeConnection()
@@ -126,6 +128,24 @@ class IndexFreshnessManagerTest {
         assertEquals(1, connects)
         assertEquals(1, vfsRegistrations)
         assertEquals(1, psiRegistrations)
+    }
+
+    @Test
+    fun `attach does not register psi listener by default`() {
+        var psiRegistrations = 0
+        val manager = IndexFreshnessManager(
+            project = projectStub(),
+            onFileChanged = {},
+            onFileRemoved = {},
+            onBulkInvalidation = {},
+            connectMessageBus = { fakeConnection() },
+            registerPsiListener = { _, _, _ -> psiRegistrations++ },
+        )
+
+        manager.attach()
+        manager.dispose()
+
+        assertEquals(0, psiRegistrations)
     }
 
     private fun projectStub(): Project {

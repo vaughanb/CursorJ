@@ -11,6 +11,8 @@ All notable changes to this project are documented in this file.
 ### Changed
 
 - Consolidated global and project rules management into one settings page under **Settings > Tools > CursorJ**.
+- Deferred CursorJ startup indexing warmup until the IDE exits dumb mode to reduce contention with JetBrains indexing.
+- Disabled PSI-driven bulk index invalidations by default to avoid repeated full rebuilds during active editing.
 
 ### Fixed
 
