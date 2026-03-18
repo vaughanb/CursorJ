@@ -34,4 +34,24 @@ class MarkdownRendererTest {
             "Raw ** should not appear in HTML output, got: $html",
         )
     }
+
+    @Test
+    fun `includes wrapping styles for regular text`() {
+        val html = MarkdownRenderer.renderToHtml("A very long line that should wrap in narrow chat panels.")
+        assertEquals(
+            true,
+            html.contains("overflow-wrap: anywhere") && html.contains("word-wrap: break-word"),
+            "Expected wrapping styles in rendered HTML, got: $html",
+        )
+    }
+
+    @Test
+    fun `code blocks are configured to wrap`() {
+        val html = MarkdownRenderer.renderToHtml("```kotlin\nval someReallyLongIdentifier = 1\n```")
+        assertEquals(
+            true,
+            html.contains("white-space: pre-wrap") && html.contains("word-wrap: break-word"),
+            "Expected wrapping styles for code blocks, got: $html",
+        )
+    }
 }

@@ -7,7 +7,10 @@ object MarkdownRenderer {
         val lines = markdown.lines()
         val sb = StringBuilder()
         val codeFontSize = baseFontSize - 1
-        sb.append("<html><body style='font-size: ${baseFontSize}pt; margin: 0; padding: 0;'>")
+        sb.append(
+            "<html><body style='font-size: ${baseFontSize}pt; margin: 0; padding: 0; line-height: 1.35; " +
+                "word-wrap: break-word; overflow-wrap: anywhere;'>",
+        )
 
         var inCodeBlock = false
         var codeLanguage = ""
@@ -30,22 +33,37 @@ object MarkdownRenderer {
                     codeBuffer.append(line)
                 }
                 line.startsWith("### ") -> {
-                    sb.append("<h4 style='margin: 4px 0 2px 0; font-size: ${baseFontSize + 1}pt;'>${escapeHtml(line.removePrefix("### "))}</h4>")
+                    sb.append(
+                        "<h4 style='margin: 4px 0 2px 0; font-size: ${baseFontSize + 1}pt; " +
+                            "word-wrap: break-word; overflow-wrap: anywhere;'>${escapeHtml(line.removePrefix("### "))}</h4>",
+                    )
                 }
                 line.startsWith("## ") -> {
-                    sb.append("<h3 style='margin: 6px 0 2px 0; font-size: ${baseFontSize + 3}pt;'>${escapeHtml(line.removePrefix("## "))}</h3>")
+                    sb.append(
+                        "<h3 style='margin: 6px 0 2px 0; font-size: ${baseFontSize + 3}pt; " +
+                            "word-wrap: break-word; overflow-wrap: anywhere;'>${escapeHtml(line.removePrefix("## "))}</h3>",
+                    )
                 }
                 line.startsWith("# ") -> {
-                    sb.append("<h2 style='margin: 6px 0 2px 0; font-size: ${baseFontSize + 5}pt;'>${escapeHtml(line.removePrefix("# "))}</h2>")
+                    sb.append(
+                        "<h2 style='margin: 6px 0 2px 0; font-size: ${baseFontSize + 5}pt; " +
+                            "word-wrap: break-word; overflow-wrap: anywhere;'>${escapeHtml(line.removePrefix("# "))}</h2>",
+                    )
                 }
                 line.startsWith("- ") || line.startsWith("* ") -> {
-                    sb.append("<p style='margin: 2px 0 2px 16px;'>&bull; ${renderInline(line.drop(2), codeFontSize)}</p>")
+                    sb.append(
+                        "<p style='margin: 2px 0 2px 16px; word-wrap: break-word; overflow-wrap: anywhere;'>" +
+                            "&bull; ${renderInline(line.drop(2), codeFontSize)}</p>",
+                    )
                 }
                 line.isBlank() -> {
                     sb.append("<div style='margin: 0; padding: 0; line-height: 6px;'>&nbsp;</div>")
                 }
                 else -> {
-                    sb.append("<p style='margin: 2px 0;'>${renderInline(line, codeFontSize)}</p>")
+                    sb.append(
+                        "<p style='margin: 2px 0; word-wrap: break-word; overflow-wrap: anywhere;'>" +
+                            "${renderInline(line, codeFontSize)}</p>",
+                    )
                 }
             }
         }
@@ -63,7 +81,7 @@ object MarkdownRenderer {
         val textColor = if (JBColor.isBright()) "#24292e" else "#d4d4d4"
         return """
             <div style='background: $bgColor; padding: 8px; margin: 4px 0;'>
-                <pre style='font-family: monospace; font-size: ${codeFontSize}pt; color: $textColor; margin: 0;'>${escapeHtml(code)}</pre>
+                <pre style='font-family: monospace; font-size: ${codeFontSize}pt; color: $textColor; margin: 0; white-space: pre-wrap; word-wrap: break-word;'>${escapeHtml(code)}</pre>
             </div>
         """.trimIndent()
     }

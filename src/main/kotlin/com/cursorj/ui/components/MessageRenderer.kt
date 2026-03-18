@@ -14,6 +14,11 @@ class MessageRenderer(private var message: ChatMessage) {
     private val log = Logger.getInstance(MessageRenderer::class.java)
 
     private val panel = object : JPanel() {
+        override fun getMinimumSize(): Dimension {
+            val pref = preferredSize
+            return Dimension(0, pref.height)
+        }
+
         override fun getMaximumSize(): Dimension {
             val pref = preferredSize
             return Dimension(Int.MAX_VALUE, pref.height)
@@ -31,9 +36,15 @@ class MessageRenderer(private var message: ChatMessage) {
         isOpaque = false
         border = JBUI.Borders.empty(4, 8)
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
+        minimumSize = Dimension(0, 0)
     }
 
     private val bubblePanel = object : JPanel(BorderLayout()) {
+        override fun getMinimumSize(): Dimension {
+            val pref = preferredSize
+            return Dimension(0, pref.height)
+        }
+
         override fun getMaximumSize(): Dimension {
             val pref = preferredSize
             return Dimension(Int.MAX_VALUE, pref.height)

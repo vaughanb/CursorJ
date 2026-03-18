@@ -29,12 +29,15 @@ class MessageListPanel {
     private val messageComponents = mutableListOf<MessageRenderer>()
     private var streamingRenderer: MessageRenderer? = null
     private var progressIndicator: ProgressIndicatorPanel? = null
+    private var scrollToBottomQueued = false
 
     val component: JComponent get() = panel
 
     fun updateOrAddMessage(message: ChatMessage) {
         clearStatusMessages()
         hideBuildButton()
+        var fullLayoutPassNeeded = false
+        var updatedComponent: JComponent? = null
 
         if (message.isStreaming) {
             hideProgress()
@@ -42,21 +45,32 @@ class MessageListPanel {
                 streamingRenderer = MessageRenderer(message)
                 innerPanel.add(streamingRenderer!!.component)
                 messageComponents.add(streamingRenderer!!)
+                fullLayoutPassNeeded = true
+                updatedComponent = streamingRenderer!!.component
             } else {
                 streamingRenderer!!.update(message)
+                updatedComponent = streamingRenderer!!.component
             }
         } else {
             if (streamingRenderer != null) {
                 streamingRenderer!!.update(message)
+                updatedComponent = streamingRenderer!!.component
                 streamingRenderer = null
             } else {
                 val renderer = MessageRenderer(message)
                 innerPanel.add(renderer.component)
                 messageComponents.add(renderer)
+                fullLayoutPassNeeded = true
+                updatedComponent = renderer.component
             }
         }
-        innerPanel.revalidate()
-        innerPanel.repaint()
+        if (fullLayoutPassNeeded) {
+            innerPanel.revalidate()
+            innerPanel.repaint()
+        } else {
+            updatedComponent?.revalidate()
+            updatedComponent?.repaint()
+        }
         scrollToBottom()
     }
 
@@ -484,11 +498,17 @@ class MessageListPanel {
 
     private fun clearStatusMessages() {
         val toRemove = innerPanel.components.filter { it.name == "status-message" }
+        if (toRemove.isEmpty()) return
         toRemove.forEach { innerPanel.remove(it) }
+        innerPanel.revalidate()
+        innerPanel.repaint()
     }
 
     private fun scrollToBottom() {
+        if (scrollToBottomQueued) return
+        scrollToBottomQueued = true
         SwingUtilities.invokeLater {
+            scrollToBottomQueued = false
             val scrollPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, panel)
             if (scrollPane is JScrollPane) {
                 val vsb = scrollPane.verticalScrollBar

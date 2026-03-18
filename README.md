@@ -8,7 +8,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 
 - **Full Agentic Coding**: File editing, terminal commands, and codebase understanding powered by Cursor's AI agent
 - **Active File Context**: Optionally attach the currently open file as context
-- **Selection Context**: Add selected text to chat via `Ctrl+Shift+J` or the editor context menu
+- **Selection Context**: Add selected text to chat via `Ctrl+Shift+J` or **Add to CursorJ Chat** at the bottom of the editor context menu (with a divider)
 - **Drag-and-Drop**: Drop files onto the chat panel to add them as context
 - **Multiple Chat Sessions**: Open multiple concurrent chat tabs, each with independent sessions
 - **Native IntelliJ UI**: Consistent look and feel with syntax-highlighted code blocks and diff rendering
@@ -16,7 +16,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs; choose "Ask Every Time" or "Run Everything"
 - **Rules**: Global user rules (injected into every prompt) and project rules (`.cursor/rules/`)
 - **Mode Switching**: Switch between Agent, Plan, and Ask modes (Plan mode includes Build and View Plan)
-- **Rollback Last Turn**: Revert files to the state before the most recent agent turn using Local History
+- **Undo All (Rollback Last Turn)**: Revert files to the state before the most recent agent turn using Local History
 - **Chat History**: Searchable chat history grouped by time; restore previous chats; clear history
 - **Status Bar**: Connection and indexing status (Connected, Processing, Indexing, Index ready, etc.)
 

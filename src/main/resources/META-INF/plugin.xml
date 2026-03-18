@@ -33,10 +33,15 @@
                 text="Add to CursorJ Chat"
                 description="Add selected text to CursorJ chat context"
                 icon="/icons/cursorj.svg">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="Floating.CodeToolbar" anchor="first"/>
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift J"/>
         </action>
+
+        <group id="CursorJ.EditorPopupGroup" popup="false">
+            <separator/>
+            <reference ref="CursorJ.SendSelection"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </group>
 
         <action id="CursorJ.FocusToolWindow"
                 class="com.cursorj.actions.FocusToolWindowAction"

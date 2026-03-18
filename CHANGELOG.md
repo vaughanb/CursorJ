@@ -13,10 +13,14 @@ All notable changes to this project are documented in this file.
 - Consolidated global and project rules management into one settings page under **Settings > Tools > CursorJ**.
 - Deferred CursorJ startup indexing warmup until the IDE exits dumb mode to reduce contention with JetBrains indexing.
 - Disabled PSI-driven bulk index invalidations by default to avoid repeated full rebuilds during active editing.
+- Moved **Add to CursorJ Chat** to the bottom of the editor context menu with a separator for clearer placement.
+- Renamed the chat action button from **Rollback** to **Undo All** to align with Cursor wording.
 
 ### Fixed
 
 - SQLite index-store write operations are now serialized to avoid transaction-state errors during concurrent updates.
+- Restored chat message wrapping in narrow chat panels (including long lines and code blocks).
+- Reduced flicker during streaming/typing updates by minimizing full-list relayout and scroll churn.
 
 ## [0.7.0] - 2026-03-12
 
