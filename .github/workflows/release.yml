@@ -95,5 +95,5 @@ jobs:
       - name: Publish to JetBrains Marketplace
         env:
           JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
-          JETBRAINS_MARKETPLACE_CHANNEL: beta
+          JETBRAINS_MARKETPLACE_CHANNEL: default
         run: ./gradlew --no-daemon publishPlugin

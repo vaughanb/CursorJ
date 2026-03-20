@@ -144,6 +144,7 @@ class InputPanel {
     private var updatingModelCombo = false
     private var rollbackAvailable = false
     private var isProcessing = false
+    private var lastKnownRootWidth = -1
 
     private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
@@ -251,7 +252,16 @@ class InputPanel {
         })
 
         rootPanel.addComponentListener(object : ComponentAdapter() {
-            override fun componentResized(e: ComponentEvent) = adjustTextAreaHeight()
+            override fun componentResized(e: ComponentEvent) {
+                val width = rootPanel.width
+                if (width <= 0) return
+                // Re-measure wrapping only when available width changes; this avoids
+                // feedback loops where height-only relayouts repeatedly rewrap text.
+                if (width != lastKnownRootWidth) {
+                    lastKnownRootWidth = width
+                    adjustTextAreaHeight()
+                }
+            }
         })
 
         sendButton.addActionListener { doSend() }
