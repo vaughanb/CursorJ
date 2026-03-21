@@ -15,7 +15,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic reranking
 - **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs; choose "Ask Every Time" or "Run Everything"
 - **Rules**: Global user rules (injected into every prompt) and project rules (`.cursor/rules/`)
-- **Model Selection & MAX Badge**: Choose any available model from the dropdown; a "MAX" badge appears when a MAX-tier model variant is selected
+- **Model Selection & MAX Mode**: Choose any available model from the dropdown; click the "MAX" badge to toggle MAX mode on/off (the agent restarts and model list updates accordingly)
 - **Mode Switching**: Switch between Agent, Plan, and Ask modes (Plan mode includes Build and View Plan)
 - **Undo All (Rollback Last Turn)**: Revert files to the state before the most recent agent turn using Local History
 - **Chat History**: Searchable chat history grouped by time; restore previous chats; clear history

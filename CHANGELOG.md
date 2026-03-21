@@ -7,7 +7,8 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - Concurrency stress test coverage for SQLite-backed indexing writes.
-- "MAX" badge next to the model dropdown that indicates when a MAX-tier model variant is selected.
+- "MAX" badge next to the model dropdown that indicates when a MAX-tier model variant is selected. Click the badge to toggle MAX mode on/off.
+- MAX mode toggle (`--max-mode`) support: the agent process is restarted with the flag when enabled, and the model list refreshes to include or exclude MAX-tier variants.
 
 ### Changed
 

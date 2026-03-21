@@ -26,6 +26,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
 
     var workingDirectory: String? = null
     var modelOverride: String? = null
+    var maxModeEnabled: Boolean = false
 
     fun start(): Boolean {
         if (isRunning) return true
@@ -86,6 +87,9 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
 
         modelOverride?.let {
             command.addAll(listOf("--model", it))
+        }
+        if (maxModeEnabled) {
+            command.add("--max-mode")
         }
         return command
     }
@@ -159,6 +163,9 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
             command.add(agentPath)
         }
         command.add(subcommand)
+        if (maxModeEnabled) {
+            command.add("--max-mode")
+        }
         return command
     }
 

@@ -106,6 +106,7 @@ class ChatPanel(
         inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onConfigOptionChanged = { configId, value -> handleConfigOptionChange(configId, value) }
+        inputPanel.onMaxModeToggled = { enabled -> handleMaxModeToggle(enabled) }
         inputPanel.onHistoryPrev = { currentInput ->
             service.promptHistoryManager.previous(historySessionKey, currentInput)
         }
@@ -147,6 +148,9 @@ class ChatPanel(
         this.connection = connection
         connection.setPermissionPromptResolver { request ->
             queuePermissionRequest(request)
+        }
+        SwingUtilities.invokeLater {
+            inputPanel.setMaxMode(connection.isMaxMode)
         }
     }
 
@@ -569,6 +573,15 @@ class ChatPanel(
     private fun handleConfigOptionChange(configId: String, value: String) {
         val conn = connection ?: return
         if (configId == AgentConnection.SYNTHETIC_MODEL_CONFIG_ID) {
+            val modelOpt = conn.buildModelConfigOption().firstOrNull()
+            val isMaxModel = modelOpt != null &&
+                ConfigOptionUiSupport.isLikelyMaxModelSelection(modelOpt, value)
+            if (isMaxModel && !conn.isMaxMode) {
+                conn.toggleMaxMode(true) { freshModels ->
+                    conn.updateModelInfos(freshModels)
+                    refreshModelDropdown(conn)
+                }
+            }
             conn.changeModel(value)
             session = null
             return
@@ -583,6 +596,27 @@ class ChatPanel(
                 SwingUtilities.invokeLater {
                     showStatus(CursorJBundle.message("chat.config.option.failed", msg))
                 }
+            }
+        }
+    }
+
+    private fun handleMaxModeToggle(enabled: Boolean) {
+        val conn = connection ?: return
+        conn.toggleMaxMode(enabled) { freshModels ->
+            conn.updateModelInfos(freshModels)
+            refreshModelDropdown(conn)
+        }
+        session = null
+        SwingUtilities.invokeLater {
+            inputPanel.setMaxMode(enabled)
+        }
+    }
+
+    private fun refreshModelDropdown(conn: AgentConnection) {
+        val modelConfig = conn.buildModelConfigOption()
+        if (modelConfig.isNotEmpty()) {
+            SwingUtilities.invokeLater {
+                inputPanel.updateConfigOptions(modelConfig)
             }
         }
     }

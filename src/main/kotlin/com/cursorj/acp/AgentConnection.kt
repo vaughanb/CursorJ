@@ -52,6 +52,8 @@ class AgentConnection(
         private set
     var selectedModel: String? = initialModel
         private set
+    var isMaxMode: Boolean = false
+        private set
     var lastError: String? = null
         private set
 
@@ -212,6 +214,56 @@ class AgentConnection(
                 broadcastStatus("Switched to $modelId. Type a message to start.")
             } else {
                 broadcastStatus(lastError ?: "Failed to switch model. Please try again.")
+            }
+        }
+    }
+
+    fun toggleMaxMode(enabled: Boolean, onModelsRefreshed: ((List<AcpProcessManager.ModelInfo>) -> Unit)? = null) {
+        if (enabled == isMaxMode) return
+        log.info("Toggling MAX mode: $isMaxMode -> $enabled")
+        isMaxMode = enabled
+        processManager.maxModeEnabled = enabled
+        session?.dispose()
+        session = null
+
+        scope.launch {
+            isConnected = false
+            val gen = ++connectionGeneration
+            broadcastStatus(if (enabled) "Enabling MAX mode..." else "Disabling MAX mode...")
+
+            processManager.stop()
+            client.disconnect()
+
+            val freshModels = withContext(Dispatchers.IO) {
+                val tempPm = AcpProcessManager(this@AgentConnection)
+                try {
+                    tempPm.maxModeEnabled = enabled
+                    tempPm.fetchAvailableModelsWithInfo()
+                } finally {
+                    Disposer.dispose(tempPm)
+                }
+            }
+            _modelInfos = freshModels
+            onModelsRefreshed?.invoke(freshModels)
+
+            if (!enabled && selectedModel != null) {
+                val stillAvailable = freshModels.any { it.id == selectedModel }
+                if (!stillAvailable) {
+                    val fallback = freshModels.firstOrNull { it.isCurrent }?.id
+                        ?: freshModels.firstOrNull()?.id
+                    log.info("Selected model '$selectedModel' no longer available without MAX mode; falling back to '$fallback'")
+                    selectedModel = fallback
+                    processManager.modelOverride = fallback
+                }
+            }
+
+            connect()
+            if (gen != connectionGeneration) return@launch
+            if (isConnected) {
+                val status = if (enabled) "MAX mode enabled." else "MAX mode disabled."
+                broadcastStatus("$status Type a message to start.")
+            } else {
+                broadcastStatus(lastError ?: "Failed to toggle MAX mode. Please try again.")
             }
         }
     }
