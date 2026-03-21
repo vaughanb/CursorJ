@@ -127,6 +127,16 @@ class InputPanel {
         isVisible = false
     }
 
+    private val maxBadge = JLabel("MAX").apply {
+        font = font.deriveFont(Font.BOLD, font.size2D - 2)
+        foreground = JBColor(Color(0xFFFFFF), Color(0xFFFFFF))
+        background = JBColor(Color(0xCF6B17), Color(0xCF6B17))
+        isOpaque = true
+        border = JBUI.Borders.empty(1, 5, 1, 5)
+        toolTipText = CursorJBundle.message("chat.model.max.badge.tooltip")
+        isVisible = false
+    }
+
     private val configControlsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
     }
@@ -141,6 +151,7 @@ class InputPanel {
     }
 
     private var modelValues: List<String> = emptyList()
+    private var currentModelConfigOption: ConfigOption? = null
     private var updatingModelCombo = false
     private var rollbackAvailable = false
     private var isProcessing = false
@@ -281,6 +292,7 @@ class InputPanel {
 
         modelCombo.addActionListener {
             if (updatingModelCombo || updatingConfigWidgets) return@addActionListener
+            updateMaxBadge()
             val idx = modelCombo.selectedIndex
             if (idx in modelValues.indices) {
                 onConfigOptionChanged?.invoke(modelConfigIdForEvents, modelValues[idx])
@@ -329,6 +341,7 @@ class InputPanel {
             when {
                 ConfigOptionUiSupport.isModelSelector(opt) && !modelShown && opt.options.isNotEmpty() -> {
                     modelConfigIdForEvents = opt.id
+                    currentModelConfigOption = opt
                     updatingModelCombo = true
                     modelCombo.removeAllItems()
                     modelValues = opt.options.map { it.value }
@@ -338,6 +351,7 @@ class InputPanel {
                     val longestName = opt.options.maxOf { (it.name ?: it.value).length }
                     modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 220), 26)
                     configControlsRow.add(modelCombo)
+                    configControlsRow.add(maxBadge)
                     modelCombo.isVisible = true
                     modelShown = true
                     updatingModelCombo = false
@@ -380,10 +394,24 @@ class InputPanel {
         }
         if (!modelShown) {
             modelCombo.isVisible = false
+            currentModelConfigOption = null
         }
+        updateMaxBadge()
         updatingConfigWidgets = false
         rootPanel.revalidate()
         rootPanel.repaint()
+    }
+
+    private fun updateMaxBadge() {
+        val opt = currentModelConfigOption
+        if (opt == null || !modelCombo.isVisible) {
+            maxBadge.isVisible = false
+            return
+        }
+        val idx = modelCombo.selectedIndex
+        val selectedValue = if (idx in modelValues.indices) modelValues[idx] else null
+        maxBadge.isVisible = selectedValue != null &&
+            ConfigOptionUiSupport.isLikelyMaxModelSelection(opt, selectedValue)
     }
 
     fun setProcessing(processing: Boolean) {

@@ -576,10 +576,6 @@ class ChatPanel(
         scope.launch {
             try {
                 val currentSession = session ?: return@launch
-                val modelOpt = currentSession.configOptions.firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
-                if (modelOpt?.id == configId) {
-                    maybeEnableMaxModeForModel(currentSession, value)
-                }
                 currentSession.setConfigOption(configId, value)
             } catch (e: Exception) {
                 log.warn("setConfigOption failed", e)
@@ -589,33 +585,6 @@ class ChatPanel(
                 }
             }
         }
-    }
-
-    private suspend fun maybeEnableMaxModeForModel(currentSession: AcpSession, modelId: String) {
-        if (!looksLikeMaxTierModel(modelId)) return
-        val maxModeOpt = currentSession.configOptions.firstOrNull { opt ->
-            ConfigOptionUiSupport.isBooleanToggle(opt) && isLikelyMaxModeOption(opt)
-        } ?: return
-        if (ConfigOptionUiSupport.isToggleChecked(maxModeOpt)) return
-        val (_, onValue) = ConfigOptionUiSupport.toggleOffOnValues(maxModeOpt)
-        currentSession.setConfigOption(maxModeOpt.id, onValue)
-        SwingUtilities.invokeLater {
-            showStatus("Enabled MAX Mode for max-tier model.")
-        }
-    }
-
-    private fun looksLikeMaxTierModel(modelId: String): Boolean {
-        val normalized = modelId.lowercase()
-        return normalized.contains("-max") || normalized.endsWith("max") || normalized.contains("_max")
-    }
-
-    private fun isLikelyMaxModeOption(option: ConfigOption): Boolean {
-        val id = option.id.lowercase()
-        val name = option.name?.lowercase() ?: ""
-        val description = option.description?.lowercase() ?: ""
-        if (id == "max_mode" || id == "maxmode") return true
-        if (name.contains("max mode")) return true
-        return description.contains("max mode")
     }
 
     private fun enableRunEverything(): Boolean {

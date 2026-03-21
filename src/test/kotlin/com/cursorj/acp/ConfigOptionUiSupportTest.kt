@@ -91,4 +91,74 @@ class ConfigOptionUiSupportTest {
         assertTrue(ConfigOptionUiSupport.isBooleanToggle(t))
         assertFalse(ConfigOptionUiSupport.isGenericSelect(t))
     }
+
+    @Test
+    fun maxModelSelection_detectsByDisplayNameWhenValueLacksMaxToken() {
+        val model = ConfigOption(
+            id = "model",
+            category = "model",
+            options = listOf(
+                ConfigOptionValue(
+                    value = "claude-opus-4-6-thinking",
+                    name = "Opus 4.6 Max Thinking",
+                ),
+            ),
+        )
+        assertTrue(
+            ConfigOptionUiSupport.isLikelyMaxModelSelection(
+                modelOption = model,
+                selectedValue = "claude-opus-4-6-thinking",
+            ),
+        )
+    }
+
+    @Test
+    fun maxModeOption_matchesCompactId() {
+        val opt = ConfigOption(
+            id = "maxMode",
+            type = "toggle",
+            currentValue = "false",
+        )
+        assertTrue(ConfigOptionUiSupport.isLikelyMaxModeOption(opt))
+    }
+
+    @Test
+    fun maxModelSelection_notMaxWhenDisplayNameLacksMaxToken() {
+        val model = ConfigOption(
+            id = "model",
+            category = "model",
+            options = listOf(
+                ConfigOptionValue(
+                    value = "claude-sonnet",
+                    name = "Claude Sonnet",
+                ),
+            ),
+        )
+        assertFalse(
+            ConfigOptionUiSupport.isLikelyMaxModelSelection(
+                modelOption = model,
+                selectedValue = "claude-sonnet",
+            ),
+        )
+    }
+
+    @Test
+    fun maxModelSelection_detectsByValueWhenIdContainsMax() {
+        val model = ConfigOption(
+            id = "model",
+            category = "model",
+            options = listOf(
+                ConfigOptionValue(
+                    value = "opus-max-thinking",
+                    name = "Opus Thinking",
+                ),
+            ),
+        )
+        assertTrue(
+            ConfigOptionUiSupport.isLikelyMaxModelSelection(
+                modelOption = model,
+                selectedValue = "opus-max-thinking",
+            ),
+        )
+    }
 }

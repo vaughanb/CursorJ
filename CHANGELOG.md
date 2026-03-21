@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - Concurrency stress test coverage for SQLite-backed indexing writes.
+- "MAX" badge next to the model dropdown that indicates when a MAX-tier model variant is selected.
 
 ### Changed
 
@@ -15,12 +16,14 @@ All notable changes to this project are documented in this file.
 - Disabled PSI-driven bulk index invalidations by default to avoid repeated full rebuilds during active editing.
 - Moved **Add to CursorJ Chat** to the bottom of the editor context menu with a separator for clearer placement.
 - Renamed the chat action button from **Rollback** to **Undo All** to align with Cursor wording.
+- Decoupled MAX model detection from MAX Mode toggling — selecting a Max model no longer auto-toggles a separate MAX Mode config option, matching real Cursor IDE behavior.
 
 ### Fixed
 
 - SQLite index-store write operations are now serialized to avoid transaction-state errors during concurrent updates.
 - Restored chat message wrapping in narrow chat panels (including long lines and code blocks).
 - Reduced flicker during streaming/typing updates by minimizing full-list relayout and scroll churn.
+- MAX model selection no longer falls back to "Auto" when the model ID lacks a `max` token but the display name contains one.
 
 ## [0.7.0] - 2026-03-12
 
