@@ -21,10 +21,12 @@ import javax.swing.AbstractAction
 import javax.swing.Action
 import javax.swing.JComponent
 
-class PermissionHandler {
+class PermissionHandler(
+    private val settingsProvider: () -> CursorJSettings = { CursorJSettings.instance },
+    private val promptTimeoutMinutes: Long = DEFAULT_PROMPT_TIMEOUT_MINUTES,
+) {
     private val log = Logger.getInstance(PermissionHandler::class.java)
     private val json = Json { ignoreUnknownKeys = true }
-    private val promptTimeoutMinutes = 10L
 
     @Volatile
     private var promptResolver: ((RequestPermissionParams) -> CompletableFuture<String>)? = null
@@ -42,9 +44,9 @@ class PermissionHandler {
         }
     }
 
-    private fun handlePermissionRequest(params: JsonElement): JsonElement {
+    internal fun handlePermissionRequest(params: JsonElement): JsonElement {
         val request = PermissionPolicy.withResolvedToolName(json.decodeFromJsonElement<RequestPermissionParams>(params))
-        val settings = CursorJSettings.instance
+        val settings = settingsProvider()
         val mode = PermissionMode.fromId(settings.permissionMode)
         val approvedKeys = settings.getApprovedPermissionKeys()
         val autoAllowOption = PermissionPolicy.shouldAutoAllowRequest(mode, approvedKeys, request)
@@ -170,5 +172,9 @@ class PermissionHandler {
             super.doCancelAction()
         }
 
+    }
+
+    companion object {
+        private const val DEFAULT_PROMPT_TIMEOUT_MINUTES = 10L
     }
 }

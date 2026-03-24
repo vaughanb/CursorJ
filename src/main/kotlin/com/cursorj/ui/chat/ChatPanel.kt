@@ -82,6 +82,7 @@ class ChatPanel(
     }
 
     var onFirstPrompt: ((String) -> Unit)? = null
+    var onPromptSubmitted: ((String) -> Unit)? = null
     var onSessionReplaced: ((AcpSession) -> Unit)? = null
     val component: JComponent get() = rootPanel
 
@@ -225,6 +226,7 @@ class ChatPanel(
     }
 
     fun sendPrompt(text: String) {
+        onPromptSubmitted?.invoke(text)
         SwingUtilities.invokeLater {
             val userMessage = ChatMessage(role = "user", content = text)
             messageListPanel.updateOrAddMessage(userMessage)

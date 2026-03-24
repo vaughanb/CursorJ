@@ -14,6 +14,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.ShowSettingsUtil
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.ui.JBColor
@@ -34,6 +35,12 @@ class SessionTabManager(
 ) {
     private val log = Logger.getInstance(SessionTabManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    internal data class PromptSubmissionResolution(
+        val titleToPersist: String,
+        val shouldRenameTab: Boolean,
+        val sessionIdToRecord: String?,
+    )
 
     private class TabEntry(
         val chatPanel: ChatPanel,
@@ -289,6 +296,21 @@ class SessionTabManager(
         chatPanel.onFirstPrompt = { prompt ->
             ensureConnectionAndSend(entry, prompt)
         }
+        chatPanel.onPromptSubmitted = { prompt ->
+            val resolution = resolvePromptSubmission(
+                currentTitle = entry.title,
+                defaultTitle = CursorJBundle.message("chat.tab.new"),
+                prompt = prompt,
+                sessionId = entry.session?.sessionId,
+                heuristicTitleBuilder = ::buildHeuristicTitle,
+            )
+            if (resolution.shouldRenameTab) {
+                applyTabTitle(entry, resolution.titleToPersist)
+            }
+            resolution.sessionIdToRecord?.let { sessionId ->
+                service.chatHistoryIndexManager.recordSession(sessionId, resolution.titleToPersist)
+            }
+        }
         chatPanel.onSessionReplaced = { newSession ->
             entry.session = newSession
             val newHistoryKey = "session:${newSession.sessionId}"
@@ -345,11 +367,7 @@ class SessionTabManager(
                 when {
                     SwingUtilities.isMiddleMouseButton(e) -> closeTab(entry)
                     SwingUtilities.isRightMouseButton(e) -> {
-                        val popup = JPopupMenu()
-                        popup.add(JMenuItem("Close Tab").apply {
-                            addActionListener { closeTab(entry) }
-                        })
-                        popup.show(panel, e.x, e.y)
+                        showTabContextMenu(entry, panel, e.x, e.y)
                     }
                     else -> selectTab(entry)
                 }
@@ -357,6 +375,48 @@ class SessionTabManager(
         })
 
         return panel
+    }
+
+    private fun showTabContextMenu(entry: TabEntry, invoker: Component, x: Int, y: Int) {
+        if (entry != selectedEntry) {
+            selectTab(entry)
+        }
+        val popup = JPopupMenu()
+        popup.add(JMenuItem(CursorJBundle.message("chat.tab.rename.action")).apply {
+            addActionListener { renameTab(entry) }
+        })
+        popup.add(JMenuItem(CursorJBundle.message("chat.tab.close.action")).apply {
+            addActionListener { closeTab(entry) }
+        })
+        popup.show(invoker, x, y)
+    }
+
+    private fun renameTab(entry: TabEntry) {
+        val requestedTitle = Messages.showInputDialog(
+            service.project,
+            CursorJBundle.message("chat.tab.rename.prompt"),
+            CursorJBundle.message("chat.tab.rename.title"),
+            null,
+            entry.title,
+            null,
+        ) ?: return
+
+        val normalizedTitle = normalizeTabTitleInput(requestedTitle)
+        if (normalizedTitle == null) {
+            Messages.showErrorDialog(
+                service.project,
+                CursorJBundle.message("chat.tab.rename.validation.empty"),
+                CursorJBundle.message("chat.tab.rename.title"),
+            )
+            return
+        }
+        if (normalizedTitle == entry.title) return
+
+        applyTabTitle(entry, normalizedTitle)
+        resolveHistorySessionId(entry.session?.sessionId, entry.historyKey)?.let { sessionId ->
+            // Upsert the history entry so manual rename is reflected even when no index row exists yet.
+            service.chatHistoryIndexManager.recordSession(sessionId, normalizedTitle)
+        }
     }
 
     private fun selectTab(entry: TabEntry) {
@@ -797,8 +857,7 @@ class SessionTabManager(
 
     private fun applyTabTitle(entry: TabEntry, title: String) {
         entry.title = title
-        val sessionId = entry.session?.sessionId
-            ?: entry.historyKey.removePrefix("session:").takeIf { entry.historyKey.startsWith("session:") }
+        val sessionId = resolveHistorySessionId(entry.session?.sessionId, entry.historyKey)
         if (sessionId != null) {
             service.chatHistoryIndexManager.updateTitle(sessionId, title)
         }
@@ -828,5 +887,40 @@ class SessionTabManager(
 
     companion object {
         private const val SCROLL_STEP = 120
+
+        internal fun resolvePromptSubmission(
+            currentTitle: String,
+            defaultTitle: String,
+            prompt: String,
+            sessionId: String?,
+            heuristicTitleBuilder: (String) -> String,
+        ): PromptSubmissionResolution {
+            val shouldRename = currentTitle == defaultTitle
+            val rawTitle = if (shouldRename) heuristicTitleBuilder(prompt) else currentTitle
+            val resolvedTitle = rawTitle.ifBlank { defaultTitle }
+            val sessionIdToRecord = sessionId?.trim()?.takeIf { it.isNotBlank() }
+            return PromptSubmissionResolution(
+                titleToPersist = resolvedTitle,
+                shouldRenameTab = shouldRename,
+                sessionIdToRecord = sessionIdToRecord,
+            )
+        }
+
+        internal fun normalizeTabTitleInput(rawInput: String): String? {
+            val normalized = rawInput
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+            return normalized.takeIf { it.isNotBlank() }
+        }
+
+        internal fun resolveHistorySessionId(sessionId: String?, historyKey: String): String? {
+            val normalizedSessionId = sessionId?.trim()
+            if (!normalizedSessionId.isNullOrBlank()) {
+                return normalizedSessionId
+            }
+            if (!historyKey.startsWith("session:")) return null
+            val fromHistoryKey = historyKey.removePrefix("session:").trim()
+            return fromHistoryKey.takeIf { it.isNotBlank() }
+        }
     }
 }
