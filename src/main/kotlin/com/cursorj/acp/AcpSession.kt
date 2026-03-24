@@ -44,6 +44,7 @@ class AcpSession(
     private val client: AcpClient,
     private val rollbackManager: TurnRollbackManager,
     initialConfigOptions: List<ConfigOption> = emptyList(),
+    initialModels: AcpModelsInfo? = null,
 ) {
     private val log = Logger.getInstance(AcpSession::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -55,6 +56,9 @@ class AcpSession(
     var title: String = "New Chat"
         internal set
     var isProcessing: Boolean = false
+        private set
+
+    var acpModels: AcpModelsInfo? = initialModels
         private set
 
     private val _configOptions = mutableListOf<ConfigOption>().apply { addAll(initialConfigOptions) }
@@ -560,6 +564,10 @@ class AcpSession(
         mode = newMode
     }
 
+    suspend fun setModel(modelId: String) {
+        client.sessionSetModel(sessionId, modelId)
+    }
+
     suspend fun setConfigOption(configId: String, value: String) {
         try {
             val result = client.sessionSetConfigOption(sessionId, configId, value)
@@ -585,6 +593,60 @@ class AcpSession(
         updateConfigOptions(updated)
     }
 
+    private fun mergeConfigOption(existing: ConfigOption, incoming: ConfigOption): ConfigOption {
+        if (!ConfigOptionUiSupport.isModelSelector(existing)) {
+            return incoming
+        }
+        if (incoming.options.isEmpty() || existing.options.isEmpty()) {
+            return incoming
+        }
+        if (incoming.options.size >= existing.options.size) {
+            return incoming
+        }
+
+        // Some agents send incremental model option updates with a reduced option set.
+        // Keep prior values appended so the dropdown does not unexpectedly shrink.
+        val mergedOptions = mutableListOf<ConfigOptionValue>()
+        val seen = mutableSetOf<String>()
+        fun addUnique(value: ConfigOptionValue) {
+            val key = value.value.trim().lowercase()
+            if (seen.add(key)) {
+                mergedOptions.add(value)
+            }
+        }
+
+        incoming.options.forEach(::addUnique)
+        existing.options.forEach(::addUnique)
+        return incoming.copy(options = mergedOptions)
+    }
+
+    private fun mergeConfigOptions(incoming: List<ConfigOption>): List<ConfigOption> {
+        if (_configOptions.isEmpty()) return incoming
+        if (incoming.isEmpty()) return _configOptions.toList()
+
+        val incomingById = incoming.associateBy { it.id }
+        val merged = mutableListOf<ConfigOption>()
+        val seenIds = mutableSetOf<String>()
+
+        for (existing in _configOptions) {
+            val replacement = incomingById[existing.id]
+            if (replacement != null) {
+                merged += mergeConfigOption(existing, replacement)
+                seenIds += existing.id
+            } else {
+                merged += existing
+                seenIds += existing.id
+            }
+        }
+
+        for (option in incoming) {
+            if (seenIds.add(option.id)) {
+                merged += option
+            }
+        }
+        return merged
+    }
+
     fun canRollbackLastTurn(): Boolean {
         return rollbackManager.canRollback(sessionId, isProcessing)
     }
@@ -598,11 +660,12 @@ class AcpSession(
     }
 
     private fun updateConfigOptions(options: List<ConfigOption>) {
+        val merged = mergeConfigOptions(options)
         _configOptions.clear()
-        _configOptions.addAll(options)
+        _configOptions.addAll(merged)
         for (listener in configListeners) {
             try {
-                listener(options)
+                listener(merged)
             } catch (e: Exception) {
                 log.warn("Config listener error", e)
             }

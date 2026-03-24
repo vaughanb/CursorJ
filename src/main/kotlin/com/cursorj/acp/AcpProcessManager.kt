@@ -7,6 +7,7 @@ import com.intellij.openapi.util.Disposer
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
     private val log = Logger.getInstance(AcpProcessManager::class.java)
@@ -25,9 +26,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
     }
 
     var workingDirectory: String? = null
-    var modelOverride: String? = null
-    var maxModeEnabled: Boolean = false
-
+    
     fun start(): Boolean {
         if (isRunning) return true
 
@@ -39,6 +38,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
 
         return try {
             val command = buildCommand(agentPath)
+            log.info("Agent command: ${command.joinToString(" ")}")
 
             val pb = ProcessBuilder(command)
             pb.redirectErrorStream(false)
@@ -83,14 +83,10 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
         } else {
             command.add(agentPath)
         }
+        // NOTE: `--model` flag does NOT work with `acp` subcommand — the agent ignores it
+        // and always starts with its default model. Model switching must be done via
+        // session/set_config_option("model", <acp_model_id>) after session creation.
         command.add("acp")
-
-        modelOverride?.let {
-            command.addAll(listOf("--model", it))
-        }
-        if (maxModeEnabled) {
-            command.add("--max-mode")
-        }
         return command
     }
 
@@ -163,9 +159,6 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
             command.add(agentPath)
         }
         command.add(subcommand)
-        if (maxModeEnabled) {
-            command.add("--max-mode")
-        }
         return command
     }
 

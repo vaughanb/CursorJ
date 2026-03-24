@@ -95,8 +95,8 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         return json.decodeFromJsonElement(result)
     }
 
-    suspend fun sessionLoad(sessionId: String): SessionLoadResult {
-        val params = SessionLoadParams(sessionId = sessionId)
+    suspend fun sessionLoad(sessionId: String, cwd: String): SessionLoadResult {
+        val params = SessionLoadParams(sessionId = sessionId, cwd = cwd, mcpServers = emptyList())
         val result = sendRequest("session/load", json.encodeToJsonElement(params))
         return json.decodeFromJsonElement(result)
     }
@@ -115,6 +115,11 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     suspend fun sessionSetMode(sessionId: String, modeId: String) {
         val params = SessionSetModeParams(sessionId = sessionId, modeId = modeId)
         sendRequest("session/set_mode", json.encodeToJsonElement(params))
+    }
+
+    suspend fun sessionSetModel(sessionId: String, modelId: String) {
+        val params = SessionSetModelParams(sessionId = sessionId, modelId = modelId)
+        sendRequest("session/set_model", json.encodeToJsonElement(params))
     }
 
     suspend fun sessionSetConfigOption(sessionId: String, configId: String, value: String): SetConfigOptionResult {

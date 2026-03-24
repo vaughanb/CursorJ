@@ -515,6 +515,11 @@ class SessionTabManager(
                             }
                         }
                     } else {
+                        entry.session = conn.createSession()
+                        entry.chatPanel.bindSession(entry.session!!)
+                        val sessionId = entry.session!!.sessionId
+                        entry.historyKey = "session:$sessionId"
+                        entry.chatPanel.updateHistorySessionKey(entry.historyKey)
                         entry.chatPanel.showStatus("Connected. Type a message to start.")
                     }
                 } else {
@@ -527,10 +532,6 @@ class SessionTabManager(
 
                 service.onModelsReady {
                     conn.updateModelInfos(service.availableModelInfos)
-                    val modelConfig = conn.buildModelConfigOption()
-                    if (modelConfig.isNotEmpty()) {
-                        entry.chatPanel.updateConfigOptions(modelConfig)
-                    }
                 }
             } catch (e: CancellationException) {
                 throw e

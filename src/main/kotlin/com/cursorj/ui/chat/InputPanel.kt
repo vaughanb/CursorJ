@@ -127,19 +127,6 @@ class InputPanel {
         isVisible = false
     }
 
-    private val maxBadgeOnBg = JBColor(Color(0xCF6B17), Color(0xCF6B17))
-    private val maxBadgeOffBg = JBColor(Color(0x999999), Color(0x666666))
-
-    private val maxBadge = JLabel("MAX").apply {
-        font = font.deriveFont(Font.BOLD, font.size2D - 2)
-        foreground = JBColor(Color(0xFFFFFF), Color(0xFFFFFF))
-        background = maxBadgeOffBg
-        isOpaque = true
-        border = JBUI.Borders.empty(1, 5, 1, 5)
-        toolTipText = CursorJBundle.message("chat.model.max.badge.tooltip.off")
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-    }
-
     private val configControlsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
     }
@@ -154,9 +141,8 @@ class InputPanel {
     }
 
     private var modelValues: List<String> = emptyList()
-    private var currentModelConfigOption: ConfigOption? = null
+    private var lastModelSelectionValue: String? = null
     private var updatingModelCombo = false
-    private var maxModeOn = false
     private var rollbackAvailable = false
     private var isProcessing = false
     private var lastKnownRootWidth = -1
@@ -186,9 +172,7 @@ class InputPanel {
     var onRollback: (() -> Unit)? = null
     var onSelectionChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
-    /** Model changes and ACP session config (MAX Mode, etc.) */
     var onConfigOptionChanged: ((configId: String, value: String) -> Unit)? = null
-    var onMaxModeToggled: ((enabled: Boolean) -> Unit)? = null
     var onHistoryPrev: ((String) -> String?)? = null
     var onHistoryNext: ((String) -> String?)? = null
 
@@ -297,19 +281,13 @@ class InputPanel {
 
         modelCombo.addActionListener {
             if (updatingModelCombo || updatingConfigWidgets) return@addActionListener
-            updateMaxBadge()
             val idx = modelCombo.selectedIndex
             if (idx in modelValues.indices) {
-                onConfigOptionChanged?.invoke(modelConfigIdForEvents, modelValues[idx])
+                val selectedValue = modelValues[idx]
+                lastModelSelectionValue = selectedValue
+                onConfigOptionChanged?.invoke(modelConfigIdForEvents, selectedValue)
             }
         }
-
-        maxBadge.addMouseListener(object : java.awt.event.MouseAdapter() {
-            override fun mouseClicked(e: java.awt.event.MouseEvent) {
-                val newState = !maxModeOn
-                onMaxModeToggled?.invoke(newState)
-            }
-        })
 
     }
 
@@ -353,17 +331,23 @@ class InputPanel {
             when {
                 ConfigOptionUiSupport.isModelSelector(opt) && !modelShown && opt.options.isNotEmpty() -> {
                     modelConfigIdForEvents = opt.id
-                    currentModelConfigOption = opt
                     updatingModelCombo = true
+                    val currentUiSelection = modelValues.getOrNull(modelCombo.selectedIndex)
                     modelCombo.removeAllItems()
                     modelValues = opt.options.map { it.value }
                     opt.options.forEach { o -> modelCombo.addItem(o.name ?: o.value) }
-                    val selectedIdx = modelValues.indexOf(opt.currentValue).coerceAtLeast(0)
+                    val preferredValue = when {
+                        !opt.currentValue.isNullOrBlank() && opt.currentValue in modelValues -> opt.currentValue
+                        !lastModelSelectionValue.isNullOrBlank() && lastModelSelectionValue in modelValues -> lastModelSelectionValue
+                        !currentUiSelection.isNullOrBlank() && currentUiSelection in modelValues -> currentUiSelection
+                        else -> modelValues.firstOrNull()
+                    }
+                    val selectedIdx = preferredValue?.let(modelValues::indexOf)?.coerceAtLeast(0) ?: 0
                     modelCombo.selectedIndex = selectedIdx
+                    lastModelSelectionValue = modelValues.getOrNull(selectedIdx)
                     val longestName = opt.options.maxOf { (it.name ?: it.value).length }
                     modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 220), 26)
                     configControlsRow.add(modelCombo)
-                    configControlsRow.add(maxBadge)
                     modelCombo.isVisible = true
                     modelShown = true
                     updatingModelCombo = false
@@ -406,43 +390,10 @@ class InputPanel {
         }
         if (!modelShown) {
             modelCombo.isVisible = false
-            currentModelConfigOption = null
         }
-        updateMaxBadge()
         updatingConfigWidgets = false
         rootPanel.revalidate()
         rootPanel.repaint()
-    }
-
-    fun setMaxMode(enabled: Boolean) {
-        maxModeOn = enabled
-        maxBadge.background = if (enabled) maxBadgeOnBg else maxBadgeOffBg
-        maxBadge.toolTipText = if (enabled) {
-            CursorJBundle.message("chat.model.max.badge.tooltip.on")
-        } else {
-            CursorJBundle.message("chat.model.max.badge.tooltip.off")
-        }
-        rootPanel.revalidate()
-        rootPanel.repaint()
-    }
-
-    private fun updateMaxBadge() {
-        val opt = currentModelConfigOption
-        if (opt == null || !modelCombo.isVisible) {
-            maxBadge.isVisible = false
-            return
-        }
-        val idx = modelCombo.selectedIndex
-        val selectedValue = if (idx in modelValues.indices) modelValues[idx] else null
-        val isMaxModel = selectedValue != null &&
-            ConfigOptionUiSupport.isLikelyMaxModelSelection(opt, selectedValue)
-        maxBadge.isVisible = isMaxModel || maxModeOn
-        maxBadge.background = if (maxModeOn) maxBadgeOnBg else maxBadgeOffBg
-        maxBadge.toolTipText = if (maxModeOn) {
-            CursorJBundle.message("chat.model.max.badge.tooltip.on")
-        } else {
-            CursorJBundle.message("chat.model.max.badge.tooltip.off")
-        }
     }
 
     fun setProcessing(processing: Boolean) {

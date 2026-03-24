@@ -10,49 +10,28 @@ import kotlin.test.assertTrue
 class ConfigOptionUiSupportTest {
 
     @Test
-    fun merge_appendsSyntheticModelWhenAgentOmitsModel() {
-        val agent = listOf(
-            ConfigOption(
-                id = "max_mode",
-                name = "MAX Mode",
-                type = "toggle",
-                currentValue = "false",
-            ),
-        )
-        val synthetic = listOf(
-            ConfigOption(
-                id = "model",
-                category = "model",
-                currentValue = "m1",
-                options = listOf(ConfigOptionValue("m1", "M1")),
-            ),
-        )
-        val merged = ConfigOptionUiSupport.mergeWithSyntheticModel(agent, synthetic)
-        assertEquals(2, merged.size)
-        assertEquals("max_mode", merged[0].id)
-        assertEquals("model", merged[1].id)
+    fun modelDetection_byIdAndCategory() {
+        val byCategory = ConfigOption(id = "x", category = "model")
+        val byId = ConfigOption(id = "model")
+        val neither = ConfigOption(id = "other", category = "other")
+
+        assertTrue(ConfigOptionUiSupport.isModelSelector(byCategory))
+        assertTrue(ConfigOptionUiSupport.isModelSelector(byId))
+        assertFalse(ConfigOptionUiSupport.isModelSelector(neither))
+        assertTrue(ConfigOptionUiSupport.isModelConfigId("model"))
+        assertFalse(ConfigOptionUiSupport.isModelConfigId("other"))
     }
 
     @Test
-    fun merge_keepsAgentListWhenModelPresent() {
-        val agent = listOf(
-            ConfigOption(id = "model", category = "model", options = listOf(ConfigOptionValue("a"))),
-        )
-        val synthetic = listOf(ConfigOption(id = "model", category = "model", options = listOf(ConfigOptionValue("b"))))
-        val merged = ConfigOptionUiSupport.mergeWithSyntheticModel(agent, synthetic)
-        assertEquals(1, merged.size)
-        assertEquals("a", merged[0].options.first().value)
-    }
-
-    @Test
-    fun merge_modelByIdWithoutCategory() {
-        val agent = listOf(ConfigOption(id = "model", options = listOf(ConfigOptionValue("x"))))
-        assertEquals(1, ConfigOptionUiSupport.mergeWithSyntheticModel(agent, emptyList()).size)
+    fun modeDetection_byIdAndCategory() {
+        assertTrue(ConfigOptionUiSupport.isModeSelector(ConfigOption(id = "mode")))
+        assertTrue(ConfigOptionUiSupport.isModeSelector(ConfigOption(id = "x", category = "mode")))
+        assertFalse(ConfigOptionUiSupport.isModeSelector(ConfigOption(id = "model", category = "model")))
     }
 
     @Test
     fun booleanToggle_detectsToggleType() {
-        val t = ConfigOption(id = "max_mode", type = "toggle", currentValue = "true")
+        val t = ConfigOption(id = "reasoning_effort", type = "toggle", currentValue = "true")
         assertTrue(ConfigOptionUiSupport.isBooleanToggle(t))
         assertTrue(ConfigOptionUiSupport.isToggleChecked(t))
     }
@@ -76,9 +55,13 @@ class ConfigOptionUiSupportTest {
     fun optionsForInputBar_skipsMode() {
         val list = listOf(
             ConfigOption(id = "mode", category = "mode"),
-            ConfigOption(id = "max_mode", type = "toggle"),
+            ConfigOption(id = "model", category = "model"),
+            ConfigOption(id = "reasoning_effort", type = "toggle"),
         )
-        assertEquals(1, ConfigOptionUiSupport.optionsForInputBar(list).size)
+        val filtered = ConfigOptionUiSupport.optionsForInputBar(list)
+        assertEquals(2, filtered.size)
+        assertEquals("model", filtered[0].id)
+        assertEquals("reasoning_effort", filtered[1].id)
     }
 
     @Test
@@ -93,72 +76,33 @@ class ConfigOptionUiSupportTest {
     }
 
     @Test
-    fun maxModelSelection_detectsByDisplayNameWhenValueLacksMaxToken() {
-        val model = ConfigOption(
-            id = "model",
-            category = "model",
-            options = listOf(
-                ConfigOptionValue(
-                    value = "claude-opus-4-6-thinking",
-                    name = "Opus 4.6 Max Thinking",
-                ),
-            ),
+    fun isGenericSelect_identifiesNonModelNonModeSelect() {
+        val select = ConfigOption(
+            id = "thought_level",
+            type = "select",
+            options = listOf(ConfigOptionValue("low"), ConfigOptionValue("medium"), ConfigOptionValue("high")),
         )
-        assertTrue(
-            ConfigOptionUiSupport.isLikelyMaxModelSelection(
-                modelOption = model,
-                selectedValue = "claude-opus-4-6-thinking",
-            ),
-        )
+        assertTrue(ConfigOptionUiSupport.isGenericSelect(select))
     }
 
     @Test
-    fun maxModeOption_matchesCompactId() {
-        val opt = ConfigOption(
-            id = "maxMode",
-            type = "toggle",
-            currentValue = "false",
+    fun toggleChecked_fallsBackToOnValueWhenCurrentIsCustomToken() {
+        val t = ConfigOption(
+            id = "x",
+            type = "select",
+            currentValue = "enabled",
+            options = listOf(
+                ConfigOptionValue("disabled"),
+                ConfigOptionValue("enabled"),
+            ),
         )
-        assertTrue(ConfigOptionUiSupport.isLikelyMaxModeOption(opt))
+        assertTrue(ConfigOptionUiSupport.isToggleChecked(t))
     }
 
     @Test
-    fun maxModelSelection_notMaxWhenDisplayNameLacksMaxToken() {
-        val model = ConfigOption(
-            id = "model",
-            category = "model",
-            options = listOf(
-                ConfigOptionValue(
-                    value = "claude-sonnet",
-                    name = "Claude Sonnet",
-                ),
-            ),
-        )
-        assertFalse(
-            ConfigOptionUiSupport.isLikelyMaxModelSelection(
-                modelOption = model,
-                selectedValue = "claude-sonnet",
-            ),
-        )
-    }
-
-    @Test
-    fun maxModelSelection_detectsByValueWhenIdContainsMax() {
-        val model = ConfigOption(
-            id = "model",
-            category = "model",
-            options = listOf(
-                ConfigOptionValue(
-                    value = "opus-max-thinking",
-                    name = "Opus Thinking",
-                ),
-            ),
-        )
-        assertTrue(
-            ConfigOptionUiSupport.isLikelyMaxModelSelection(
-                modelOption = model,
-                selectedValue = "opus-max-thinking",
-            ),
-        )
+    fun truthyParsing_handlesKnownValues() {
+        assertTrue(ConfigOptionUiSupport.isTruthy("on"))
+        assertTrue(ConfigOptionUiSupport.isTruthy("YES"))
+        assertFalse(ConfigOptionUiSupport.isTruthy("no"))
     }
 }

@@ -79,8 +79,9 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li>Consolidated global and project rules management into a single settings page in Settings &gt; Tools &gt; CursorJ</li>
-                <li>Fixed SQLite index-store transaction-state errors by serializing concurrent write operations</li>
+                <li>Model selection now follows ACP-native model options for consistent per-session switching behavior</li>
+                <li>Simplified chat input model controls and reduced selection flicker during config updates</li>
+                <li>Improved ACP session-load compatibility by sending workspace context fields expected by recent agent builds</li>
                 <li>Added concurrency stress-test coverage for SQLite-backed indexing writes</li>
             </ul>
         """.trimIndent()

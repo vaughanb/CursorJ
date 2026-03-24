@@ -106,7 +106,6 @@ class ChatPanel(
         inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onConfigOptionChanged = { configId, value -> handleConfigOptionChange(configId, value) }
-        inputPanel.onMaxModeToggled = { enabled -> handleMaxModeToggle(enabled) }
         inputPanel.onHistoryPrev = { currentInput ->
             service.promptHistoryManager.previous(historySessionKey, currentInput)
         }
@@ -148,9 +147,6 @@ class ChatPanel(
         this.connection = connection
         connection.setPermissionPromptResolver { request ->
             queuePermissionRequest(request)
-        }
-        SwingUtilities.invokeLater {
-            inputPanel.setMaxMode(connection.isMaxMode)
         }
     }
 
@@ -220,9 +216,7 @@ class ChatPanel(
             }
         }
 
-        if (session.configOptions.isNotEmpty()) {
-            updateConfigOptions(session.configOptions)
-        }
+        updateConfigOptions(session.configOptions)
         session.addConfigListener { options ->
             updateConfigOptions(options)
         }
@@ -240,7 +234,18 @@ class ChatPanel(
         }
         scope.launch {
             try {
-                val s = session ?: return@launch
+                var s = session
+                if (s == null) {
+                    val conn = connection
+                    if (conn == null || !conn.isConnected) {
+                        showError("Not connected. Please wait for the connection to complete.")
+                        return@launch
+                    }
+                    s = conn.createSession()
+                    session = s
+                    bindSession(s)
+                    onSessionReplaced?.invoke(s)
+                }
                 if (s.mode != desiredMode) {
                     try {
                         s.setMode(desiredMode)
@@ -571,24 +576,15 @@ class ChatPanel(
     }
 
     private fun handleConfigOptionChange(configId: String, value: String) {
-        val conn = connection ?: return
-        if (configId == AgentConnection.SYNTHETIC_MODEL_CONFIG_ID) {
-            val modelOpt = conn.buildModelConfigOption().firstOrNull()
-            val isMaxModel = modelOpt != null &&
-                ConfigOptionUiSupport.isLikelyMaxModelSelection(modelOpt, value)
-            if (isMaxModel && !conn.isMaxMode) {
-                conn.toggleMaxMode(true) { freshModels ->
-                    conn.updateModelInfos(freshModels)
-                    refreshModelDropdown(conn)
-                }
-            }
-            conn.changeModel(value)
-            session = null
-            return
-        }
         scope.launch {
             try {
                 val currentSession = session ?: return@launch
+                if (ConfigOptionUiSupport.isModelConfigId(configId)) {
+                    log.info("Setting model via session/set_config_option: $value")
+                    connection?.setSelectedModel(value)
+                    currentSession.setConfigOption(configId, value)
+                    return@launch
+                }
                 currentSession.setConfigOption(configId, value)
             } catch (e: Exception) {
                 log.warn("setConfigOption failed", e)
@@ -596,27 +592,6 @@ class ChatPanel(
                 SwingUtilities.invokeLater {
                     showStatus(CursorJBundle.message("chat.config.option.failed", msg))
                 }
-            }
-        }
-    }
-
-    private fun handleMaxModeToggle(enabled: Boolean) {
-        val conn = connection ?: return
-        conn.toggleMaxMode(enabled) { freshModels ->
-            conn.updateModelInfos(freshModels)
-            refreshModelDropdown(conn)
-        }
-        session = null
-        SwingUtilities.invokeLater {
-            inputPanel.setMaxMode(enabled)
-        }
-    }
-
-    private fun refreshModelDropdown(conn: AgentConnection) {
-        val modelConfig = conn.buildModelConfigOption()
-        if (modelConfig.isNotEmpty()) {
-            SwingUtilities.invokeLater {
-                inputPanel.updateConfigOptions(modelConfig)
             }
         }
     }

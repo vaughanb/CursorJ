@@ -160,9 +160,28 @@ data class ConfigOption(
 )
 
 @Serializable
+data class AcpModelInfo(
+    val modelId: String,
+    val name: String? = null,
+)
+
+@Serializable
+data class AcpModelsInfo(
+    val currentModelId: String? = null,
+    val availableModels: List<AcpModelInfo> = emptyList(),
+)
+
+@Serializable
 data class SessionNewResult(
     val sessionId: String,
     val configOptions: List<ConfigOption> = emptyList(),
+    val models: AcpModelsInfo? = null,
+)
+
+@Serializable
+data class SessionSetModelParams(
+    val sessionId: String,
+    val modelId: String,
 )
 
 @Serializable
@@ -180,6 +199,8 @@ data class SetConfigOptionResult(
 @Serializable
 data class SessionLoadParams(
     val sessionId: String,
+    val cwd: String,
+    val mcpServers: List<JsonElement> = emptyList(),
 )
 
 @Serializable

@@ -1,7 +1,5 @@
 package com.cursorj.acp
 
-import com.cursorj.acp.messages.ConfigOption
-import com.cursorj.acp.messages.ConfigOptionValue
 import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.handlers.FileSystemHandler
 import com.cursorj.handlers.IndexSearchHandler
@@ -34,6 +32,8 @@ class AgentConnection(
     @Volatile
     private var connectionGeneration = 0L
 
+    val modelInfos: List<AcpProcessManager.ModelInfo> get() = _modelInfos
+
     fun updateModelInfos(infos: List<AcpProcessManager.ModelInfo>) {
         _modelInfos = infos
     }
@@ -51,8 +51,6 @@ class AgentConnection(
     var isConnected = false
         private set
     var selectedModel: String? = initialModel
-        private set
-    var isMaxMode: Boolean = false
         private set
     var lastError: String? = null
         private set
@@ -76,7 +74,7 @@ class AgentConnection(
         Disposer.register(parentDisposable, this)
         processManager.workingDirectory = project.basePath
         if (initialModel != null) {
-            processManager.modelOverride = initialModel
+            selectedModel = initialModel
         }
     }
 
@@ -137,15 +135,21 @@ class AgentConnection(
         val cwd = project.basePath ?: System.getProperty("user.home")
         log.info("Creating new ACP session with cwd: $cwd")
         val result = client.sessionNew(cwd)
-        log.info("Session created with ${result.configOptions.size} config options")
-
-        val configOptions = ConfigOptionUiSupport.mergeWithSyntheticModel(
-            result.configOptions,
-            buildModelConfigOption(),
+        val models = result.models
+        log.info(
+            "Session created: models=${models?.availableModels?.size ?: 0}, " +
+                "currentModel=${models?.currentModelId}, " +
+                "configOptions=${result.configOptions.size}"
         )
 
         val previous = session
-        val newSession = AcpSession(result.sessionId, client, rollbackManager, configOptions)
+        val newSession = AcpSession(
+            sessionId = result.sessionId,
+            client = client,
+            rollbackManager = rollbackManager,
+            initialConfigOptions = result.configOptions,
+            initialModels = models,
+        )
         session = newSession
         previous?.dispose()
 
@@ -164,13 +168,13 @@ class AgentConnection(
             sessionId = normalizedSessionId,
             client = client,
             rollbackManager = rollbackManager,
-            initialConfigOptions = buildModelConfigOption(),
         )
         session = provisional
         previous?.dispose()
 
         return try {
-            val result = client.sessionLoad(normalizedSessionId)
+            val cwd = project.basePath ?: System.getProperty("user.home")
+            val result = client.sessionLoad(normalizedSessionId, cwd)
             if (result.sessionId == normalizedSessionId) {
                 provisional
             } else {
@@ -178,7 +182,6 @@ class AgentConnection(
                     sessionId = result.sessionId,
                     client = client,
                     rollbackManager = rollbackManager,
-                    initialConfigOptions = buildModelConfigOption(),
                 )
                 session = canonical
                 provisional.dispose()
@@ -193,97 +196,8 @@ class AgentConnection(
         }
     }
 
-    fun changeModel(modelId: String) {
-        log.info("Changing model to: $modelId")
-        selectedModel = modelId
-        processManager.modelOverride = modelId
-        session?.dispose()
-        session = null
-
-        scope.launch {
-            isConnected = false
-            val gen = ++connectionGeneration
-            broadcastStatus("Switching model...")
-
-            processManager.stop()
-            client.disconnect()
-
-            connect()
-            if (gen != connectionGeneration) return@launch
-            if (isConnected) {
-                broadcastStatus("Switched to $modelId. Type a message to start.")
-            } else {
-                broadcastStatus(lastError ?: "Failed to switch model. Please try again.")
-            }
-        }
-    }
-
-    fun toggleMaxMode(enabled: Boolean, onModelsRefreshed: ((List<AcpProcessManager.ModelInfo>) -> Unit)? = null) {
-        if (enabled == isMaxMode) return
-        log.info("Toggling MAX mode: $isMaxMode -> $enabled")
-        isMaxMode = enabled
-        processManager.maxModeEnabled = enabled
-        session?.dispose()
-        session = null
-
-        scope.launch {
-            isConnected = false
-            val gen = ++connectionGeneration
-            broadcastStatus(if (enabled) "Enabling MAX mode..." else "Disabling MAX mode...")
-
-            processManager.stop()
-            client.disconnect()
-
-            val freshModels = withContext(Dispatchers.IO) {
-                val tempPm = AcpProcessManager(this@AgentConnection)
-                try {
-                    tempPm.maxModeEnabled = enabled
-                    tempPm.fetchAvailableModelsWithInfo()
-                } finally {
-                    Disposer.dispose(tempPm)
-                }
-            }
-            _modelInfos = freshModels
-            onModelsRefreshed?.invoke(freshModels)
-
-            if (!enabled && selectedModel != null) {
-                val stillAvailable = freshModels.any { it.id == selectedModel }
-                if (!stillAvailable) {
-                    val fallback = freshModels.firstOrNull { it.isCurrent }?.id
-                        ?: freshModels.firstOrNull()?.id
-                    log.info("Selected model '$selectedModel' no longer available without MAX mode; falling back to '$fallback'")
-                    selectedModel = fallback
-                    processManager.modelOverride = fallback
-                }
-            }
-
-            connect()
-            if (gen != connectionGeneration) return@launch
-            if (isConnected) {
-                val status = if (enabled) "MAX mode enabled." else "MAX mode disabled."
-                broadcastStatus("$status Type a message to start.")
-            } else {
-                broadcastStatus(lastError ?: "Failed to toggle MAX mode. Please try again.")
-            }
-        }
-    }
-
-    fun buildModelConfigOption(): List<ConfigOption> {
-        if (_modelInfos.isEmpty()) return emptyList()
-        val currentModel = selectedModel
-            ?: _modelInfos.firstOrNull { it.isCurrent }?.id
-            ?: _modelInfos.firstOrNull()?.id
-            ?: return emptyList()
-        return listOf(
-            ConfigOption(
-                id = SYNTHETIC_MODEL_CONFIG_ID,
-                name = "Model",
-                category = "model",
-                type = "select",
-                currentValue = currentModel,
-                options = _modelInfos.map { ConfigOptionValue(value = it.id, name = it.displayName) },
-            ),
-        )
+    fun setSelectedModel(modelId: String?) {
+        selectedModel = modelId?.takeIf { it.isNotBlank() }
     }
 
     fun setPermissionPromptResolver(resolver: ((RequestPermissionParams) -> CompletableFuture<String>)?) {
@@ -424,8 +338,4 @@ class AgentConnection(
         terminalHandler.disposeAll()
     }
 
-    companion object {
-        /** Used when the agent doesn't expose a native model config option. */
-        const val SYNTHETIC_MODEL_CONFIG_ID: String = "_cursorj_model_override"
-    }
 }
