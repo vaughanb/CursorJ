@@ -12,6 +12,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Drag-and-Drop**: Drop files onto the chat panel to add them as context
 - **Multiple Chat Sessions**: Open multiple concurrent chat tabs, each with independent sessions
 - **Native IntelliJ UI**: Consistent look and feel with syntax-highlighted code blocks and diff rendering
+- **Enhanced Markdown Rendering**: Improved support for tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks
 - **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic reranking
 - **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs; choose "Ask Every Time" or "Run Everything"
 - **Rules**: Global user rules (injected into every prompt) and project rules (`.cursor/rules/`)

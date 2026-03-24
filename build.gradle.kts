@@ -82,6 +82,7 @@ intellijPlatform {
                 <li>Model selection now follows ACP-native model options for consistent per-session switching behavior</li>
                 <li>Simplified chat input model controls and reduced selection flicker during config updates</li>
                 <li>Improved ACP session-load compatibility by sending workspace context fields expected by recent agent builds</li>
+                <li>Greatly improved markdown rendering for chat responses (tables, blockquotes, task lists, autolinks, emoji aliases, and indented code blocks)</li>
                 <li>Added concurrency stress-test coverage for SQLite-backed indexing writes</li>
             </ul>
         """.trimIndent()

@@ -19,6 +19,7 @@ All notable changes to this project are documented in this file.
 - Model selection now follows ACP-native model options and applies changes via `session/set_config_option`.
 - Session load requests now include workspace context fields expected by recent agent builds.
 - Simplified chat input controls to focus on stable ACP-backed mode/model behavior.
+- Greatly improved markdown rendering in chat, including richer support for headings, tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks.
 
 ### Fixed
 
