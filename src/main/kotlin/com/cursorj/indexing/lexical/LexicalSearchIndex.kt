@@ -28,6 +28,7 @@ open class LexicalSearchIndex(
 
     private val ignoredDirectories = setOf(
         ".git", ".idea", ".gradle", "node_modules", "build", "out", "dist", "target",
+        "venv", "__pycache__", "coverage",
     )
 
     open suspend fun searchText(
@@ -146,25 +147,28 @@ open class LexicalSearchIndex(
     ): WarmupResult = withContext(Dispatchers.IO) {
         val activeStore = store?.takeIf { it.isOpen() } ?: return@withContext WarmupResult(0, 0, 0)
         val workspaceRoot = project.basePath?.let { File(it) } ?: return@withContext WarmupResult(0, 0, 0)
+        val existingDocumentsByPath = activeStore.allDocuments().associateBy { it.path }
         val seenPaths = linkedSetOf<String>()
         var indexed = 0
         var skipped = 0
 
         walkFiles(workspaceRoot) { file ->
-            if (file.length() > maxFileSizeBytes || looksBinary(file)) {
+            val sizeBytes = file.length()
+            if (sizeBytes > maxFileSizeBytes || looksBinary(file)) {
                 skipped++
                 return@walkFiles true
             }
             val normalizedPath = normalizePath(file.path)
             seenPaths.add(normalizedPath)
-            val content = runCatching { file.readText(StandardCharsets.UTF_8) }.getOrNull()
-            if (content == null) {
+            val mtimeMs = file.lastModified()
+            val existing = existingDocumentsByPath[normalizedPath]
+            // Use metadata-first skip to avoid reading/rehashing unchanged files during startup warmup.
+            if (existing != null && existing.sizeBytes == sizeBytes && existing.mtimeMs == mtimeMs) {
                 skipped++
                 return@walkFiles true
             }
-            val hash = computeHash(content)
-            val existing = activeStore.document(normalizedPath)
-            if (existing != null && existing.contentHash == hash && existing.sizeBytes == file.length() && existing.mtimeMs == file.lastModified()) {
+            val content = runCatching { file.readText(StandardCharsets.UTF_8) }.getOrNull()
+            if (content == null) {
                 skipped++
                 return@walkFiles true
             }

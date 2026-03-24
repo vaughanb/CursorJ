@@ -77,34 +77,41 @@ class WorkspaceIndexOrchestrator(
 
     fun start() {
         telemetry.beginSession()
-        if (settings.enableLexicalPersistence) {
-            runCatching {
-                sqliteStore?.open()
-                applyStoreLimits()
-            }.onFailure { e ->
-                log.warn("Failed to initialize SQLite lexical store", e)
-                emitLifecycle(
-                    IndexLifecycleUpdate(
-                        state = IndexLifecycleState.FAILED,
-                        message = "Indexing failed to initialize",
-                    ),
-                )
-            }
-        }
         freshnessManager.attach()
         scope.launch(Dispatchers.IO) {
             processReindexTasks()
         }
-        if (settings.enableLexicalPersistence) {
-            enqueueTask(ReindexTask.StartupWarmup)
-        } else {
+        if (!settings.enableLexicalPersistence) {
             emitLifecycle(
                 IndexLifecycleUpdate(
                     state = IndexLifecycleState.READY,
                     message = "Index ready",
                 ),
             )
+            return
         }
+
+        // Keep startup fast: open the store and schedule warmup on background IO.
+        scope.launch(Dispatchers.IO) {
+            if (!initializeLexicalStore()) return@launch
+            enqueueTask(ReindexTask.StartupWarmup)
+        }
+    }
+
+    private fun initializeLexicalStore(): Boolean {
+        val initialized = runCatching {
+            sqliteStore?.open()
+        }
+        initialized.onFailure { e ->
+            log.warn("Failed to initialize SQLite lexical store", e)
+            emitLifecycle(
+                IndexLifecycleUpdate(
+                    state = IndexLifecycleState.FAILED,
+                    message = "Indexing failed to initialize",
+                ),
+            )
+        }
+        return initialized.isSuccess
     }
 
     suspend fun retrieveForPrompt(

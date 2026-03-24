@@ -235,6 +235,33 @@ class SQLiteIndexStore(
         }
     }
 
+    fun allDocuments(): List<StoredDocument> {
+        return withConnection { conn ->
+            conn.createStatement().use { stmt ->
+                stmt.executeQuery(
+                    """
+                    SELECT path, content_hash, size_bytes, mtime_ms, indexed_at_ms
+                    FROM documents
+                    """.trimIndent(),
+                ).use { rs ->
+                    val docs = mutableListOf<StoredDocument>()
+                    while (rs.next()) {
+                        docs.add(
+                            StoredDocument(
+                                path = rs.getString("path"),
+                                contentHash = rs.getString("content_hash"),
+                                sizeBytes = rs.getLong("size_bytes"),
+                                mtimeMs = rs.getLong("mtime_ms"),
+                                indexedAtMs = rs.getLong("indexed_at_ms"),
+                            ),
+                        )
+                    }
+                    docs
+                }
+            }
+        }
+    }
+
     fun allDocumentPaths(): List<String> {
         return withConnection { conn ->
             conn.createStatement().use { stmt ->

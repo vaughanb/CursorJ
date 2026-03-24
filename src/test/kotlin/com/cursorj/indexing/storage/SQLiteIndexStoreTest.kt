@@ -276,6 +276,27 @@ class SQLiteIndexStoreTest {
     }
 
     @Test
+    fun `allDocuments returns stored metadata for warmup planning`() {
+        val workspace = Files.createTempDirectory("cursorj-sqlite-docs").toFile()
+        try {
+            val store = SQLiteIndexStore(workspace.absolutePath)
+            store.open()
+            val one = "${workspace.absolutePath.replace('\\', '/')}/src/One.kt"
+            val two = "${workspace.absolutePath.replace('\\', '/')}/src/Two.kt"
+            store.upsertDocument(one, "hash1", 11, 1001L, "kt")
+            store.upsertDocument(two, "hash2", 22, 2002L, "kt")
+
+            val docs = store.allDocuments().associateBy { it.path }
+            assertEquals(2, docs.size)
+            assertEquals(11, docs[one]?.sizeBytes)
+            assertEquals(2002L, docs[two]?.mtimeMs)
+            store.close()
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `concurrent writes do not fail with transaction state errors`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-concurrent").toFile()
         try {
