@@ -84,6 +84,7 @@ class CursorJService(
         chatHistoryIndexManager.load()
         clearStaleSessionsIfDataMissing()
         backfillChatHistoryIfNeeded()
+        pruneEmptySessionArtifacts()
         tabManager = SessionTabManager(this, toolWindow)
         tabManager.addInitialTab()
         val indexingListener: (WorkspaceIndexOrchestrator.IndexLifecycleUpdate) -> Unit = { update ->
@@ -143,6 +144,47 @@ class CursorJService(
                 ?: continue
             chatHistoryIndexManager.recordSession(sessionId, title)
         }
+    }
+
+    private fun pruneEmptySessionArtifacts() {
+        val settings = CursorJSettings.instance
+        val savedSessionIds = settings.savedSessionIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        val keptSessionIds = mutableListOf<String>()
+        for (sessionId in savedSessionIds) {
+            val historyKey = "session:$sessionId"
+            if (hasLocalConversationData(historyKey)) {
+                keptSessionIds += sessionId
+            } else {
+                chatHistoryIndexManager.removeSession(sessionId)
+            }
+        }
+        if (keptSessionIds != savedSessionIds) {
+            settings.savedSessionIds = keptSessionIds.toMutableList()
+        }
+
+        val staleHistorySessionIds = chatHistoryIndexManager.listAll()
+            .map { it.sessionId }
+            .filter { sessionId ->
+                val historyKey = "session:$sessionId"
+                !hasLocalConversationData(historyKey)
+            }
+        for (sessionId in staleHistorySessionIds) {
+            chatHistoryIndexManager.removeSession(sessionId)
+        }
+    }
+
+    private fun hasLocalConversationData(historyKey: String): Boolean {
+        if (chatTranscriptManager.transcriptFor(historyKey).isNotEmpty()) {
+            return true
+        }
+        if (promptHistoryManager.historyFor(historyKey).isNotEmpty()) {
+            return true
+        }
+        return false
     }
 
     private fun fetchModelsAsync() {

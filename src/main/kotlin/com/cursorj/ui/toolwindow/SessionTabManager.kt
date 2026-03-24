@@ -447,6 +447,9 @@ class SessionTabManager(
                 conn.onConnectionChanged = { _ ->
                     updateStatusBar()
                 }
+                conn.onSelectedModelChanged = { _ ->
+                    updateStatusBar()
+                }
 
                 entry.chatPanel.bindConnection(conn)
 
@@ -497,7 +500,16 @@ class SessionTabManager(
                                     restoreSucceeded = true
                                     entry.chatPanel.showStatus("Restored local transcript. First new prompt will include carryover context.")
                                 } else {
-                                    entry.chatPanel.showStatus("Connected. Previous chat could not be restored.")
+                                    if (hasLocalConversationData(restoredHistoryKey)) {
+                                        entry.chatPanel.showStatus(
+                                            connectedStatusMessage(conn, "Previous chat could not be restored."),
+                                        )
+                                    } else {
+                                        // Empty/no-prompt chats should not be treated as failed restores.
+                                        service.chatHistoryIndexManager.removeSession(restoredSession.sessionId)
+                                        restoreSucceeded = true
+                                        entry.chatPanel.showStatus(connectedStatusMessage(conn, "Type a message to start."))
+                                    }
                                 }
                             }
                         } catch (e: CancellationException) {
@@ -505,22 +517,41 @@ class SessionTabManager(
                         } catch (e: Exception) {
                             log.warn("Failed to restore session $restoreSessionId; tab will start fresh", e)
                             val localTranscript = service.chatTranscriptManager.transcriptFor(requestedHistoryKey)
+                            val hadLocalConversation = hasLocalConversationData(requestedHistoryKey)
                             if (localTranscript.isNotEmpty()) {
                                 val carryover = service.chatTranscriptManager.buildCarryoverContext(requestedHistoryKey)
+                                createAndBindFreshSession(
+                                    entry = entry,
+                                    conn = conn,
+                                    oldHistoryKey = requestedHistoryKey,
+                                    oldSessionId = restoreSessionId,
+                                )
                                 entry.chatPanel.applyLocalTranscriptFallback(localTranscript, carryover)
                                 restoreSucceeded = true
-                                entry.chatPanel.showStatus("Connected. Restored local transcript (server session unavailable).")
+                                entry.chatPanel.showStatus(
+                                    connectedStatusMessage(conn, "Restored local transcript (server session unavailable)."),
+                                )
                             } else {
-                                entry.chatPanel.showStatus("Connected. Previous chat could not be restored.")
+                                createAndBindFreshSession(
+                                    entry = entry,
+                                    conn = conn,
+                                    oldHistoryKey = requestedHistoryKey,
+                                    oldSessionId = restoreSessionId,
+                                )
+                                if (hadLocalConversation) {
+                                    entry.chatPanel.showStatus(
+                                        connectedStatusMessage(conn, "Previous chat could not be restored. Started a new session."),
+                                    )
+                                } else {
+                                    // Session had no local conversation content; treat as normal fresh start.
+                                    restoreSucceeded = true
+                                    entry.chatPanel.showStatus(connectedStatusMessage(conn, "Type a message to start."))
+                                }
                             }
                         }
                     } else {
-                        entry.session = conn.createSession()
-                        entry.chatPanel.bindSession(entry.session!!)
-                        val sessionId = entry.session!!.sessionId
-                        entry.historyKey = "session:$sessionId"
-                        entry.chatPanel.updateHistorySessionKey(entry.historyKey)
-                        entry.chatPanel.showStatus("Connected. Type a message to start.")
+                        createAndBindFreshSession(entry = entry, conn = conn)
+                        entry.chatPanel.showStatus(connectedStatusMessage(conn, "Type a message to start."))
                     }
                 } else {
                     entry.chatPanel.showError(
@@ -615,21 +646,8 @@ class SessionTabManager(
                 if (entry.session == null) {
                     val defaultTitle = CursorJBundle.message("chat.tab.new")
                     val titleToUse = if (entry.title != defaultTitle) entry.title else buildHeuristicTitle(prompt)
-                    val oldSessionId = entry.historyKey.removePrefix("session:")
-                        .takeIf { entry.historyKey.startsWith("session:") && it.isNotBlank() }
-
-                    entry.session = conn.createSession()
-                    val sessionId = entry.session!!.sessionId
-                    val sessionHistoryKey = "session:$sessionId"
-                    service.promptHistoryManager.migrateSessionKey(entry.historyKey, sessionHistoryKey)
-                    service.chatTranscriptManager.migrateSessionKey(entry.historyKey, sessionHistoryKey)
-                    if (oldSessionId != null && oldSessionId != sessionId) {
-                        service.chatHistoryIndexManager.removeSession(oldSessionId)
-                    }
-                    entry.historyKey = sessionHistoryKey
-                    entry.chatPanel.updateHistorySessionKey(sessionHistoryKey)
-                    entry.chatPanel.bindSession(entry.session!!)
-                    service.chatHistoryIndexManager.recordSession(sessionId, titleToUse)
+                    val newSession = createAndBindFreshSession(entry = entry, conn = conn)
+                    service.chatHistoryIndexManager.recordSession(newSession.sessionId, titleToUse)
                     applyTabTitle(entry, titleToUse)
                     persistSavedSessions()
                 }
@@ -645,13 +663,61 @@ class SessionTabManager(
         }
     }
 
+    private suspend fun createAndBindFreshSession(
+        entry: TabEntry,
+        conn: AgentConnection,
+        oldHistoryKey: String? = null,
+        oldSessionId: String? = null,
+    ): AcpSession {
+        val previousHistoryKey = oldHistoryKey ?: entry.historyKey
+        val previousSessionId = oldSessionId
+            ?: previousHistoryKey
+                .removePrefix("session:")
+                .takeIf { previousHistoryKey.startsWith("session:") && it.isNotBlank() }
+
+        val freshSession = conn.createSession()
+        entry.session = freshSession
+        val freshHistoryKey = "session:${freshSession.sessionId}"
+
+        service.promptHistoryManager.migrateSessionKey(previousHistoryKey, freshHistoryKey)
+        service.chatTranscriptManager.migrateSessionKey(previousHistoryKey, freshHistoryKey)
+        if (!previousSessionId.isNullOrBlank() && previousSessionId != freshSession.sessionId) {
+            service.chatHistoryIndexManager.removeSession(previousSessionId)
+        }
+
+        entry.historyKey = freshHistoryKey
+        entry.chatPanel.updateHistorySessionKey(freshHistoryKey)
+        entry.chatPanel.bindSession(freshSession)
+        if (hasLocalConversationData(freshHistoryKey)) {
+            service.chatHistoryIndexManager.recordSession(freshSession.sessionId, entry.title)
+        }
+        return freshSession
+    }
+
+    private fun hasLocalConversationData(historyKey: String): Boolean {
+        if (service.chatTranscriptManager.transcriptFor(historyKey).isNotEmpty()) {
+            return true
+        }
+        if (service.promptHistoryManager.historyFor(historyKey).isNotEmpty()) {
+            return true
+        }
+        return false
+    }
+
     private fun persistSavedSessions() {
         val sessionIds = tabs
             .mapNotNull { entry ->
-                entry.session?.sessionId?.trim()?.takeIf { it.isNotBlank() }
+                val sessionId = entry.session?.sessionId?.trim()?.takeIf { it.isNotBlank() }
                     ?: entry.historyKey
                         .removePrefix("session:")
                         .takeIf { entry.historyKey.startsWith("session:") && it.isNotBlank() }
+                    ?: return@mapNotNull null
+                if (hasLocalConversationData(entry.historyKey)) {
+                    sessionId
+                } else {
+                    service.chatHistoryIndexManager.removeSession(sessionId)
+                    null
+                }
             }
             .filter { it.isNotBlank() }
             .distinct()
@@ -749,12 +815,15 @@ class SessionTabManager(
         if (conn == null) {
             CursorJConnectionStatus.update(false, "Connecting...")
         } else if (conn.isConnected) {
-            val model = conn.selectedModel
-            val detail = if (model != null) "Connected ($model)" else null
-            CursorJConnectionStatus.update(true, detail)
+            CursorJConnectionStatus.update(true, conn.connectedStatusDetail())
         } else {
             CursorJConnectionStatus.update(false)
         }
+    }
+
+    private fun connectedStatusMessage(conn: AgentConnection, suffix: String): String {
+        val base = conn.connectedStatusDetail() ?: "Connected"
+        return "$base. $suffix"
     }
 
     companion object {

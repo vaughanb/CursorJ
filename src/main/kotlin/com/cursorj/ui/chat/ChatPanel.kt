@@ -583,6 +583,8 @@ class ChatPanel(
                     log.info("Setting model via session/set_config_option: $value")
                     connection?.setSelectedModel(value)
                     currentSession.setConfigOption(configId, value)
+                    val connectedDetail = connection?.connectedStatusDetail() ?: "Connected"
+                    showStatus("$connectedDetail. Type a message to start.")
                     return@launch
                 }
                 currentSession.setConfigOption(configId, value)

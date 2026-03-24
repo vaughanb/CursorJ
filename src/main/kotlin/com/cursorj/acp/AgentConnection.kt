@@ -1,5 +1,6 @@
 package com.cursorj.acp
 
+import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.handlers.FileSystemHandler
 import com.cursorj.handlers.IndexSearchHandler
@@ -57,6 +58,7 @@ class AgentConnection(
 
     var onStatusChanged: ((String) -> Unit)? = null
     var onConnectionChanged: ((Boolean) -> Unit)? = null
+    var onSelectedModelChanged: ((String?) -> Unit)? = null
 
     private val visibleSessionUpdateHandler: NotificationHandler = { method, params ->
         if (method == "session/update") {
@@ -152,6 +154,7 @@ class AgentConnection(
         )
         session = newSession
         previous?.dispose()
+        attachModelTracking(newSession, models?.currentModelId)
 
         return newSession
     }
@@ -175,7 +178,7 @@ class AgentConnection(
         return try {
             val cwd = project.basePath ?: System.getProperty("user.home")
             val result = client.sessionLoad(normalizedSessionId, cwd)
-            if (result.sessionId == normalizedSessionId) {
+            val activeSession = if (result.sessionId == normalizedSessionId) {
                 provisional
             } else {
                 val canonical = AcpSession(
@@ -187,6 +190,8 @@ class AgentConnection(
                 provisional.dispose()
                 canonical
             }
+            attachModelTracking(activeSession, preferredModelId = null)
+            activeSession
         } catch (e: Exception) {
             if (session === provisional) {
                 session = null
@@ -197,7 +202,36 @@ class AgentConnection(
     }
 
     fun setSelectedModel(modelId: String?) {
-        selectedModel = modelId?.takeIf { it.isNotBlank() }
+        val normalized = modelId?.trim()?.takeIf { it.isNotBlank() }
+        if (selectedModel == normalized) return
+        selectedModel = normalized
+        notifySelectedModelChanged(normalized)
+    }
+
+    fun selectedModelDisplayName(): String? {
+        val modelId = selectedModel?.trim()?.takeIf { it.isNotBlank() } ?: return null
+
+        val sessionModelName = session
+            ?.configOptions
+            ?.firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
+            ?.options
+            ?.firstOrNull { it.value.equals(modelId, ignoreCase = true) }
+            ?.name
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (sessionModelName != null) return sessionModelName
+
+        val cliModelName = _modelInfos
+            .firstOrNull { it.id.equals(modelId, ignoreCase = true) }
+            ?.displayName
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        return cliModelName ?: modelId
+    }
+
+    fun connectedStatusDetail(): String? {
+        val modelName = selectedModelDisplayName() ?: return null
+        return "Connected ($modelName)"
     }
 
     fun setPermissionPromptResolver(resolver: ((RequestPermissionParams) -> CompletableFuture<String>)?) {
@@ -319,6 +353,38 @@ class AgentConnection(
         SwingUtilities.invokeLater {
             onConnectionChanged?.invoke(connected)
         }
+    }
+
+    private fun notifySelectedModelChanged(modelId: String?) {
+        SwingUtilities.invokeLater {
+            onSelectedModelChanged?.invoke(modelId)
+        }
+    }
+
+    private fun attachModelTracking(targetSession: AcpSession, preferredModelId: String?) {
+        syncSelectedModelFromSession(targetSession, preferredModelId)
+        targetSession.addConfigListener { options ->
+            val modelId = modelIdFromConfigOptions(options) ?: return@addConfigListener
+            setSelectedModel(modelId)
+        }
+    }
+
+    private fun syncSelectedModelFromSession(targetSession: AcpSession, preferredModelId: String?) {
+        val modelId =
+            preferredModelId?.trim()?.takeIf { it.isNotBlank() }
+                ?: targetSession.acpModels?.currentModelId?.trim()?.takeIf { it.isNotBlank() }
+                ?: modelIdFromConfigOptions(targetSession.configOptions)
+        if (modelId != null) {
+            setSelectedModel(modelId)
+        }
+    }
+
+    private fun modelIdFromConfigOptions(options: List<ConfigOption>): String? {
+        return options
+            .firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
+            ?.currentValue
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
     }
 
     private fun extractSessionId(params: kotlinx.serialization.json.JsonElement): String? {
