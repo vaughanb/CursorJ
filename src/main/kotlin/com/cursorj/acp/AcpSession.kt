@@ -112,6 +112,9 @@ class AcpSession(
     private val planListeners = mutableListOf<(List<PlanEntry>) -> Unit>()
     private val editDiffListeners = mutableListOf<(EditDiffContent) -> Unit>()
 
+    @Volatile
+    private var pendingFirstUpdate: CompletableDeferred<Unit>? = null
+
     private val _currentAgentText = StringBuilder()
 
     fun addUpdateListener(listener: (SessionUpdate) -> Unit) {
@@ -147,6 +150,7 @@ class AcpSession(
     }
 
     fun handleSessionUpdate(params: JsonElement) {
+        pendingFirstUpdate?.complete(Unit)
         try {
             val updateElement = params.jsonObject["update"] ?: params
             val obj = updateElement.jsonObject
@@ -500,6 +504,9 @@ class AcpSession(
         planCreated = false
         clearTrackedToolCalls()
 
+        val firstUpdateSignal = CompletableDeferred<Unit>()
+        pendingFirstUpdate = firstUpdateSignal
+
         var interrupted = false
         val stuckToolSignal = CompletableDeferred<ToolCallWatchdogSignal>()
         val promptDeferred = sessionScope.async(start = CoroutineStart.LAZY) {
@@ -508,42 +515,85 @@ class AcpSession(
         val watchdogJob = sessionScope.launch {
             monitorToolCalls(stuckToolSignal)
         }
-        return try {
-            promptDeferred.start()
-            select {
-                promptDeferred.onAwait { result ->
-                    result
-                }
-                stuckToolSignal.onAwait { signal ->
-                    interrupted = true
-                    val message = buildFailFastMessage(signal)
-                    log.warn(
-                        "Tool call watchdog fail-fast for session=$sessionId " +
-                            "toolCallId=${signal.toolCallId} elapsedMs=${signal.elapsedMs} " +
-                            "command=${signal.commandPreview ?: "<unknown>"}",
+        val firstUpdateTimeoutJob = sessionScope.launch {
+            val received = withTimeoutOrNull(FIRST_UPDATE_TIMEOUT_MS) {
+                firstUpdateSignal.await()
+            }
+            if (received == null && !stuckToolSignal.isCompleted) {
+                stuckToolSignal.complete(
+                    ToolCallWatchdogSignal(
+                        toolCallId = "no-response",
+                        commandPreview = null,
+                        elapsedMs = FIRST_UPDATE_TIMEOUT_MS,
+                    ),
+                )
+            }
+        }
+        val livenessJob = sessionScope.launch {
+            while (currentCoroutineContext().isActive && isProcessing) {
+                delay(LIVENESS_CHECK_INTERVAL_MS)
+                if (!client.isConnected && !stuckToolSignal.isCompleted) {
+                    stuckToolSignal.complete(
+                        ToolCallWatchdogSignal(
+                            toolCallId = "connection-lost",
+                            commandPreview = null,
+                            elapsedMs = 0,
+                        ),
                     )
-                    notifyActivityListeners(message)
-                    notifyToolCallListeners(
-                        signal.toolCallId,
-                        ToolActivity(text = message),
-                    )
-                    sessionScope.launch {
-                        runCatching { client.sessionCancel(sessionId) }
-                            .onFailure { e ->
-                                log.info("session/cancel after watchdog trigger failed: ${e.message}")
-                            }
-                    }
-                    promptDeferred.cancel(CancellationException(message))
-                    throw AcpException(TOOL_WATCHDOG_ERROR_CODE, message)
+                    break
                 }
             }
+        }
+        return try {
+            withTimeout(MAX_TURN_DURATION_MS) {
+                promptDeferred.start()
+                select {
+                    promptDeferred.onAwait { result ->
+                        result
+                    }
+                    stuckToolSignal.onAwait { signal ->
+                        interrupted = true
+                        val message = buildFailFastMessage(signal)
+                        log.warn(
+                            "Watchdog fail-fast for session=$sessionId " +
+                                "signal=${signal.toolCallId} elapsedMs=${signal.elapsedMs} " +
+                                "command=${signal.commandPreview ?: "<unknown>"}",
+                        )
+                        notifyActivityListeners(message)
+                        notifyToolCallListeners(
+                            signal.toolCallId,
+                            ToolActivity(text = message),
+                        )
+                        sessionScope.launch {
+                            runCatching { client.sessionCancel(sessionId) }
+                                .onFailure { e ->
+                                    log.info("session/cancel after watchdog trigger failed: ${e.message}")
+                                }
+                        }
+                        promptDeferred.cancel(CancellationException(message))
+                        throw AcpException(TOOL_WATCHDOG_ERROR_CODE, message)
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            interrupted = true
+            val message = "Turn timed out after ${MAX_TURN_DURATION_MS / 1000}s"
+            log.warn(message)
+            sessionScope.launch {
+                runCatching { client.sessionCancel(sessionId) }
+            }
+            promptDeferred.cancel(CancellationException(message))
+            throw AcpException(TOOL_WATCHDOG_ERROR_CODE, message)
         } catch (e: AcpException) {
             if (e.code == -1 || e.code == TOOL_WATCHDOG_ERROR_CODE) {
                 interrupted = true
             }
             throw e
         } finally {
+            pendingFirstUpdate = null
             watchdogJob.cancel()
+            firstUpdateTimeoutJob.cancel()
+            livenessJob.cancel()
             promptDeferred.cancel()
             isProcessing = false
             finalizeCurrentText()
@@ -796,6 +846,16 @@ class AcpSession(
     }
 
     private fun buildFailFastMessage(signal: ToolCallWatchdogSignal): String {
+        when (signal.toolCallId) {
+            "no-response" -> {
+                val elapsedSeconds = (signal.elapsedMs / 1000L).coerceAtLeast(1L)
+                return "Agent did not respond within ${elapsedSeconds}s. " +
+                    "The prompt may be too large or the agent may be unresponsive."
+            }
+            "connection-lost" -> {
+                return "Agent connection lost while processing prompt."
+            }
+        }
         val elapsedSeconds = (signal.elapsedMs / 1000L).coerceAtLeast(1L)
         val commandText = signal.commandPreview?.takeIf { it.isNotBlank() } ?: "<command unavailable>"
         val hint = buildCommandHint(signal.commandPreview)
@@ -837,6 +897,9 @@ class AcpSession(
         private const val TOOL_WATCHDOG_FAIL_FAST_MS = 5L * 60L * 1000L
         private const val GRADLE_FAIL_FAST_MS = 90_000L
         private const val TOOL_WATCHDOG_ERROR_CODE = -32001
+        private const val FIRST_UPDATE_TIMEOUT_MS = 90_000L
+        private const val LIVENESS_CHECK_INTERVAL_MS = 5_000L
+        private const val MAX_TURN_DURATION_MS = 15L * 60L * 1000L
 
         val debugLogFile: java.io.File? by lazy {
             val home = System.getProperty("user.home") ?: return@lazy null

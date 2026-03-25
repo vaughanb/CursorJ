@@ -13,7 +13,9 @@ import java.io.BufferedWriter
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
 
 typealias NotificationHandler = (method: String, params: JsonElement) -> Unit
 typealias ServerRequestHandler = (method: String, params: JsonElement) -> JsonElement?
@@ -36,6 +38,8 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
     private val serverRequestExecutor = Executors.newCachedThreadPool { r ->
         Thread(r, "CursorJ-ServerReq-${nextId.get()}").apply { isDaemon = true }
     }
+
+    private val writeLock = ReentrantLock()
 
     private var scope: CoroutineScope? = null
     private var readJob: Job? = null
@@ -143,10 +147,13 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
             val line = json.encodeToString(request)
             logRawAcp("ACP raw -> request(id=$id, method=$method): ", line)
             withContext(Dispatchers.IO) {
-                synchronized(writer!!) {
+                writeLock.lock()
+                try {
                     writer!!.write(line)
                     writer!!.newLine()
                     writer!!.flush()
+                } finally {
+                    writeLock.unlock()
                 }
             }
             log.debug("ACP request: $method (id=$id)")
@@ -163,10 +170,16 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         val line = json.encodeToString(notification)
         logRawAcp("ACP raw -> notification(method=$method): ", line)
         withContext(Dispatchers.IO) {
-            synchronized(writer!!) {
-                writer!!.write(line)
-                writer!!.newLine()
-                writer!!.flush()
+            if (writeLock.tryLock(NOTIFICATION_WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                try {
+                    writer!!.write(line)
+                    writer!!.newLine()
+                    writer!!.flush()
+                } finally {
+                    writeLock.unlock()
+                }
+            } else {
+                log.warn("Could not acquire write lock for notification $method within ${NOTIFICATION_WRITE_TIMEOUT_MS}ms")
             }
         }
         log.debug("ACP notification: $method")
@@ -180,10 +193,13 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         }
         val line = json.encodeToString(JsonObject.serializer(), response)
         logRawAcp("ACP raw -> server_response(id=$id): ", line)
-        synchronized(writer!!) {
+        writeLock.lock()
+        try {
             writer!!.write(line)
             writer!!.newLine()
             writer!!.flush()
+        } finally {
+            writeLock.unlock()
         }
         log.debug("ACP response to server request id=$id")
     }
@@ -199,10 +215,13 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         }
         val line = json.encodeToString(JsonObject.serializer(), response)
         logRawAcp("ACP raw -> server_response_error(id=$id, code=$code): ", line)
-        synchronized(writer!!) {
+        writeLock.lock()
+        try {
             writer!!.write(line)
             writer!!.newLine()
             writer!!.flush()
+        } finally {
+            writeLock.unlock()
         }
         log.debug("ACP error response to server request id=$id: $message")
     }
@@ -344,6 +363,7 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
 
     companion object {
         private const val RAW_ACP_LOG_LIMIT_CHARS = 8000
+        private const val NOTIFICATION_WRITE_TIMEOUT_MS = 3000L
     }
 }
 

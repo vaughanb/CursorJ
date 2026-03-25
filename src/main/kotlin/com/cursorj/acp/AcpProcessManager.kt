@@ -52,8 +52,8 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
             }
 
             process = pb.start()
-            reader = process!!.inputStream.bufferedReader()
-            writer = process!!.outputStream.bufferedWriter()
+            reader = BufferedReader(process!!.inputStream.reader(), PIPE_BUFFER_SIZE)
+            writer = BufferedWriter(process!!.outputStream.writer(), PIPE_BUFFER_SIZE)
 
             stderrThread = Thread({
                 try {
@@ -216,5 +216,9 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
 
     override fun dispose() {
         stop()
+    }
+
+    companion object {
+        private const val PIPE_BUFFER_SIZE = 65_536
     }
 }

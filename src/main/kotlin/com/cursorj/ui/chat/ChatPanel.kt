@@ -13,6 +13,7 @@ import com.cursorj.rollback.RollbackStatus
 import com.cursorj.context.DragDropProvider
 import com.cursorj.permissions.PermissionMode
 import com.cursorj.settings.CursorJSettings
+import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.cursorj.ui.toolwindow.CursorJService
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -37,6 +38,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
@@ -56,6 +58,14 @@ class ChatPanel(
     private val messageListPanel = MessageListPanel()
     private val inputPanel = InputPanel()
     private val messageQueuePanel = MessageQueuePanel()
+    private val statusLabel = JLabel(CursorJConnectionStatus.text).apply {
+        font = font.deriveFont(font.size2D - 2)
+        foreground = JBColor(Color(0x999999), Color(0x707070))
+        border = JBUI.Borders.empty(2, 12, 4, 12)
+    }
+    private val statusListener: () -> Unit = {
+        SwingUtilities.invokeLater { statusLabel.text = CursorJConnectionStatus.text }
+    }
     private var historySessionKey: String = initialHistorySessionKey
 
     private var connection: AgentConnection? = null
@@ -96,9 +106,12 @@ class ChatPanel(
         val southPanel = JPanel(BorderLayout()).apply {
             add(messageQueuePanel.component, BorderLayout.NORTH)
             add(inputPanel.component, BorderLayout.CENTER)
+            add(statusLabel, BorderLayout.SOUTH)
         }
         rootPanel.add(scrollPane, BorderLayout.CENTER)
         rootPanel.add(southPanel, BorderLayout.SOUTH)
+
+        CursorJConnectionStatus.addListener(statusListener)
 
         inputPanel.onSend = { text -> handleSend(text) }
         inputPanel.onCancel = { handleCancel() }
@@ -774,11 +787,12 @@ class ChatPanel(
         val settings = CursorJSettings.instance
         if (!settings.enableProjectIndexing) return emptyList()
 
+        val queryText = text.take(RETRIEVAL_QUERY_MAX_CHARS)
         val openFiles = FileEditorManager.getInstance(service.project).openFiles
             .map { it.path.replace('\\', '/') }
         val pathHint = service.activeFileProvider.activeFile?.path
         val retrieval = service.workspaceIndexOrchestrator.retrieveForPrompt(
-            text = text,
+            text = queryText,
             pathHint = pathHint,
             openFiles = openFiles,
         )
@@ -814,11 +828,16 @@ class ChatPanel(
     }
 
     override fun dispose() {
+        CursorJConnectionStatus.removeListener(statusListener)
         clearDiffHighlights()
         scope.cancel()
         pendingPermissionResponses.values.forEach { future ->
             if (!future.isDone) future.complete("reject-once")
         }
         pendingPermissionResponses.clear()
+    }
+
+    companion object {
+        private const val RETRIEVAL_QUERY_MAX_CHARS = 500
     }
 }

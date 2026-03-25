@@ -21,10 +21,6 @@
 
         <applicationService
                 serviceImplementation="com.cursorj.settings.CursorJSettings"/>
-
-        <statusBarWidgetFactory
-                id="CursorJStatusBar"
-                implementation="com.cursorj.ui.statusbar.CursorJStatusBarWidgetFactory"/>
     </extensions>
 
     <actions>
