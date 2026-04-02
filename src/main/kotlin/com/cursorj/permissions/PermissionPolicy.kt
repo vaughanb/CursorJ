@@ -77,6 +77,7 @@ object PermissionPolicy {
     }
 
     fun displayToolName(request: RequestPermissionParams): String {
+        request.toolCall?.title?.trim()?.takeIf { it.isNotEmpty() }?.let { return prettifyToolName(it) }
         val explicit = firstNonBlank(
             request.toolName,
             request.toolNameSnake,
@@ -133,11 +134,25 @@ object PermissionPolicy {
         return keys
     }
 
+    /**
+     * Interactive plan/Q&A choices are delivered as [session/request_permission] with
+     * [com.cursorj.acp.messages.RequestPermissionParams.toolCall] (often `kind: "other"`)
+     * and custom [com.cursorj.acp.messages.PermissionOption.optionId] values.
+     * These must never be auto-resolved (e.g. under Run Everything), or the client would
+     * immediately pick [chooseAllowOption]’s default (typically the first choice).
+     */
+    fun isInteractivePermissionRequest(request: RequestPermissionParams): Boolean {
+        if (request.toolCall?.kind?.equals("other", ignoreCase = true) == true) return true
+        if (request.options.any { it.optionId.contains("ask_question", ignoreCase = true) }) return true
+        return false
+    }
+
     fun shouldAutoAllowRequest(
         mode: PermissionMode,
         approvedKeys: Set<String>,
         request: RequestPermissionParams,
     ): String? {
+        if (isInteractivePermissionRequest(request)) return null
         val allow = chooseAllowOption(request.options)
         if (mode == PermissionMode.RUN_EVERYTHING) return allow
         if (mode == PermissionMode.AUTO_APPROVE_SAFE && looksReadOnlyRequest(request)) return allow

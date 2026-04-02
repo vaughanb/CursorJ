@@ -7,6 +7,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FileSystemHandlerTest {
@@ -98,5 +99,24 @@ class FileSystemHandlerTest {
             java.lang.Character.TYPE -> '\u0000'
             else -> null
         }
+    }
+
+    @Test
+    fun `notifyIfAgentPlanFile invokes callback for markdown under cursor plans`() {
+        var captured: String? = null
+        val handler = FileSystemHandler(projectWithBasePath(null))
+        handler.onAgentPlanFileWritten = { captured = it }
+        val path = "C:/Users/test/.cursor/plans/My App-abc.plan.md"
+        invokePrivate<Unit>(handler, "notifyIfAgentPlanFile", path)
+        assertEquals(path.replace('\\', '/'), captured?.replace('\\', '/'))
+    }
+
+    @Test
+    fun `notifyIfAgentPlanFile ignores non-plan paths`() {
+        var captured: String? = null
+        val handler = FileSystemHandler(projectWithBasePath(null))
+        handler.onAgentPlanFileWritten = { captured = it }
+        invokePrivate<Unit>(handler, "notifyIfAgentPlanFile", "C:/project/src/main.kt")
+        assertNull(captured)
     }
 }

@@ -1,5 +1,7 @@
 package com.cursorj.handlers
 
+import com.cursorj.acp.messages.PermissionOption
+import com.cursorj.acp.messages.PermissionToolCallRef
 import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.permissions.PermissionMode
 import com.cursorj.permissions.PermissionPolicy
@@ -38,6 +40,36 @@ class PermissionHandlerTest {
 
         assertTrue(PermissionPolicy.isAllowOption(optionId))
         assertFalse(promptCalled)
+    }
+
+    @Test
+    fun `run everything still invokes resolver for interactive plan question`() {
+        val settings = CursorJSettings().apply {
+            permissionMode = PermissionMode.RUN_EVERYTHING.id
+        }
+        var promptCalled = false
+        val handler = PermissionHandler(settingsProvider = { settings })
+        handler.setPromptResolver {
+            promptCalled = true
+            CompletableFuture.completedFuture("cwd")
+        }
+
+        val request = RequestPermissionParams(
+            toolCall = PermissionToolCallRef(
+                kind = "other",
+                title = "Persistence behavior",
+            ),
+            options = listOf(
+                PermissionOption("cwd", name = "Keep in cwd"),
+                PermissionOption("user_home", name = "User home"),
+            ),
+        )
+        val result = handler.handlePermissionRequest(
+            json.encodeToJsonElement(RequestPermissionParams.serializer(), request),
+        )
+
+        assertTrue(promptCalled)
+        assertEquals("cwd", extractOptionId(result))
     }
 
     @Test

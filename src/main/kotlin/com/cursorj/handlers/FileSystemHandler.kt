@@ -23,6 +23,9 @@ class FileSystemHandler(private val project: Project) {
     private val log = Logger.getInstance(FileSystemHandler::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Called when the agent writes a markdown file under `.cursor/plans/` (the real plan file). */
+    var onAgentPlanFileWritten: ((String) -> Unit)? = null
+
     fun register(client: AcpClient) {
         client.addServerRequestHandler { method, params ->
             when (method) {
@@ -34,6 +37,15 @@ class FileSystemHandler(private val project: Project) {
                 "fs/create_directory" -> handleCreateDirectory(params)
                 else -> null
             }
+        }
+    }
+
+    private fun notifyIfAgentPlanFile(resolvedPath: String) {
+        val norm = resolvedPath.replace('\\', '/')
+        val isPlansMd = norm.contains("/.cursor/plans/", ignoreCase = true) &&
+            norm.endsWith(".md", ignoreCase = true)
+        if (isPlansMd) {
+            onAgentPlanFileWritten?.invoke(resolvedPath)
         }
     }
 
@@ -71,6 +83,8 @@ class FileSystemHandler(private val project: Project) {
         val ioFile = File(resolvedPath)
         ioFile.parentFile?.mkdirs()
         ioFile.writeText(request.content, Charsets.UTF_8)
+
+        notifyIfAgentPlanFile(resolvedPath)
 
         refreshAfterFileChange(ioFile)
         CursorJService.getInstance(project)?.workspaceIndexOrchestrator?.notifyFileWritten(ioFile.absolutePath)

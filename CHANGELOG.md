@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - Concurrency stress test coverage for SQLite-backed indexing writes.
 - ACP model metadata parsing from `session/new` to keep model state in sync with the active session.
+- Unit tests covering agent plan path detection, session handling of plan edit diffs and “Plan saved” tool text, and filesystem notifications for plan writes under `.cursor/plans`.
 
 ### Changed
 
@@ -27,6 +28,9 @@ All notable changes to this project are documented in this file.
 - Restored chat message wrapping in narrow chat panels (including long lines and code blocks).
 - Reduced flicker during streaming/typing updates by minimizing full-list relayout and scroll churn.
 - Prevented model picker states that could imply unsupported model transitions.
+- Plan mode: **Build** did not reappear after the agent updated an existing plan by editing the on-disk file under `.cursor/plans` (e.g. edit diffs without a second `create_plan`); plan UI state now tracks those updates.
+- Plan mode: an open plan document could stay stale while the agent wrote changes to disk; the IDE refreshes the virtual file and reloads open editors when the tracked plan path is touched.
+- Plan mode: improved recognition of the agent’s plan file (`cursor/create_plan` / `_cursor/create_plan`, “Plan saved to …” in tool updates, and markdown paths under `.cursor/plans`) for **View Plan** and related behavior.
 
 ## [0.7.0] - 2026-03-12
 

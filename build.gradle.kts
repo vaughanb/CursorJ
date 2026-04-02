@@ -84,6 +84,9 @@ intellijPlatform {
                 <li>Improved ACP session-load compatibility by sending workspace context fields expected by recent agent builds</li>
                 <li>Greatly improved markdown rendering for chat responses (tables, blockquotes, task lists, autolinks, emoji aliases, and indented code blocks)</li>
                 <li>Added concurrency stress-test coverage for SQLite-backed indexing writes</li>
+                <li>Plan mode: <strong>Build</strong> shows again when the agent refines a plan by editing the saved file under <code>.cursor/plans</code>, not only after a new <code>create_plan</code> step</li>
+                <li>Plan mode: if the plan file is already open in the editor, it reloads from disk when the agent saves or patches that file</li>
+                <li>Plan mode: more reliable handling of the real plan file path (<code>cursor/create_plan</code> and variants, &quot;Plan saved to …&quot; tool messages, and plan markdown under <code>.cursor/plans</code>)</li>
             </ul>
         """.trimIndent()
     }

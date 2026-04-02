@@ -1,6 +1,7 @@
 package com.cursorj.ui.chat
 
 import com.cursorj.CursorJBundle
+import com.cursorj.acp.AcpContentExtractor
 import com.cursorj.acp.ChatMessage
 import com.cursorj.acp.messages.PermissionOption
 import com.cursorj.acp.messages.RequestPermissionParams
@@ -12,6 +13,8 @@ import kotlinx.serialization.json.JsonElement
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.*
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.util.Locale
 import javax.swing.*
 
@@ -180,6 +183,211 @@ class MessageListPanel {
         onDecision: (String) -> Unit,
         onRunEverything: (() -> Boolean)? = null,
     ) {
+        if (PermissionPolicy.isInteractivePermissionRequest(request)) {
+            addAgentQuestionCard(requestId, request, onDecision)
+        } else {
+            addToolPermissionRequestCard(requestId, request, onDecision, onRunEverything)
+        }
+    }
+
+    /** Interactive plan/design questions: distinct styling, full-text clickable rows (not a permission dropdown). */
+    private fun addAgentQuestionCard(
+        requestId: String,
+        request: RequestPermissionParams,
+        onDecision: (String) -> Unit,
+    ) {
+        permissionCards[requestId]?.let {
+            innerPanel.remove(it)
+            permissionCards.remove(requestId)
+        }
+
+        // Match Plan mode / tool-permission card (amber) — not user-message blue
+        val borderColor = JBColor(Color(0xCC9F52), Color(0x8D6A33))
+        val bgColor = JBColor(Color(0xFFF9EE), Color(0x3A3222))
+        val titleColor = JBColor(Color(0x7C530E), Color(0xD0A86A))
+        val secondaryColor = JBColor(Color(0x6E6E6E), Color(0x9C9C9C))
+        val rowBaseBg = JBColor(Color(0xFFFFFF), Color(0x2F2C26))
+        val rowHoverBg = JBColor(Color(0xFFF3E0), Color(0x4A4030))
+        val rowDisabledBg = JBColor(Color(0xF0EBE3), Color(0x3D3A34))
+        val rowBorderColor = JBColor(Color(0xE0C995), Color(0x6B5E48))
+        val rowTextColor = JBColor(Color(0x3D3518), Color(0xDDD5C8))
+
+        val card = object : JPanel() {
+            init {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            }
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(borderColor, 1),
+                JBUI.Borders.empty(8, 10),
+            )
+            isOpaque = true
+            background = bgColor
+            name = "agent-question-card"
+        }
+
+        val topic = PermissionPolicy.displayToolName(request)
+        card.add(
+            JLabel(CursorJBundle.message("chat.question.cardTitle")).apply {
+                foreground = titleColor
+                font = font.deriveFont(Font.BOLD)
+                alignmentX = Component.LEFT_ALIGNMENT
+            },
+        )
+        card.add(Box.createVerticalStrut(4))
+        card.add(
+            JLabel(topic).apply {
+                foreground = titleColor
+                font = font.deriveFont(Font.BOLD)
+                alignmentX = Component.LEFT_ALIGNMENT
+            },
+        )
+
+        val bodyText = request.description?.takeIf { it.isNotBlank() }
+            ?: AcpContentExtractor.extractTextFromContent(request.toolCall?.content)
+        bodyText?.takeIf { it.isNotBlank() }?.let { desc ->
+            card.add(Box.createVerticalStrut(6))
+            card.add(
+                JTextArea(desc).apply {
+                    isEditable = false
+                    lineWrap = true
+                    wrapStyleWord = true
+                    isOpaque = false
+                    foreground = secondaryColor
+                    border = JBUI.Borders.empty(0)
+                    columns = 56
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(11f))
+                },
+            )
+        }
+
+        val options = request.options
+        if (options.isEmpty()) {
+            card.add(Box.createVerticalStrut(8))
+            card.add(
+                JLabel(CursorJBundle.message("chat.question.noOptions")).apply {
+                    foreground = secondaryColor
+                    alignmentX = Component.LEFT_ALIGNMENT
+                },
+            )
+        } else {
+            card.add(Box.createVerticalStrut(8))
+            card.add(
+                JLabel(CursorJBundle.message("chat.question.hint")).apply {
+                    foreground = secondaryColor
+                    font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
+                    alignmentX = Component.LEFT_ALIGNMENT
+                },
+            )
+            card.add(Box.createVerticalStrut(4))
+
+            val listPanel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                alignmentX = Component.LEFT_ALIGNMENT
+                isOpaque = false
+            }
+
+            val statusLabel = JLabel().apply {
+                isVisible = false
+                foreground = secondaryColor
+                alignmentX = Component.LEFT_ALIGNMENT
+                font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
+            }
+
+            val rows = mutableListOf<JPanel>()
+
+            fun applyRowVisual(row: JPanel, textArea: JTextArea, enabled: Boolean) {
+                row.isEnabled = enabled
+                textArea.isEnabled = enabled
+                row.background = if (enabled) rowBaseBg else rowDisabledBg
+                row.cursor = if (enabled) {
+                    Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                } else {
+                    Cursor.getDefaultCursor()
+                }
+                textArea.cursor = row.cursor
+            }
+
+            fun disableAllRows() {
+                for (i in 0 until listPanel.componentCount) {
+                    val c = listPanel.getComponent(i)
+                    if (c is JPanel && rows.contains(c)) {
+                        val ta = c.getComponent(0) as? JTextArea
+                        if (ta != null) applyRowVisual(c, ta, false)
+                    }
+                }
+            }
+
+            val optionFontSize = (card.font.size2D - 2f).coerceAtLeast(11f)
+            for (option in options) {
+                val label = normalizePermissionLabel(option)
+                val row = JPanel(BorderLayout()).apply {
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    border = JBUI.Borders.compound(
+                        JBUI.Borders.customLine(rowBorderColor, 1),
+                        JBUI.Borders.empty(4, 8),
+                    )
+                    background = rowBaseBg
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                }
+                val textArea = JTextArea(label).apply {
+                    isEditable = false
+                    lineWrap = true
+                    wrapStyleWord = true
+                    isOpaque = false
+                    foreground = rowTextColor
+                    border = JBUI.Borders.empty(0)
+                    columns = 64
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    font = font.deriveFont(Font.PLAIN, optionFontSize)
+                }
+                row.add(textArea, BorderLayout.CENTER)
+                rows.add(row)
+
+                val hover = object : MouseAdapter() {
+                    override fun mouseEntered(e: MouseEvent) {
+                        if (row.isEnabled) row.background = rowHoverBg
+                    }
+
+                    override fun mouseExited(e: MouseEvent) {
+                        if (row.isEnabled) row.background = rowBaseBg
+                    }
+
+                    override fun mouseClicked(e: MouseEvent) {
+                        if (!row.isEnabled) return
+                        statusLabel.text = CursorJBundle.message("chat.question.selected", label)
+                        statusLabel.isVisible = true
+                        disableAllRows()
+                        onDecision(option.optionId)
+                    }
+                }
+                row.addMouseListener(hover)
+                textArea.addMouseListener(hover)
+                listPanel.add(row)
+                listPanel.add(Box.createVerticalStrut(4))
+            }
+
+            card.add(listPanel)
+            card.add(Box.createVerticalStrut(4))
+            card.add(statusLabel)
+        }
+
+        permissionCards[requestId] = card
+        innerPanel.add(card)
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    private fun addToolPermissionRequestCard(
+        requestId: String,
+        request: RequestPermissionParams,
+        onDecision: (String) -> Unit,
+        onRunEverything: (() -> Boolean)?,
+    ) {
         permissionCards[requestId]?.let {
             innerPanel.remove(it)
             permissionCards.remove(requestId)
@@ -214,12 +422,22 @@ class MessageListPanel {
         }
         card.add(title)
 
-        request.description?.takeIf { it.isNotBlank() }?.let { desc ->
+        val bodyText = request.description?.takeIf { it.isNotBlank() }
+            ?: AcpContentExtractor.extractTextFromContent(request.toolCall?.content)
+        bodyText?.takeIf { it.isNotBlank() }?.let { desc ->
             card.add(Box.createVerticalStrut(4))
-            card.add(JLabel(desc).apply {
-                foreground = secondaryColor
-                alignmentX = Component.LEFT_ALIGNMENT
-            })
+            card.add(
+                JTextArea(desc).apply {
+                    isEditable = false
+                    lineWrap = true
+                    wrapStyleWord = true
+                    isOpaque = false
+                    foreground = secondaryColor
+                    border = JBUI.Borders.empty(0)
+                    columns = 48
+                    alignmentX = Component.LEFT_ALIGNMENT
+                },
+            )
         }
 
         val argsText = formatArguments(request.arguments)
@@ -527,7 +745,7 @@ class MessageListPanel {
     }
 
     private fun normalizePermissionLabel(option: PermissionOption): String {
-        val raw = option.label?.trim().orEmpty()
+        val raw = option.label?.trim().orEmpty().ifEmpty { option.name?.trim().orEmpty() }
         if (raw.isNotEmpty() && !raw.contains("-")) {
             return raw
         }

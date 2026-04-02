@@ -307,6 +307,20 @@ data class SessionUpdate(
 data class PermissionOption(
     val optionId: String,
     val label: String? = null,
+    /** Cursor agents often send the visible choice label as `name` instead of `label`. */
+    @SerialName("name")
+    val name: String? = null,
+)
+
+/**
+ * Subset of tool-call metadata on [session/request_permission] (e.g. interactive plan questions).
+ */
+@Serializable
+data class PermissionToolCallRef(
+    val toolCallId: String? = null,
+    val title: String? = null,
+    val kind: String? = null,
+    val content: JsonElement? = null,
 )
 
 @Serializable
@@ -319,6 +333,7 @@ data class RequestPermissionParams(
     val method: String? = null,
     val description: String? = null,
     val arguments: JsonElement? = null,
+    val toolCall: PermissionToolCallRef? = null,
     val options: List<PermissionOption> = listOf(
         PermissionOption("allow-once", "Allow Once"),
         PermissionOption("allow-always", "Allow Always"),

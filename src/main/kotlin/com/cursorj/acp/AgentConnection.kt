@@ -12,6 +12,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.util.Alarm
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -46,6 +47,9 @@ class AgentConnection(
     private val terminalHandler = TerminalHandler(project)
     private val permissionHandler = PermissionHandler()
     private val indexSearchHandler = workspaceIndexOrchestrator?.let { IndexSearchHandler(it) }
+
+    /** Coalesces rapid plan-file touches into a single VFS reload + editor sync. */
+    private val agentPlanEditorSyncAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, parentDisposable)
 
     var session: AcpSession? = null
         private set
@@ -154,6 +158,7 @@ class AgentConnection(
         )
         session = newSession
         previous?.dispose()
+        attachPlanEditorSync(newSession)
         attachModelTracking(newSession, models?.currentModelId)
 
         return newSession
@@ -174,6 +179,7 @@ class AgentConnection(
         )
         session = provisional
         previous?.dispose()
+        attachPlanEditorSync(provisional)
 
         return try {
             val cwd = project.basePath ?: System.getProperty("user.home")
@@ -188,6 +194,7 @@ class AgentConnection(
                 )
                 session = canonical
                 provisional.dispose()
+                attachPlanEditorSync(canonical)
                 canonical
             }
             attachModelTracking(activeSession, preferredModelId = null)
@@ -238,15 +245,32 @@ class AgentConnection(
         permissionHandler.setPromptResolver(resolver)
     }
 
+    private fun attachPlanEditorSync(s: AcpSession) {
+        s.onPlanFileTouch = { path ->
+            val normalized = path.replace('\\', '/')
+            agentPlanEditorSyncAlarm.cancelAllRequests()
+            agentPlanEditorSyncAlarm.addRequest(
+                {
+                    AgentPlanEditorSync.reloadOpenPlanEditorFromDisk(project, normalized)
+                },
+                250,
+            )
+        }
+    }
+
     private fun registerHandlers() {
+        fileSystemHandler.onAgentPlanFileWritten = { path ->
+            session?.recordAgentPlanFileWritten(path)
+        }
         fileSystemHandler.register(client)
         terminalHandler.register(client)
         permissionHandler.register(client)
         client.addServerRequestHandler { method, params ->
             indexSearchHandler?.handle(method, params)?.let { return@addServerRequestHandler it }
             when (method) {
-                "_cursor/create_plan" -> {
-                    log.info("_cursor/create_plan received, params keys: ${(params as? JsonObject)?.keys}")
+                // Agent may send `cursor/create_plan` (no leading underscore) per protocol version.
+                "cursor/create_plan", "_cursor/create_plan" -> {
+                    log.info("$method received, params keys: ${(params as? JsonObject)?.keys}")
                     session?.handleCreatePlan(params)
                     JsonObject(emptyMap())
                 }

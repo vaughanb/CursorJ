@@ -46,6 +46,12 @@ class AcpSession(
     initialConfigOptions: List<ConfigOption> = emptyList(),
     initialModels: AcpModelsInfo? = null,
 ) {
+    /**
+     * Invoked when a path under `.cursor/plans/` (markdown plan files) is recorded: initial save, tool status, or edit diff.
+     * Used to refresh open editor buffers from disk.
+     */
+    var onPlanFileTouch: ((String) -> Unit)? = null
+
     private val log = Logger.getInstance(AcpSession::class.java)
     private val json = Json { ignoreUnknownKeys = true }
     private val prettyJson = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -81,6 +87,14 @@ class AcpSession(
     val planContent: String get() = _planContent.toString()
 
     var planCreated: Boolean = false
+        private set
+
+    /** Workspace path to the plan file written by the agent (e.g. under `.cursor/plans/`), normalized `/`. */
+    var agentWrittenPlanPath: String? = null
+        private set
+
+    /** Optional path hint from `cursor/create_plan` if the agent sends one (relative or absolute). */
+    var agentPlanPathHint: String? = null
         private set
 
     private val _thoughtContent = StringBuilder()
@@ -199,6 +213,7 @@ class AcpSession(
                         commandPreview = extractExecuteCommandPreview(obj),
                     )
                     captureToolCallContent(toolCallId, obj)
+                    tryRecordPlanFilePathFromToolCallPayload(obj)
                     formatToolActivity(obj)?.let { activity ->
                         notifyActivityListeners(activity.text)
                         notifyToolCallListeners(toolCallId, activity)
@@ -223,6 +238,7 @@ class AcpSession(
                         commandPreview = commandPreview,
                     )
                     captureToolCallContent(toolCallId, obj)
+                    tryRecordPlanFilePathFromToolCallPayload(obj)
                     if (status == "completed") {
                         extractEditDiffs(toolCallId, obj)
                     }
@@ -280,25 +296,53 @@ class AcpSession(
         }
     }
 
+    fun recordAgentPlanFileWritten(absolutePath: String) {
+        val normalized = absolutePath.replace('\\', '/')
+        agentWrittenPlanPath = normalized
+        if (AgentPlanFileSupport.isCursorAgentPlanMarkdownPath(normalized)) {
+            planCreated = true
+            onPlanFileTouch?.invoke(normalized)
+        }
+        log.info("Recorded agent plan file: $normalized")
+    }
+
+    /**
+     * Picks up paths like `Plan saved to file:///...` (often under user home `.cursor/plans/`, not the workspace).
+     */
+    private fun tryRecordPlanFilePathFromToolCallPayload(obj: JsonObject) {
+        val text = AcpContentExtractor.extractTextFromContent(obj["content"]) ?: return
+        val path = AgentPlanFileSupport.parseLocalPathFromToolCallStatusText(text) ?: return
+        recordAgentPlanFileWritten(path)
+    }
+
     fun handleCreatePlan(params: JsonElement) {
         planCreated = true
         try {
             val obj = params.jsonObject
             log.info("handleCreatePlan keys: ${obj.keys}, full: ${params.toString().take(1000)}")
 
-            // Try all possible fields where plan content might live
+            agentPlanPathHint = listOf("path", "planPath", "file", "planFile", "outputPath")
+                .firstNotNullOfOrNull { key -> obj[key]?.jsonPrimitive?.contentOrNull }
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            if (agentPlanPathHint != null) {
+                log.info("Plan path hint from create_plan: $agentPlanPathHint")
+            }
+
+            // Try all possible fields where plan content might live (see `cursor/create_plan` payloads)
             val content = AcpContentExtractor.extractTextFromContent(obj["content"])
                 ?: obj["text"]?.jsonPrimitive?.contentOrNull
                 ?: obj["description"]?.jsonPrimitive?.contentOrNull
                 ?: obj["plan"]?.let { AcpContentExtractor.extractTextFromContent(it) }
                 ?: obj["markdown"]?.jsonPrimitive?.contentOrNull
+                ?: obj["overview"]?.jsonPrimitive?.contentOrNull
             if (content != null) {
                 log.info("Captured plan content (${content.length} chars)")
                 _planContent.append(content)
             }
 
-            // Try to extract plan entries
-            val entriesKey = obj["entries"] ?: obj["steps"] ?: obj["items"]
+            // Try to extract plan entries (`todos` is used by cursor/create_plan alongside `plan` markdown)
+            val entriesKey = obj["entries"] ?: obj["steps"] ?: obj["items"] ?: obj["todos"]
             if (entriesKey != null) {
                 try {
                     val entries = json.decodeFromJsonElement<List<PlanEntry>>(entriesKey)
@@ -344,6 +388,13 @@ class AcpSession(
             val newText = if (newTextElement == null || newTextElement is JsonNull) continue
                 else newTextElement.jsonPrimitive.contentOrNull ?: continue
             if (oldText == newText) continue
+            val normalizedPlanPath = runCatching {
+                java.io.File(path).canonicalFile.absolutePath.replace('\\', '/')
+            }.getOrElse { path.replace('\\', '/') }
+            if (AgentPlanFileSupport.isCursorAgentPlanMarkdownPath(normalizedPlanPath)) {
+                recordAgentPlanFileWritten(normalizedPlanPath)
+                log.info("Plan file touched via edit diff: $normalizedPlanPath")
+            }
             val diff = EditDiffContent(toolCallId, path, oldText, newText)
             for (listener in editDiffListeners) {
                 try {
@@ -502,6 +553,8 @@ class AcpSession(
         _planContent.setLength(0)
         _thoughtContent.setLength(0)
         planCreated = false
+        agentWrittenPlanPath = null
+        agentPlanPathHint = null
         clearTrackedToolCalls()
 
         val firstUpdateSignal = CompletableDeferred<Unit>()
@@ -869,6 +922,7 @@ class AcpSession(
     }
 
     fun dispose() {
+        onPlanFileTouch = null
         sessionScope.cancel()
         clearTrackedToolCalls()
     }

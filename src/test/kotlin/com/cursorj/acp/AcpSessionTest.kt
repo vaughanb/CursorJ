@@ -3,6 +3,7 @@ package com.cursorj.acp
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ConfigOptionValue
 import com.cursorj.acp.messages.PlanEntry
+import com.cursorj.acp.messages.TodoItem
 import com.cursorj.rollback.LocalHistoryGateway
 import com.cursorj.rollback.TurnRollbackManager
 import com.intellij.history.ByteContent
@@ -15,10 +16,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.io.File
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AcpSessionTest {
@@ -212,6 +216,30 @@ class AcpSessionTest {
     }
 
     @Test
+    fun `create plan captures cursor create_plan payload with plan string and todos`() = withSession { session ->
+        val createPlanPayload = buildJsonObject {
+            put("plan", "## Goals\n\n- Do the thing.\n")
+            put(
+                "todos",
+                Json.encodeToJsonElement(
+                    ListSerializer(TodoItem.serializer()),
+                    listOf(
+                        TodoItem(id = "a", content = "First task", status = "pending"),
+                        TodoItem(id = "b", content = "Second task", status = "pending"),
+                    ),
+                ),
+            )
+        }
+
+        session.handleCreatePlan(createPlanPayload)
+
+        assertTrue(session.planCreated)
+        assertTrue(session.planContent.contains("Goals"))
+        assertEquals(2, session.planEntries.size)
+        assertEquals("First task", session.planEntries[0].content)
+    }
+
+    @Test
     fun `tool result update emits activity status`() = withSession { session ->
         val activities = mutableListOf<String>()
         session.addActivityListener { activities.add(it) }
@@ -219,6 +247,233 @@ class AcpSessionTest {
         session.handleSessionUpdate(update("tool_result"))
 
         assertEquals(listOf("Processing results..."), activities)
+    }
+
+    @Test
+    fun `recordAgentPlanFileWritten sets planCreated and onPlanFileTouch only for cursor plans markdown`() =
+        withSession { session ->
+            val touched = mutableListOf<String>()
+            session.onPlanFileTouch = { touched.add(it) }
+
+            session.recordAgentPlanFileWritten("C:/repo/src/Main.kt")
+            assertFalse(session.planCreated)
+            assertEquals("C:/repo/src/Main.kt", session.agentWrittenPlanPath)
+            assertTrue(touched.isEmpty())
+
+            session.recordAgentPlanFileWritten("C:/Users/x/.cursor/plans/App.plan.md")
+            assertTrue(session.planCreated)
+            assertEquals("C:/Users/x/.cursor/plans/App.plan.md", session.agentWrittenPlanPath)
+            assertEquals(listOf("C:/Users/x/.cursor/plans/App.plan.md"), touched)
+        }
+
+    @Test
+    fun `completed edit diff under cursor plans records path planCreated and notifies touch`() = withSession { session ->
+        val (root, planFile) = createTempDirWithCursorPlan("before")
+        try {
+            val touched = mutableListOf<String>()
+            session.onPlanFileTouch = { touched.add(it) }
+            val expectedPath = planFile.canonicalFile.absolutePath.replace('\\', '/')
+            val diffs = mutableListOf<EditDiffContent>()
+            session.addEditDiffListener { diffs.add(it) }
+
+            session.handleSessionUpdate(
+                update(
+                    "tool_call_update",
+                    extra = buildJsonObject {
+                        put("toolCallId", "edit-plan-1")
+                        put("status", "completed")
+                        put(
+                            "content",
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "diff")
+                                        put("path", planFile.absolutePath)
+                                        put("oldText", "before")
+                                        put("newText", "after")
+                                    },
+                                )
+                            },
+                        )
+                    },
+                ),
+            )
+
+            assertTrue(session.planCreated)
+            assertEquals(expectedPath, session.agentWrittenPlanPath)
+            assertEquals(listOf(expectedPath), touched)
+            assertEquals(1, diffs.size)
+            assertEquals("after", diffs[0].newText)
+            assertEquals(planFile.absolutePath.replace('\\', '/'), diffs[0].path.replace('\\', '/'))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `completed edit diff outside cursor plans does not record plan path or set planCreated`() =
+        withSession { session ->
+            val other = Files.createTempFile("cursorj-not-plan", ".kt").toFile()
+            try {
+                other.writeText("a")
+                session.onPlanFileTouch = { error("should not notify") }
+
+                session.handleSessionUpdate(
+                    update(
+                        "tool_call_update",
+                        extra = buildJsonObject {
+                            put("toolCallId", "edit-src")
+                            put("status", "completed")
+                            put(
+                                "content",
+                                buildJsonArray {
+                                    add(
+                                        buildJsonObject {
+                                            put("type", "diff")
+                                            put("path", other.absolutePath)
+                                            put("oldText", "a")
+                                            put("newText", "b")
+                                        },
+                                    )
+                                },
+                            )
+                        },
+                    ),
+                )
+
+                assertFalse(session.planCreated)
+                assertNull(session.agentWrittenPlanPath)
+            } finally {
+                other.delete()
+            }
+        }
+
+    @Test
+    fun `create plan then unrelated edit diff keeps planCreated true`() = withSession { session ->
+        session.handleCreatePlan(buildJsonObject { put("plan", "# Plan") })
+        assertTrue(session.planCreated)
+
+        val other = Files.createTempFile("cursorj-other", ".kt").toFile()
+        try {
+            other.writeText("x")
+            session.handleSessionUpdate(
+                update(
+                    "tool_call_update",
+                    extra = buildJsonObject {
+                        put("toolCallId", "e2")
+                        put("status", "completed")
+                        put(
+                            "content",
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "diff")
+                                        put("path", other.absolutePath)
+                                        put("oldText", "x")
+                                        put("newText", "y")
+                                    },
+                                )
+                            },
+                        )
+                    },
+                ),
+            )
+            assertTrue(session.planCreated)
+        } finally {
+            other.delete()
+        }
+    }
+
+    @Test
+    fun `tool_call_update with plan saved text records cursor plan path when under cursor plans`() =
+        withSession { session ->
+            val (root, planFile) = createTempDirWithCursorPlan("stub")
+            try {
+                val touched = mutableListOf<String>()
+                session.onPlanFileTouch = { touched.add(it) }
+                val uri = planFile.toURI().toString()
+                val expectedPath = planFile.canonicalFile.absolutePath.replace('\\', '/')
+
+                session.handleSessionUpdate(
+                    update(
+                        "tool_call_update",
+                        extra = buildJsonObject {
+                            put("toolCallId", "create-plan-tool")
+                            put("status", "in_progress")
+                            put(
+                                "content",
+                                buildJsonArray {
+                                    add(
+                                        buildJsonObject {
+                                            put(
+                                                "content",
+                                                buildJsonObject {
+                                                    put("type", "text")
+                                                    put("text", "Plan saved to $uri")
+                                                },
+                                            )
+                                        },
+                                    )
+                                },
+                            )
+                        },
+                    ),
+                )
+
+                assertTrue(session.planCreated)
+                assertEquals(expectedPath, session.agentWrittenPlanPath)
+                assertEquals(listOf(expectedPath), touched)
+            } finally {
+                root.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `tool_call with plan saved text records path like tool_call_update`() = withSession { session ->
+        val (root, planFile) = createTempDirWithCursorPlan("x")
+        try {
+            val uri = planFile.toURI().toString()
+            val expectedPath = planFile.canonicalFile.absolutePath.replace('\\', '/')
+
+            session.handleSessionUpdate(
+                update(
+                    "tool_call",
+                    extra = buildJsonObject {
+                        put("toolCallId", "t1")
+                        put("kind", "other")
+                        put("status", "pending")
+                        put(
+                            "content",
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put(
+                                            "content",
+                                            buildJsonObject {
+                                                put("type", "text")
+                                                put("text", "Plan saved to $uri")
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    },
+                ),
+            )
+
+            assertTrue(session.planCreated)
+            assertEquals(expectedPath, session.agentWrittenPlanPath)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun createTempDirWithCursorPlan(initialContent: String): Pair<File, File> {
+        val root = Files.createTempDirectory("cursorj-acp-plan").toFile()
+        val plansDir = File(root, ".cursor/plans").apply { mkdirs() }
+        val planFile = File(plansDir, "unit-test.plan.md").apply { writeText(initialContent) }
+        return root to planFile
     }
 
     private fun withSession(block: (AcpSession) -> Unit) {

@@ -158,7 +158,7 @@ class PermissionHandler(
 
         override fun createActions(): Array<Action> {
             return options.map { option ->
-                object : AbstractAction(option.label ?: option.optionId) {
+                object : AbstractAction(option.label ?: option.name ?: option.optionId) {
                     override fun actionPerformed(e: ActionEvent?) {
                         selectedOptionId = option.optionId
                         close(OK_EXIT_CODE)

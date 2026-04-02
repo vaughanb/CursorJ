@@ -7,7 +7,10 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Cursor
 import java.awt.Dimension
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.*
 
 class MessageRenderer(private var message: ChatMessage) {
@@ -58,12 +61,42 @@ class MessageRenderer(private var message: ChatMessage) {
             ),
             JBUI.Borders.empty(0),
         )
-        add(contentArea, BorderLayout.CENTER)
+    }
+
+    private var collapsed = true
+    private var togglePlainText = ""
+
+    private val toggleLabel = JLabel().apply {
+        foreground = JBColor(Color(0x5890C8), Color(0x6B9BD2))
+        font = font.deriveFont(font.size2D - 1)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        border = JBUI.Borders.empty(2, 8, 4, 8)
+        isVisible = false
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                collapsed = !collapsed
+                updateContent()
+                panel.revalidate()
+                panel.repaint()
+                SwingUtilities.invokeLater {
+                    val scrollPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, panel)
+                    (scrollPane as? JScrollPane)?.revalidate()
+                }
+            }
+            override fun mouseEntered(e: MouseEvent) {
+                text = "<html><u>$togglePlainText</u></html>"
+            }
+            override fun mouseExited(e: MouseEvent) {
+                text = togglePlainText
+            }
+        })
     }
 
     val component: JComponent get() = panel
 
     init {
+        bubblePanel.add(contentArea, BorderLayout.CENTER)
+        bubblePanel.add(toggleLabel, BorderLayout.SOUTH)
         panel.add(bubblePanel, BorderLayout.CENTER)
         applyBubbleColor()
         updateContent()
@@ -72,7 +105,10 @@ class MessageRenderer(private var message: ChatMessage) {
     fun update(newMessage: ChatMessage) {
         val roleChanged = message.role != newMessage.role
         message = newMessage
-        if (roleChanged) applyBubbleColor()
+        if (roleChanged) {
+            collapsed = true
+            applyBubbleColor()
+        }
         updateContent()
     }
 
@@ -86,16 +122,41 @@ class MessageRenderer(private var message: ChatMessage) {
         }
     }
 
+    private fun isCollapsible(): Boolean {
+        return message.role == "user" && message.content.lines().size > COLLAPSE_LINE_THRESHOLD
+    }
+
     private fun updateContent() {
+        val collapsible = isCollapsible()
+        val displayContent = if (collapsible && collapsed) {
+            message.content.lines().take(COLLAPSE_LINE_THRESHOLD).joinToString("\n")
+        } else {
+            message.content
+        }
+
         val baseFontSize = contentArea.font?.size ?: 13
-        val html = MarkdownRenderer.renderToHtml(message.content, baseFontSize)
+        val html = MarkdownRenderer.renderToHtml(displayContent, baseFontSize)
         try {
             contentArea.text = html
             contentArea.caretPosition = 0
         } catch (e: Exception) {
             log.debug("HTML rendering failed, falling back to plain text", e)
             contentArea.contentType = "text/plain"
-            contentArea.text = message.content
+            contentArea.text = displayContent
         }
+
+        if (collapsible) {
+            val totalLines = message.content.lines().size
+            val hiddenLines = totalLines - COLLAPSE_LINE_THRESHOLD
+            togglePlainText = if (collapsed) "Show $hiddenLines more lines\u2026" else "Show less"
+            toggleLabel.text = togglePlainText
+            toggleLabel.isVisible = true
+        } else {
+            toggleLabel.isVisible = false
+        }
+    }
+
+    companion object {
+        private const val COLLAPSE_LINE_THRESHOLD = 6
     }
 }

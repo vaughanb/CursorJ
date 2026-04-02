@@ -1,5 +1,7 @@
 package com.cursorj.permissions
 
+import com.cursorj.acp.messages.PermissionOption
+import com.cursorj.acp.messages.PermissionToolCallRef
 import com.cursorj.acp.messages.RequestPermissionParams
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -7,6 +9,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PermissionPolicyTest {
@@ -42,6 +45,39 @@ class PermissionPolicyTest {
 
         assertNotNull(autoAllow)
         assertTrue(PermissionPolicy.isAllowOption(autoAllow))
+    }
+
+    @Test
+    fun `run everything does not auto allow interactive plan question`() {
+        val request = RequestPermissionParams(
+            toolCall = PermissionToolCallRef(
+                kind = "other",
+                title = "Persistence behavior",
+            ),
+            options = listOf(
+                PermissionOption("cwd", name = "Keep in cwd"),
+                PermissionOption("user_home", name = "User home"),
+                PermissionOption("__ask_question_skip__", name = "Skip"),
+            ),
+        )
+        val autoAllow = PermissionPolicy.shouldAutoAllowRequest(
+            mode = PermissionMode.RUN_EVERYTHING,
+            approvedKeys = emptySet(),
+            request = request,
+        )
+
+        assertNull(autoAllow)
+    }
+
+    @Test
+    fun `interactive question detected by ask_question option id`() {
+        val request = RequestPermissionParams(
+            options = listOf(
+                PermissionOption("a", name = "A"),
+                PermissionOption("__ask_question_skip__", name = "Skip"),
+            ),
+        )
+        assertTrue(PermissionPolicy.isInteractivePermissionRequest(request))
     }
 
     @Test

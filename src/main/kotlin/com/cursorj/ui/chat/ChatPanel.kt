@@ -292,7 +292,9 @@ class ChatPanel(
                     attachedFiles.clear()
                     inputPanel.clearFileChips()
                     clearQueuedSelectionContext()
-                    if (desiredMode == SessionMode.PLAN && session?.planCreated == true) {
+                    if (desiredMode == SessionMode.PLAN &&
+                        (session?.planCreated == true || !session?.agentWrittenPlanPath.isNullOrBlank())
+                    ) {
                         messageListPanel.showBuildButton(
                             onBuild = { handleBuild() },
                             onViewPlan = { handleViewPlan() },
@@ -508,75 +510,59 @@ class ChatPanel(
         sendPrompt("Implement the plan above.")
     }
 
+    /**
+     * Opens the same plan file the agent uses (often under user home `~/.cursor/plans/` or workspace
+     * `.cursor/plans/`), not a duplicate under `.cursorj/plans/`.
+     */
     private fun handleViewPlan() {
         val s = session ?: return
         val basePath = service.project.basePath ?: return
 
-        log.info("View Plan: planContent=${s.planContent.length} chars, thought=${s.thoughtContent.length} chars, toolCallContents=${s.toolCallContents.size}, planEntries=${s.planEntries.size}, messages=${s.messages.size}")
+        log.info("View Plan: recorded=${s.agentWrittenPlanPath}, hint=${s.agentPlanPathHint}")
 
-        val planDir = java.io.File(basePath, ".cursorj/plans")
-        planDir.mkdirs()
-        val planFile = java.io.File(planDir, "plan.md")
-        planFile.writeText(buildPlanMarkdown(s))
+        val path = resolvePlanFileToOpen(basePath, s)
+        if (path == null) {
+            SwingUtilities.invokeLater {
+                showStatus(CursorJBundle.message("chat.plan.view.missing"))
+            }
+            return
+        }
 
-        val normalizedPath = planFile.absolutePath.replace('\\', '/')
+        val normalizedPath = path.replace('\\', '/')
         ApplicationManager.getApplication().invokeLater {
             val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
             if (vf != null) {
                 FileEditorManager.getInstance(service.project).openFile(vf, true)
+            } else {
+                showStatus(CursorJBundle.message("chat.plan.view.missing"))
             }
         }
     }
 
-    private fun buildPlanMarkdown(session: AcpSession): String {
-        val sb = StringBuilder()
-        sb.appendLine("# Plan\n")
-
-        // Primary: plan content from _cursor/create_plan
-        val planContent = session.planContent.trim()
-        if (planContent.isNotEmpty()) {
-            sb.appendLine(planContent)
-            sb.appendLine()
+    private fun resolvePlanFileToOpen(basePath: String, session: AcpSession): String? {
+        session.agentWrittenPlanPath?.let { stored ->
+            val file = resolveUserPath(basePath, stored)
+            if (file.isFile) return file.absolutePath
         }
-
-        // Secondary: agent's thinking (detailed reasoning)
-        val thought = session.thoughtContent.trim()
-        if (thought.isNotEmpty() && planContent.isEmpty()) {
-            sb.appendLine(thought)
-            sb.appendLine()
+        session.agentPlanPathHint?.let { hint ->
+            val file = resolveUserPath(basePath, hint)
+            if (file.isFile) return file.absolutePath
         }
+        return findNewestWorkspaceCursorPlan(basePath)
+    }
 
-        // Tertiary: tool call content
-        val toolContent = session.toolCallContents.values.joinToString("\n\n").trim()
-        if (toolContent.isNotEmpty() && planContent.isEmpty() && thought.isEmpty()) {
-            sb.appendLine(toolContent)
-            sb.appendLine()
-        }
+    private fun resolveUserPath(basePath: String, path: String): java.io.File {
+        val f = java.io.File(path)
+        return if (f.isAbsolute) f else java.io.File(basePath, path)
+    }
 
-        // Final fallback: assistant messages
-        if (planContent.isEmpty() && thought.isEmpty() && toolContent.isEmpty()) {
-            val assistantText = session.messages
-                .filter { it.role == "assistant" }
-                .joinToString("\n\n") { it.content.trim() }
-            if (assistantText.isNotEmpty()) {
-                sb.appendLine(assistantText)
-                sb.appendLine()
-            }
-        }
-
-        // Plan entries as tasks
-        val entries = session.planEntries
-        if (entries.isNotEmpty()) {
-            sb.appendLine("## Tasks\n")
-            for (entry in entries) {
-                val checkbox = if (entry.status == "completed") "[x]" else "[ ]"
-                val priority = if (entry.priority != "medium") " _(${entry.priority})_" else ""
-                sb.appendLine("- $checkbox ${entry.content}$priority")
-            }
-            sb.appendLine()
-        }
-
-        return sb.toString()
+    private fun findNewestWorkspaceCursorPlan(basePath: String): String? {
+        val dir = java.io.File(basePath, ".cursor/plans")
+        if (!dir.isDirectory) return null
+        return dir.listFiles()
+            ?.filter { it.isFile && (it.name.endsWith(".md", ignoreCase = true) || it.name.endsWith(".plan.md", ignoreCase = true)) }
+            ?.maxByOrNull { it.lastModified() }
+            ?.absolutePath
     }
 
     private fun handleModeChange(mode: SessionMode) {
@@ -747,6 +733,9 @@ class ChatPanel(
         if (!carryoverContext.isNullOrBlank()) {
             visibleBlocks.add(TextContent("Context from a previous chat:\n\n$carryoverContext\n\nCurrent prompt:"))
         }
+        if (desiredMode == SessionMode.PLAN) {
+            visibleBlocks.add(TextContent(text = CursorJBundle.message("chat.plan.promptPrefix")))
+        }
         visibleBlocks.add(TextContent(text = text))
 
         if (CursorJSettings.instance.autoAttachActiveFile) {
@@ -769,10 +758,10 @@ class ChatPanel(
             )
         }
 
-        val displayUserText = if (!carryoverContext.isNullOrBlank()) {
-            text
-        } else {
-            visibleBlocks
+        val displayUserText = when {
+            !carryoverContext.isNullOrBlank() -> text
+            desiredMode == SessionMode.PLAN -> text
+            else -> visibleBlocks
                 .filterIsInstance<TextContent>()
                 .joinToString(" ") { it.text }
         }
