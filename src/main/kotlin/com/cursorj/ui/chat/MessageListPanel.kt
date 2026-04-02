@@ -30,6 +30,7 @@ class MessageListPanel {
     }
 
     private val messageComponents = mutableListOf<MessageRenderer>()
+    private val diffPanels = mutableListOf<CollapsibleDiffPanel>()
     private var streamingRenderer: MessageRenderer? = null
     private var progressIndicator: ProgressIndicatorPanel? = null
     private var scrollToBottomQueued = false
@@ -86,6 +87,7 @@ class MessageListPanel {
         streamingRenderer = null
         innerPanel.removeAll()
         messageComponents.clear()
+        diffPanels.clear()
 
         for (message in messages) {
             if (message.content.isBlank()) continue
@@ -169,8 +171,24 @@ class MessageListPanel {
 
     var onDiffFileClick: ((path: String, line: Int, addedLines: List<Int>) -> Unit)? = null
 
+    /**
+     * Re-renders chat HTML (messages + inline diffs) for the current LaF / editor color scheme.
+     * Call after theme changes so cached JEditorPane HTML is not stuck on the previous palette.
+     */
+    fun refreshEmbeddedHtmlForTheme() {
+        for (renderer in messageComponents) {
+            renderer.refreshTheme()
+        }
+        for (diff in diffPanels) {
+            diff.refreshTheme()
+        }
+        innerPanel.revalidate()
+        innerPanel.repaint()
+    }
+
     fun addDiffPanel(filePath: String, oldText: String, newText: String) {
         val diffPanel = CollapsibleDiffPanel(filePath, oldText, newText, onFileClick = onDiffFileClick)
+        diffPanels.add(diffPanel)
         innerPanel.add(diffPanel.component)
         innerPanel.revalidate()
         innerPanel.repaint()

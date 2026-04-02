@@ -1,15 +1,17 @@
 package com.cursorj.ui.components
 
-import com.intellij.ui.JBColor
+import com.cursorj.ui.util.UiThemeBrightness
 
 object MarkdownRenderer {
-    fun renderToHtml(markdown: String, baseFontSize: Int = 13): String {
+    fun renderToHtml(markdown: String, baseFontSize: Int = 13, lightHtmlPalette: Boolean? = null): String {
+        val light = lightHtmlPalette ?: UiThemeBrightness.useLightPaletteForEmbeddedHtml()
         val lines = markdown.lines()
         val sb = StringBuilder()
         val codeFontSize = baseFontSize - 1
+        val bodyFg = if (light) "#24292e" else "#e6edf3"
         sb.append(
             "<html><body style='font-size: ${baseFontSize}pt; margin: 0; padding: 0; line-height: 1.35; " +
-                "word-wrap: break-word; overflow-wrap: anywhere;'>",
+                "word-wrap: break-word; overflow-wrap: anywhere; color: $bodyFg;'>",
         )
 
         var inCodeBlock = false
@@ -25,17 +27,17 @@ object MarkdownRenderer {
 
         for (line in lines) {
             if (inTable && !inCodeBlock && !isTableLine(line)) {
-                sb.append(renderTable(tableLines, codeFontSize))
+                sb.append(renderTable(tableLines, codeFontSize, light))
                 tableLines.clear()
                 inTable = false
             }
             if (inBlockquote && !inCodeBlock && !line.trimStart().startsWith(">")) {
-                sb.append(renderBlockquote(blockquoteLines, codeFontSize))
+                sb.append(renderBlockquote(blockquoteLines, codeFontSize, light))
                 blockquoteLines.clear()
                 inBlockquote = false
             }
             if (inIndentedCode && line.isNotBlank() && !line.startsWith("    ") && !line.startsWith("\t")) {
-                sb.append(renderCodeBlock(indentedCodeBuffer.toString().trimEnd(), "", codeFontSize))
+                sb.append(renderCodeBlock(indentedCodeBuffer.toString().trimEnd(), "", codeFontSize, light))
                 indentedCodeBuffer.clear()
                 inIndentedCode = false
             }
@@ -48,7 +50,7 @@ object MarkdownRenderer {
                 }
                 line.startsWith("```") && inCodeBlock -> {
                     inCodeBlock = false
-                    sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage, codeFontSize))
+                    sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage, codeFontSize, light))
                     codeBuffer.clear()
                 }
                 inCodeBlock -> {
@@ -109,14 +111,14 @@ object MarkdownRenderer {
                     )
                 }
                 isHorizontalRule(line) -> {
-                    val hrColor = if (JBColor.isBright()) "#d0d7de" else "#555555"
+                    val hrColor = if (light) "#d0d7de" else "#555555"
                     sb.append(
                         "<hr style='border-top-width: 1px; border-top-style: solid; border-top-color: $hrColor; " +
                             "border-bottom-style: none; border-left-style: none; border-right-style: none; margin: 8px 0;'>",
                     )
                 }
                 isListItem(line) -> {
-                    sb.append(renderListItem(line, codeFontSize))
+                    sb.append(renderListItem(line, codeFontSize, light))
                 }
                 line.trimStart().startsWith(">") -> {
                     inBlockquote = true
@@ -134,7 +136,7 @@ object MarkdownRenderer {
                 else -> {
                     sb.append(
                         "<p style='margin: 2px 0; word-wrap: break-word; overflow-wrap: anywhere;'>" +
-                            "${renderInline(line, codeFontSize)}</p>",
+                            "${renderInline(line, codeFontSize, light)}</p>",
                     )
                 }
             }
@@ -145,25 +147,25 @@ object MarkdownRenderer {
         }
 
         if (inCodeBlock) {
-            sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage, codeFontSize))
+            sb.append(renderCodeBlock(codeBuffer.toString(), codeLanguage, codeFontSize, light))
         }
         if (inTable) {
-            sb.append(renderTable(tableLines, codeFontSize))
+            sb.append(renderTable(tableLines, codeFontSize, light))
         }
         if (inBlockquote) {
-            sb.append(renderBlockquote(blockquoteLines, codeFontSize))
+            sb.append(renderBlockquote(blockquoteLines, codeFontSize, light))
         }
         if (inIndentedCode) {
-            sb.append(renderCodeBlock(indentedCodeBuffer.toString().trimEnd(), "", codeFontSize))
+            sb.append(renderCodeBlock(indentedCodeBuffer.toString().trimEnd(), "", codeFontSize, light))
         }
 
         sb.append("</body></html>")
         return sb.toString()
     }
 
-    private fun renderCodeBlock(code: String, language: String, codeFontSize: Int): String {
-        val bgColor = if (JBColor.isBright()) "#f6f8fa" else "#1e1e1e"
-        val textColor = if (JBColor.isBright()) "#24292e" else "#d4d4d4"
+    private fun renderCodeBlock(code: String, language: String, codeFontSize: Int, lightHtml: Boolean): String {
+        val bgColor = if (lightHtml) "#f6f8fa" else "#1e1e1e"
+        val textColor = if (lightHtml) "#24292e" else "#d4d4d4"
         return """
             <div style='background: $bgColor; padding: 8px; margin: 4px 0;'>
                 <pre style='font-family: monospace; font-size: ${codeFontSize}pt; color: $textColor; margin: 0; white-space: pre-wrap; word-wrap: break-word;'>${escapeHtml(code)}</pre>
@@ -171,8 +173,8 @@ object MarkdownRenderer {
         """.trimIndent()
     }
 
-    private fun renderBlockquote(lines: List<String>, codeFontSize: Int): String {
-        val borderColor = if (JBColor.isBright()) "#d0d7de" else "#555555"
+    private fun renderBlockquote(lines: List<String>, codeFontSize: Int, lightHtml: Boolean): String {
+        val borderColor = if (lightHtml) "#d0d7de" else "#555555"
         val sb = StringBuilder()
         var currentDepth = 0
 
@@ -202,7 +204,7 @@ object MarkdownRenderer {
             } else {
                 sb.append(
                     "<p style='margin: 2px 0; word-wrap: break-word; overflow-wrap: anywhere;'>" +
-                        "${renderInline(content, codeFontSize)}</p>",
+                        "${renderInline(content, codeFontSize, lightHtml)}</p>",
                 )
             }
         }
@@ -221,7 +223,7 @@ object MarkdownRenderer {
             Regex("^\\d+\\.\\s").containsMatchIn(trimmed)
     }
 
-    private fun renderListItem(line: String, codeFontSize: Int): String {
+    private fun renderListItem(line: String, codeFontSize: Int, lightHtml: Boolean): String {
         val indent = line.length - line.trimStart().length
         val marginLeft = 16 + (indent / 2) * 16
         val trimmed = line.trimStart()
@@ -232,14 +234,14 @@ object MarkdownRenderer {
             val checked = taskMatch.groupValues[1].lowercase() == "x"
             val content = taskMatch.groupValues[2]
             val checkbox = if (checked) "&#9745;" else "&#9744;"
-            return "<p style='margin: 2px 0 2px ${marginLeft}px; $breakStyle'>$checkbox ${renderInline(content, codeFontSize)}</p>"
+            return "<p style='margin: 2px 0 2px ${marginLeft}px; $breakStyle'>$checkbox ${renderInline(content, codeFontSize, lightHtml)}</p>"
         }
 
         val orderedMatch = Regex("^(\\d+)\\.\\s+(.*)$").find(trimmed)
         if (orderedMatch != null) {
             val number = orderedMatch.groupValues[1]
             val content = orderedMatch.groupValues[2]
-            return "<p style='margin: 2px 0 2px ${marginLeft}px; $breakStyle'>$number. ${renderInline(content, codeFontSize)}</p>"
+            return "<p style='margin: 2px 0 2px ${marginLeft}px; $breakStyle'>$number. ${renderInline(content, codeFontSize, lightHtml)}</p>"
         }
 
         val content = when {
@@ -248,7 +250,7 @@ object MarkdownRenderer {
             trimmed.startsWith("+ ") -> trimmed.removePrefix("+ ")
             else -> trimmed
         }
-        return "<p style='margin: 2px 0 2px ${marginLeft}px; $breakStyle'>&bull; ${renderInline(content, codeFontSize)}</p>"
+        return "<p style='margin: 2px 0 2px ${marginLeft}px; $breakStyle'>&bull; ${renderInline(content, codeFontSize, lightHtml)}</p>"
     }
 
     private fun isHorizontalRule(line: String): Boolean {
@@ -269,7 +271,7 @@ object MarkdownRenderer {
         return inner.isNotBlank() && inner.all { it == '-' || it == ':' || it == '|' || it == ' ' }
     }
 
-    private fun renderTable(lines: List<String>, codeFontSize: Int): String {
+    private fun renderTable(lines: List<String>, codeFontSize: Int, lightHtml: Boolean): String {
         val separatorIndex = lines.indexOfFirst { isTableSeparator(it) }
         val headerRows = if (separatorIndex > 0) lines.subList(0, separatorIndex) else emptyList()
         val bodyStartIndex = if (separatorIndex >= 0) separatorIndex + 1 else 0
@@ -279,8 +281,8 @@ object MarkdownRenderer {
             return row.trim().trim('|').split("|").map { it.trim() }
         }
 
-        val borderColor = if (JBColor.isBright()) "#d0d7de" else "#444444"
-        val headerBgColor = if (JBColor.isBright()) "#f0f0f0" else "#383838"
+        val borderColor = if (lightHtml) "#d0d7de" else "#444444"
+        val headerBgColor = if (lightHtml) "#f0f0f0" else "#383838"
 
         val sb = StringBuilder()
         sb.append("<table style='border-collapse: collapse; margin: 4px 0;'>")
@@ -293,7 +295,7 @@ object MarkdownRenderer {
                     sb.append(
                         "<th style='border: 1px solid $borderColor; padding: 4px 8px; background: $headerBgColor; text-align: left; font-weight: bold;'>",
                     )
-                    sb.append(renderInline(cell, codeFontSize))
+                    sb.append(renderInline(cell, codeFontSize, lightHtml))
                     sb.append("</th>")
                 }
                 sb.append("</tr>")
@@ -308,7 +310,7 @@ object MarkdownRenderer {
                 sb.append("<tr>")
                 for (cell in parseCells(row)) {
                     sb.append("<td style='border: 1px solid $borderColor; padding: 4px 8px;'>")
-                    sb.append(renderInline(cell, codeFontSize))
+                    sb.append(renderInline(cell, codeFontSize, lightHtml))
                     sb.append("</td>")
                 }
                 sb.append("</tr>")
@@ -365,15 +367,18 @@ object MarkdownRenderer {
         "100" to "\uD83D\uDCAF", "poop" to "\uD83D\uDCA9",
     )
 
-    private fun renderInline(text: String, codeFontSize: Int): String {
+    private fun renderInline(text: String, codeFontSize: Int, lightHtml: Boolean): String {
         var result = escapeHtml(text)
 
         result = Regex(":([\\w+-]+):").replace(result) { m ->
             EMOJI_MAP[m.groupValues[1]] ?: m.value
         }
 
-        val codeBgColor = if (JBColor.isBright()) "#f0f0f0" else "#3c3c3c"
-        val codeStyle = "background: $codeBgColor; padding: 1px 4px; font-family: monospace; font-size: ${codeFontSize}pt;"
+        val codeBgColor = if (lightHtml) "#f0f0f0" else "#3c3c3c"
+        val codeFgColor = if (lightHtml) "#24292e" else "#e6edf3"
+        val codeStyle =
+            "background: $codeBgColor; color: $codeFgColor; padding: 1px 4px; " +
+                "font-family: monospace; font-size: ${codeFontSize}pt;"
 
         result = Regex("``(.+?)``").replace(result) { match ->
             "<code style='$codeStyle'>${match.groupValues[1].trim()}</code>"

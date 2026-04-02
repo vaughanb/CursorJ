@@ -1,6 +1,7 @@
 package com.cursorj.ui.components
 
 import com.cursorj.acp.ChatMessage
+import com.cursorj.ui.util.UiThemeBrightness
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -112,6 +113,12 @@ class MessageRenderer(private var message: ChatMessage) {
         updateContent()
     }
 
+    /** Re-apply bubble colors and re-render markdown HTML (e.g. after IDE theme or editor scheme change). */
+    fun refreshTheme() {
+        applyBubbleColor()
+        updateContent()
+    }
+
     private fun applyBubbleColor() {
         val isUser = message.role == "user"
         val isTool = message.role == "tool"
@@ -135,8 +142,10 @@ class MessageRenderer(private var message: ChatMessage) {
         }
 
         val baseFontSize = contentArea.font?.size ?: 13
-        val html = MarkdownRenderer.renderToHtml(displayContent, baseFontSize)
+        val lightHtml = UiThemeBrightness.useLightHtmlPaletteForSurface(bubblePanel.background)
+        val html = MarkdownRenderer.renderToHtml(displayContent, baseFontSize, lightHtml)
         try {
+            contentArea.contentType = "text/html"
             contentArea.text = html
             contentArea.caretPosition = 0
         } catch (e: Exception) {

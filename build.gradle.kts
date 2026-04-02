@@ -87,6 +87,8 @@ intellijPlatform {
                 <li>Plan mode: <strong>Build</strong> shows again when the agent refines a plan by editing the saved file under <code>.cursor/plans</code>, not only after a new <code>create_plan</code> step</li>
                 <li>Plan mode: if the plan file is already open in the editor, it reloads from disk when the agent saves or patches that file</li>
                 <li>Plan mode: more reliable handling of the real plan file path (<code>cursor/create_plan</code> and variants, &quot;Plan saved to …&quot; tool messages, and plan markdown under <code>.cursor/plans</code>)</li>
+                <li>Chat: embedded markdown and diff previews follow the chat bubble surface and refresh when the UI theme or <strong>editor color scheme</strong> changes (fixes dark-UI / light-editor mismatches)</li>
+                <li>Opening a file from chat: &quot;added line&quot; highlights use the editor scheme (and sensible fallbacks from editor paper color), not UI LaF-only colors</li>
             </ul>
         """.trimIndent()
     }

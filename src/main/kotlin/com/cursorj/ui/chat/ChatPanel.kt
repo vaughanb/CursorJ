@@ -15,9 +15,15 @@ import com.cursorj.permissions.PermissionMode
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.cursorj.ui.toolwindow.CursorJService
+import com.cursorj.ui.util.EditorInsertedDiffHighlight
+import com.intellij.ide.ui.LafManager
+import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.editor.colors.EditorColorsListener
+import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.editor.markup.HighlighterLayer
@@ -36,6 +42,7 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -74,6 +81,7 @@ class ChatPanel(
     private val pendingSelectionQueue = PendingSelectionQueue()
     private var pendingToolCall: Pair<String, ToolActivity>? = null
     private val permissionRequestSeq = AtomicInteger(1)
+    private val chatThemeRefreshScheduled = AtomicBoolean(false)
     private val pendingPermissionResponses = ConcurrentHashMap<String, CompletableFuture<String>>()
     private var desiredMode: SessionMode = SessionMode.AGENT
     private var activeHighlighters = mutableListOf<Pair<Editor, RangeHighlighter>>()
@@ -142,6 +150,8 @@ class ChatPanel(
         dragDrop.install(rootPanel)
         dragDrop.install(inputPanel.component)
         dragDrop.install(inputPanel.dropTargetComponent)
+
+        installThemeChangeListeners()
 
         messageListPanel.onToolCallFileClick = { path ->
             openFileInEditor(path)
@@ -696,17 +706,12 @@ class ChatPanel(
     }
 
     private fun applyDiffHighlights(editor: Editor, addedLines: List<Int>) {
-        val addBg = JBColor(Color(0xEAF8EE), Color(0x14291A))
-        val stripeBg = JBColor(Color(0x28A745), Color(0x3FB950))
+        val attrs = EditorInsertedDiffHighlight.attributesForScheme(editor.colorsScheme)
         val lineCount = editor.document.lineCount
         val markup = editor.markupModel
 
         for (lineIdx in addedLines) {
             if (lineIdx < 0 || lineIdx >= lineCount) continue
-            val attrs = TextAttributes().apply {
-                backgroundColor = addBg
-                errorStripeColor = stripeBg
-            }
             val highlighter = markup.addLineHighlighter(
                 lineIdx,
                 HighlighterLayer.SELECTION - 1,
@@ -814,6 +819,39 @@ class ChatPanel(
     private fun clearQueuedSelectionContext() {
         pendingSelectionQueue.clear()
         inputPanel.clearSelectionChip()
+    }
+
+    private fun installThemeChangeListeners() {
+        val conn = service.project.messageBus.connect(this)
+        conn.subscribe(
+            LafManagerListener.TOPIC,
+            object : LafManagerListener {
+                override fun lookAndFeelChanged(source: LafManager) {
+                    scheduleChatThemeRefresh()
+                }
+            },
+        )
+        conn.subscribe(
+            EditorColorsManager.TOPIC,
+            object : EditorColorsListener {
+                override fun globalSchemeChange(scheme: EditorColorsScheme?) {
+                    scheduleChatThemeRefresh()
+                }
+            },
+        )
+    }
+
+    private fun scheduleChatThemeRefresh() {
+        if (!chatThemeRefreshScheduled.compareAndSet(false, true)) {
+            return
+        }
+        SwingUtilities.invokeLater {
+            try {
+                messageListPanel.refreshEmbeddedHtmlForTheme()
+            } finally {
+                chatThemeRefreshScheduled.set(false)
+            }
+        }
     }
 
     override fun dispose() {

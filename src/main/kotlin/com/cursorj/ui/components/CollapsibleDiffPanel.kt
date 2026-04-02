@@ -1,5 +1,6 @@
 package com.cursorj.ui.components
 
+import com.cursorj.ui.util.UiThemeBrightness
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.*
@@ -193,13 +194,14 @@ class CollapsibleDiffPanel(
     }
 
     private fun buildDiffHtml(lines: List<DiffLine>): String {
-        val bodyBg = if (JBColor.isBright()) "#fafafa" else "#1e1e1e"
-        val addBg = if (JBColor.isBright()) "#dafbe1" else "#1a2e1a"
-        val removeBg = if (JBColor.isBright()) "#ffebe9" else "#2e1a1a"
-        val codeFg = if (JBColor.isBright()) "#24292f" else "#f0f6fc"
-        val secondaryFg = if (JBColor.isBright()) "#57606a" else "#8b949e"
-        val sepBg = if (JBColor.isBright()) "#f1f8ff" else "#161b22"
-        val sepFg = if (JBColor.isBright()) "#0366d6" else "#58a6ff"
+        val light = UiThemeBrightness.useLightHtmlPaletteForSurface(diffBody.background)
+        val bodyBg = if (light) "#fafafa" else "#1e1e1e"
+        val addBg = if (light) "#dafbe1" else "#1a2e1a"
+        val removeBg = if (light) "#ffebe9" else "#2e1a1a"
+        val codeFg = if (light) "#24292f" else "#f0f6fc"
+        val secondaryFg = if (light) "#57606a" else "#8b949e"
+        val sepBg = if (light) "#f1f8ff" else "#161b22"
+        val sepFg = if (light) "#0366d6" else "#58a6ff"
 
         val sb = StringBuilder()
         sb.append("<html><body style='font-family: Consolas, Menlo, monospace; font-size: 10pt; margin: 0; padding: 0; line-height: 1.35; background: $bodyBg;'>")
@@ -224,6 +226,17 @@ class CollapsibleDiffPanel(
 
         sb.append("</body></html>")
         return sb.toString()
+    }
+
+    /** Rebuild diff HTML so colors match the current editor scheme (e.g. after theme switch mid-session). */
+    fun refreshTheme() {
+        if (!::diffPane.isInitialized) return
+        val needsExpand = allDiffLines.size > PREVIEW_LINE_COUNT
+        previewHtml = buildDiffHtml(if (needsExpand) allDiffLines.take(PREVIEW_LINE_COUNT) else allDiffLines)
+        fullHtml = if (needsExpand) buildDiffHtml(allDiffLines) else previewHtml
+        diffPane.text = if (expanded && needsExpand) fullHtml else previewHtml
+        diffBody.background = diffBodyBg
+        diffPane.background = diffBodyBg
     }
 
     private fun escapeHtml(text: String): String {

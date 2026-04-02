@@ -54,4 +54,24 @@ class MarkdownRendererTest {
             "Expected wrapping styles for code blocks, got: $html",
         )
     }
+
+    @Test
+    fun `lightHtmlPalette true sets light body text color`() {
+        val html = MarkdownRenderer.renderToHtml("hello", lightHtmlPalette = true)
+        assertEquals(
+            true,
+            html.contains("color: #24292e"),
+            "Expected light palette body color, got: $html",
+        )
+    }
+
+    @Test
+    fun `lightHtmlPalette false sets dark body text color`() {
+        val html = MarkdownRenderer.renderToHtml("hello", lightHtmlPalette = false)
+        assertEquals(
+            true,
+            html.contains("color: #e6edf3"),
+            "Expected dark palette body color, got: $html",
+        )
+    }
 }
