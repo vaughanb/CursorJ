@@ -10,9 +10,7 @@ This guide documents the steps for shipping a new CursorJ version.
 - Verify JetBrains Marketplace metadata is up to date in `build.gradle.kts`:
   - `pluginConfiguration.description`
   - `pluginConfiguration.changeNotes`
-- Verify plugin compatibility range in `gradle.properties`:
-  - `pluginSinceBuild`
-  - `pluginUntilBuild`
+- Verify minimum IDE compatibility in `gradle.properties` (`pluginSinceBuild`). There is no `until-build` cap; `build.gradle.kts` sets `untilBuild = provider { null }` for open-ended upper compatibility.
 
 ## 2) Bump version and release notes
 

@@ -50,7 +50,8 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
-            untilBuild = providers.gradleProperty("pluginUntilBuild")
+            // Open-ended: omit until-build so the plugin is offered on future IDE versions (see SDK build-number-ranges doc).
+            untilBuild = provider { null }
         }
 
         vendor {
