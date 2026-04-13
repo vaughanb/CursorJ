@@ -79,6 +79,9 @@ class AcpSession(
     private val _todos = mutableListOf<TodoItem>()
     val todos: List<TodoItem> get() = _todos.toList()
 
+    private val _availableCommands = mutableListOf<String>()
+    val availableCommands: List<String> get() = _availableCommands.toList()
+
     private val _toolCallContents = mutableMapOf<String, StringBuilder>()
     val toolCallContents: Map<String, String>
         get() = _toolCallContents.mapValues { it.value.toString() }
@@ -125,6 +128,7 @@ class AcpSession(
     private val toolCallListeners = mutableListOf<(String, ToolActivity) -> Unit>()
     private val planListeners = mutableListOf<(List<PlanEntry>) -> Unit>()
     private val editDiffListeners = mutableListOf<(EditDiffContent) -> Unit>()
+    private val availableCommandsListeners = mutableListOf<(List<String>) -> Unit>()
 
     @Volatile
     private var pendingFirstUpdate: CompletableDeferred<Unit>? = null
@@ -157,6 +161,10 @@ class AcpSession(
 
     fun addPlanListener(listener: (List<PlanEntry>) -> Unit) {
         planListeners.add(listener)
+    }
+
+    fun addAvailableCommandsListener(listener: (List<String>) -> Unit) {
+        availableCommandsListeners.add(listener)
     }
 
     fun getConfigOption(category: String): ConfigOption? {
@@ -278,6 +286,12 @@ class AcpSession(
                     }
                     if (options != null) {
                         updateConfigOptions(options)
+                    }
+                }
+                "available_commands_update" -> {
+                    val commands = parseAvailableCommands(obj["availableCommands"])
+                    if (commands.isNotEmpty()) {
+                        updateAvailableCommands(commands)
                     }
                 }
                 else -> {
@@ -672,17 +686,51 @@ class AcpSession(
     }
 
     suspend fun setConfigOption(configId: String, value: String) {
+        val isModelSwitch = ConfigOptionUiSupport.isModelConfigId(configId)
+        val requestedValue = value.trim()
+        if (isModelSwitch) {
+            log.info(
+                "model-switch: phase=request sessionId=$sessionId configId=$configId requested=$requestedValue",
+            )
+        }
         try {
             val result = client.sessionSetConfigOption(sessionId, configId, value)
             if (result.configOptions.isNotEmpty()) {
                 updateConfigOptions(result.configOptions)
+                if (isModelSwitch) {
+                    val confirmed = result.configOptions
+                        .firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
+                        ?.currentValue
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                    log.info(
+                        "model-switch: phase=response sessionId=$sessionId configId=$configId " +
+                            "requested=$requestedValue confirmed=${confirmed ?: "<missing>"} " +
+                            "optionsCount=${result.configOptions.size}",
+                    )
+                }
             } else {
-                applyLocalConfigOption(configId, value)
+                if (!isModelSwitch) {
+                    applyLocalConfigOption(configId, value)
+                } else {
+                    log.info(
+                        "model-switch: phase=response sessionId=$sessionId configId=$configId " +
+                            "requested=$requestedValue confirmed=<missing> optionsCount=0",
+                    )
+                }
             }
         } catch (e: AcpException) {
             if (e.code == -32601) {
-                log.info("session/set_config_option not supported, updating locally: ${e.message}")
-                applyLocalConfigOption(configId, value)
+                if (isModelSwitch) {
+                    log.info(
+                        "model-switch: phase=fallback sessionId=$sessionId configId=$configId " +
+                            "requested=$requestedValue fallback=session/set_model reason=${e.code}:${e.message}",
+                    )
+                    client.sessionSetModel(sessionId, value)
+                } else {
+                    log.info("session/set_config_option not supported, updating locally: ${e.message}")
+                    applyLocalConfigOption(configId, value)
+                }
             } else {
                 throw e
             }
@@ -801,6 +849,16 @@ class AcpSession(
                 listener(entries)
             } catch (e: Exception) {
                 log.warn("Plan listener error", e)
+            }
+        }
+    }
+
+    private fun notifyAvailableCommandsListeners(commands: List<String>) {
+        for (listener in availableCommandsListeners) {
+            try {
+                listener(commands)
+            } catch (e: Exception) {
+                log.warn("Available commands listener error", e)
             }
         }
     }
@@ -942,6 +1000,27 @@ class AcpSession(
             return ""
         }
         return " | Gradle hint: ensure JDK 17 is installed/detected and prefer --no-daemon --console=plain."
+    }
+
+    private fun parseAvailableCommands(element: JsonElement?): List<String> {
+        val array = element as? JsonArray ?: return emptyList()
+        return array.mapNotNull { item ->
+            when (item) {
+                is JsonPrimitive -> item.contentOrNull?.trim()
+                is JsonObject -> {
+                    item["name"]?.jsonPrimitive?.contentOrNull?.trim()
+                        ?: item["id"]?.jsonPrimitive?.contentOrNull?.trim()
+                        ?: item["command"]?.jsonPrimitive?.contentOrNull?.trim()
+                }
+                else -> null
+            }
+        }.filter { it.isNotEmpty() }
+    }
+
+    private fun updateAvailableCommands(commands: List<String>) {
+        _availableCommands.clear()
+        _availableCommands.addAll(commands)
+        notifyAvailableCommandsListeners(_availableCommands.toList())
     }
 
     companion object {

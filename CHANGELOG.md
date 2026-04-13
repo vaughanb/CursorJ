@@ -6,23 +6,30 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Manual-only real-CLI integration test suite (`src/integrationTest/`) gated by `CURSORJ_INTEGRATION=1` and hard-blocked on CI. Covers ACP process lifecycle, connection/auth handshake, session creation, model switching, terminal/filesystem handler dispatch, index search, per-session isolation, reconnect recovery, and a canary test for agent model-routing behavior.
+- Post-switch verification: after model switch, plugin compares ACP-confirmed model against requested model and logs structured diagnostics.
+- Model-name context hint injected into the next prompt after a model switch so the agent can accurately self-report the active model.
+- Unit tests for config-option merge behavior (partial model option list preservation), per-session config isolation, model display-name mapping priority, and `connectedStatusDetail` sourcing from ACP-confirmed state.
 - Concurrency stress test coverage for SQLite-backed indexing writes.
 - ACP model metadata parsing from `session/new` to keep model state in sync with the active session.
-- Unit tests covering agent plan path detection, session handling of plan edit diffs and “Plan saved” tool text, and filesystem notifications for plan writes under `.cursor/plans`.
+- Unit tests covering agent plan path detection, session handling of plan edit diffs and "Plan saved" tool text, and filesystem notifications for plan writes under `.cursor/plans`.
 - Unit tests for chat markdown palette selection (`MarkdownRenderer`) and editor inserted-line highlight fallbacks (`EditorInsertedDiffHighlight`).
 
 ### Changed
 
+- Model switching now uses in-place `session/set_config_option` per ACP spec; no longer creates a new session on every model change.
+- Status bar and `connectedStatusDetail` now prefer ACP-confirmed session model (`configOptions.currentValue`) over stale local `selectedModel`.
+- Structured model-switch diagnostic logging in `AcpSession` and `ChatPanel` with session/model correlation fields.
 - Consolidated global and project rules management into one settings page under **Settings > Tools > CursorJ**.
 - Deferred CursorJ startup indexing warmup until the IDE exits dumb mode to reduce contention with JetBrains indexing.
 - Disabled PSI-driven bulk index invalidations by default to avoid repeated full rebuilds during active editing.
 - Moved **Add to CursorJ Chat** to the bottom of the editor context menu with a separator for clearer placement.
 - Renamed the chat action button from **Rollback** to **Undo All** to align with Cursor wording.
-- Model selection now follows ACP-native model options and applies changes via `session/set_config_option`.
 - Session load requests now include workspace context fields expected by recent agent builds.
 - Simplified chat input controls to focus on stable ACP-backed mode/model behavior.
 - Greatly improved markdown rendering in chat, including richer support for headings, tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks.
 - Chat embedded HTML (messages and collapsible diffs) picks text colors from the bubble surface and refreshes when the LaF or editor color scheme changes.
+- Improved symbol index bridge with safer PSI access patterns.
 
 ### Fixed
 
@@ -32,8 +39,8 @@ All notable changes to this project are documented in this file.
 - Prevented model picker states that could imply unsupported model transitions.
 - Plan mode: **Build** did not reappear after the agent updated an existing plan by editing the on-disk file under `.cursor/plans` (e.g. edit diffs without a second `create_plan`); plan UI state now tracks those updates.
 - Plan mode: an open plan document could stay stale while the agent wrote changes to disk; the IDE refreshes the virtual file and reloads open editors when the tracked plan path is touched.
-- Plan mode: improved recognition of the agent’s plan file (`cursor/create_plan` / `_cursor/create_plan`, “Plan saved to …” in tool updates, and markdown paths under `.cursor/plans`) for **View Plan** and related behavior.
-- “Added line” highlights when opening a file from chat no longer follow UI theme alone when the editor uses a different color scheme (unreadable contrast in mixed light/dark setups).
+- Plan mode: improved recognition of the agent's plan file (`cursor/create_plan` / `_cursor/create_plan`, "Plan saved to ..." in tool updates, and markdown paths under `.cursor/plans`) for **View Plan** and related behavior.
+- "Added line" highlights when opening a file from chat no longer follow UI theme alone when the editor uses a different color scheme (unreadable contrast in mixed light/dark setups).
 
 ## [0.7.0] - 2026-03-12
 

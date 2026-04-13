@@ -290,6 +290,33 @@ class WorkspaceIndexOrchestratorTest {
     }
 
     @Test
+    fun `retrieveForPrompt handles lexical failures as non-fatal fallback`() = runBlocking {
+        val settings = CursorJSettings().apply {
+            enableProjectIndexing = true
+            enableSemanticIndexing = false
+            retrievalTimeoutMs = 1000
+        }
+        val project = projectWithBasePath(null)
+        val fakeLexical = FakeLexicalSearchIndex(project).apply {
+            throwOnSearch = IllegalStateException("SQLite store is not open")
+        }
+        val orchestrator = WorkspaceIndexOrchestrator(
+            project = project,
+            settingsProvider = { settings },
+            lexicalOverride = fakeLexical,
+            symbolOverride = FakeSymbolIndexBridge(project),
+        )
+
+        val result = orchestrator.retrieveForPrompt("query")
+        val snapshot = orchestrator.telemetrySnapshot()
+        orchestrator.dispose()
+
+        assertTrue(result.hits.isEmpty())
+        assertEquals(1L, snapshot.fallbackByReason["retrieve-error"])
+        assertEquals(1L, snapshot.queryByEngine["hybrid"])
+    }
+
+    @Test
     fun `symbol query APIs clamp max results before bridge calls`() = runBlocking {
         val settings = CursorJSettings().apply {
             enableProjectIndexing = true
@@ -343,6 +370,7 @@ class WorkspaceIndexOrchestratorTest {
         val removedPaths = mutableListOf<String>()
         var searchCalls = 0
         var searchDelayMs = 0L
+        var throwOnSearch: Throwable? = null
         var nextSearchResult = SearchResult(
             hits = emptyList(),
             truncated = false,
@@ -358,6 +386,7 @@ class WorkspaceIndexOrchestratorTest {
             maxFileSizeBytes: Long,
         ): SearchResult {
             searchCalls++
+            throwOnSearch?.let { throw it }
             if (searchDelayMs > 0) delay(searchDelayMs)
             return nextSearchResult
         }

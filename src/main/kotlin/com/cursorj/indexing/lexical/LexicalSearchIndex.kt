@@ -43,15 +43,17 @@ open class LexicalSearchIndex(
         val normalizedPathPrefix = path?.takeIf { it.isNotBlank() }?.let { normalizePath(resolvePathForSearch(it)) }
 
         val activeStore = store?.takeIf { it.isOpen() }
-        val persistedHits = activeStore
-            ?.searchLexical(
-                query = query,
-                pathPrefix = normalizedPathPrefix,
-                maxResults = maxResults,
-                caseSensitive = caseSensitive,
-            )
-            ?.map { it.toRetrievalHit() }
-            ?: emptyList()
+        val persistedHits = runCatching {
+            activeStore
+                ?.searchLexical(
+                    query = query,
+                    pathPrefix = normalizedPathPrefix,
+                    maxResults = maxResults,
+                    caseSensitive = caseSensitive,
+                )
+                ?.map { it.toRetrievalHit() }
+                ?: emptyList()
+        }.getOrDefault(emptyList())
         if (persistedHits.size >= maxResults) {
             return@withContext SearchResult(
                 hits = persistedHits.take(maxResults),
@@ -122,23 +124,27 @@ open class LexicalSearchIndex(
             Triple(size, modified, computeHash(content))
         }.getOrNull() ?: return
 
-        activeStore.upsertDocument(
-            path = normalizedPath,
-            contentHash = metadata.third,
-            sizeBytes = metadata.first,
-            mtimeMs = metadata.second,
-            language = extension(path),
-        )
-        activeStore.replaceLexicalHits(
-            path = normalizedPath,
-            hits = buildStoredHits(normalizedPath, lines),
-        )
+        runCatching {
+            activeStore.upsertDocument(
+                path = normalizedPath,
+                contentHash = metadata.third,
+                sizeBytes = metadata.first,
+                mtimeMs = metadata.second,
+                language = extension(path),
+            )
+            activeStore.replaceLexicalHits(
+                path = normalizedPath,
+                hits = buildStoredHits(normalizedPath, lines),
+            )
+        }
     }
 
     open fun removeFile(path: String): Boolean {
         val activeStore = store?.takeIf { it.isOpen() } ?: return false
-        activeStore.removePath(path)
-        return true
+        return runCatching {
+            activeStore.removePath(path)
+            true
+        }.getOrDefault(false)
     }
 
     open suspend fun warmupWorkspace(
@@ -147,12 +153,15 @@ open class LexicalSearchIndex(
     ): WarmupResult = withContext(Dispatchers.IO) {
         val activeStore = store?.takeIf { it.isOpen() } ?: return@withContext WarmupResult(0, 0, 0)
         val workspaceRoot = project.basePath?.let { File(it) } ?: return@withContext WarmupResult(0, 0, 0)
-        val existingDocumentsByPath = activeStore.allDocuments().associateBy { it.path }
+        val existingDocumentsByPath = runCatching {
+            activeStore.allDocuments().associateBy { it.path }
+        }.getOrDefault(emptyMap())
         val seenPaths = linkedSetOf<String>()
         var indexed = 0
         var skipped = 0
 
         walkFiles(workspaceRoot) { file ->
+            if (store?.isOpen() != true) return@walkFiles false
             val sizeBytes = file.length()
             if (sizeBytes > maxFileSizeBytes || looksBinary(file)) {
                 skipped++
@@ -162,7 +171,6 @@ open class LexicalSearchIndex(
             seenPaths.add(normalizedPath)
             val mtimeMs = file.lastModified()
             val existing = existingDocumentsByPath[normalizedPath]
-            // Use metadata-first skip to avoid reading/rehashing unchanged files during startup warmup.
             if (existing != null && existing.sizeBytes == sizeBytes && existing.mtimeMs == mtimeMs) {
                 skipped++
                 return@walkFiles true
@@ -172,7 +180,7 @@ open class LexicalSearchIndex(
                 skipped++
                 return@walkFiles true
             }
-            indexFile(normalizedPath, content)
+            runCatching { indexFile(normalizedPath, content) }
             indexed++
             if ((indexed + skipped) % 100 == 0) {
                 onProgress?.invoke(indexed, skipped)
@@ -180,20 +188,23 @@ open class LexicalSearchIndex(
             true
         }
 
-        val existingPaths = activeStore.allDocumentPaths().toSet()
-        val removed = existingPaths.subtract(seenPaths)
-        for (removedPath in removed) {
-            activeStore.removePath(removedPath)
-        }
+        val removedCount = runCatching {
+            val existingPaths = activeStore.allDocumentPaths().toSet()
+            val removed = existingPaths.subtract(seenPaths)
+            for (removedPath in removed) {
+                activeStore.removePath(removedPath)
+            }
+            removed.size
+        }.getOrDefault(0)
         onProgress?.invoke(indexed, skipped)
-        WarmupResult(indexedFiles = indexed, skippedFiles = skipped, removedFiles = removed.size)
+        WarmupResult(indexedFiles = indexed, skippedFiles = skipped, removedFiles = removedCount)
     }
 
     open suspend fun upsertFileFromDisk(path: String, maxFileSizeBytes: Long = 1024L * 1024L): Boolean = withContext(Dispatchers.IO) {
         if (store?.isOpen() != true) return@withContext false
         val file = File(path)
         if (!file.exists() || !file.isFile) {
-            store.removePath(path)
+            runCatching { store?.removePath(path) }
             return@withContext false
         }
         if (file.length() > maxFileSizeBytes || looksBinary(file)) {
@@ -250,21 +261,23 @@ open class LexicalSearchIndex(
         val normalizedPath = normalizePath(file.path)
         val content = lines.joinToString("\n")
         val hash = computeHash(content)
-        val current = activeStore.document(normalizedPath)
+        val current = runCatching { activeStore.document(normalizedPath) }.getOrNull()
         if (current != null && current.contentHash == hash && current.sizeBytes == file.length() && current.mtimeMs == file.lastModified()) {
             return
         }
-        activeStore.upsertDocument(
-            path = normalizedPath,
-            contentHash = hash,
-            sizeBytes = file.length(),
-            mtimeMs = file.lastModified(),
-            language = extension(file.name),
-        )
-        activeStore.replaceLexicalHits(
-            path = normalizedPath,
-            hits = buildStoredHits(normalizedPath, lines),
-        )
+        runCatching {
+            activeStore.upsertDocument(
+                path = normalizedPath,
+                contentHash = hash,
+                sizeBytes = file.length(),
+                mtimeMs = file.lastModified(),
+                language = extension(file.name),
+            )
+            activeStore.replaceLexicalHits(
+                path = normalizedPath,
+                hits = buildStoredHits(normalizedPath, lines),
+            )
+        }
     }
 
     private fun buildStoredHits(path: String, lines: List<String>): List<StoredLexicalHit> {

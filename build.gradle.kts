@@ -1,4 +1,8 @@
 import java.io.File
+import org.gradle.api.GradleException
+import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.testing.Test
+import org.gradle.language.base.plugins.LifecycleBasePlugin
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -42,6 +46,21 @@ dependencies {
     }
 }
 
+val sourceSets = the<SourceSetContainer>()
+val integrationTestSourceSet = sourceSets.create("integrationTest") {
+    kotlin.srcDir("src/integrationTest/kotlin")
+    resources.srcDir("src/integrationTest/resources")
+    compileClasspath += sourceSets["test"].compileClasspath + sourceSets["test"].output
+    runtimeClasspath += sourceSets["test"].runtimeClasspath + output
+}
+
+configurations[integrationTestSourceSet.implementationConfigurationName].extendsFrom(configurations["testImplementation"])
+configurations[integrationTestSourceSet.runtimeOnlyConfigurationName].extendsFrom(configurations["testRuntimeOnly"])
+
+dependencies {
+    add(integrationTestSourceSet.implementationConfigurationName, kotlin("test"))
+}
+
 intellijPlatform {
     pluginConfiguration {
         id = "com.cursorj"
@@ -80,16 +99,11 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li>Model selection now follows ACP-native model options for consistent per-session switching behavior</li>
-                <li>Simplified chat input model controls and reduced selection flicker during config updates</li>
-                <li>Improved ACP session-load compatibility by sending workspace context fields expected by recent agent builds</li>
-                <li>Greatly improved markdown rendering for chat responses (tables, blockquotes, task lists, autolinks, emoji aliases, and indented code blocks)</li>
-                <li>Added concurrency stress-test coverage for SQLite-backed indexing writes</li>
-                <li>Plan mode: <strong>Build</strong> shows again when the agent refines a plan by editing the saved file under <code>.cursor/plans</code>, not only after a new <code>create_plan</code> step</li>
-                <li>Plan mode: if the plan file is already open in the editor, it reloads from disk when the agent saves or patches that file</li>
-                <li>Plan mode: more reliable handling of the real plan file path (<code>cursor/create_plan</code> and variants, &quot;Plan saved to …&quot; tool messages, and plan markdown under <code>.cursor/plans</code>)</li>
-                <li>Chat: embedded markdown and diff previews follow the chat bubble surface and refresh when the UI theme or <strong>editor color scheme</strong> changes (fixes dark-UI / light-editor mismatches)</li>
-                <li>Opening a file from chat: &quot;added line&quot; highlights use the editor scheme (and sensible fallbacks from editor paper color), not UI LaF-only colors</li>
+                <li>Model switching now uses ACP-spec <code>session/set_config_option</code> with post-switch verification, structured diagnostic logging, and a model-name context hint injected into the next prompt</li>
+                <li>Status bar and connected detail now reflect the ACP-confirmed active model rather than optimistic UI state</li>
+                <li>Added manual-only real-CLI integration test suite (gated by <code>CURSORJ_INTEGRATION=1</code>, hard-blocked on CI) covering ACP process lifecycle, connection/auth, session creation, model switching, terminal/filesystem handlers, and index search</li>
+                <li>Expanded unit tests for config-option merge behavior, per-session isolation, model display-name mapping, and reconnect status handling</li>
+                <li>Improved symbol index bridge with safer PSI access patterns</li>
             </ul>
         """.trimIndent()
     }
@@ -116,6 +130,29 @@ tasks {
         useJUnitPlatform()
     }
 
+    val integrationTest by registering(Test::class) {
+        group = LifecycleBasePlugin.VERIFICATION_GROUP
+        description = "Runs manual-only real agent CLI integration tests."
+        testClassesDirs = integrationTestSourceSet.output.classesDirs
+        classpath = integrationTestSourceSet.runtimeClasspath
+        useJUnitPlatform()
+        shouldRunAfter(test)
+
+        val integrationOptIn = providers.environmentVariable("CURSORJ_INTEGRATION")
+        onlyIf {
+            integrationOptIn.orNull == "1"
+        }
+
+        doFirst {
+            val isCi = providers.environmentVariable("CI").orNull?.let {
+                it.equals("true", ignoreCase = true) || it == "1"
+            } ?: false
+            if (isCi) {
+                throw GradleException("`integrationTest` is manual-only and must never run on CI.")
+            }
+        }
+    }
+
     runIde {
         val runIdeSandboxRoot = layout.projectDirectory.dir(".runIde-sandbox").asFile
         val runIdeConfigDir = File(runIdeSandboxRoot, "config").absolutePath
@@ -137,5 +174,15 @@ tasks {
 
     wrapper {
         gradleVersion = "9.0.0"
+    }
+}
+
+gradle.taskGraph.whenReady {
+    val isCi = providers.environmentVariable("CI").orNull?.let {
+        it.equals("true", ignoreCase = true) || it == "1"
+    } ?: false
+    val requestedIntegration = allTasks.any { it.name == "integrationTest" }
+    if (isCi && requestedIntegration) {
+        throw GradleException("`integrationTest` is manual-only and must never run on CI.")
     }
 }

@@ -120,6 +120,26 @@ Run all tests:
 ./gradlew build
 ```
 
+Run manual real-CLI integration tests (local only, never CI):
+
+```bash
+CURSORJ_INTEGRATION=1 CURSOR_AGENT_PATH=/absolute/path/to/agent ./gradlew integrationTest
+```
+
+Manual integration guardrails:
+
+- `integrationTest` is **manual-only** and intentionally excluded from `test`/`check`/`build`.
+- CI is hard-blocked from running `integrationTest` even if it is requested.
+- If `CURSORJ_INTEGRATION` is not set to `1`, the integration task is skipped.
+
+Model-switch troubleshooting:
+
+- Treat ACP config state as authoritative: after switching, inspect `session/set_config_option` response `configOptions` and confirm `category: "model"` `currentValue`.
+- Enable ACP raw logging in settings and verify switch flow includes:
+  - `session/set_config_option` request with the selected model value
+  - response containing updated model `currentValue`
+  - subsequent prompt requests on the expected session id
+
 Current tests validate:
 
 - **TerminalHandler**: process command building (args vs shell), timeout extraction
@@ -131,6 +151,21 @@ Current tests validate:
 - hybrid retrieval behavior in orchestrator (lexical + symbol + semantic fusion, disabled/timeout fallbacks)
 - ACP handler routing and serialization for indexing methods
 - freshness callback mapping (notify paths and attach-time event mapping via seams)
+- model config-option merge behavior (partial updates preserve prior option lists)
+- per-session config isolation (two sessions maintain independent model state)
+- model display-name mapping (session label > CLI label > raw id, case-insensitive)
+- `connectedStatusDetail` sources model from ACP-confirmed session config
+
+Integration tests (manual-only, `CURSORJ_INTEGRATION=1`) additionally cover:
+
+- ACP process start/stop and model-list fetch against real agent CLI
+- AgentConnection connect/auth handshake and session creation
+- model switch via `session/set_config_option` with ACP-authoritative confirmation
+- terminal and filesystem handler dispatch through ACP server request pipeline
+- index search handler with real lexical index and file-update propagation
+- per-session isolation with distinct session ids and independent model config
+- reconnect recovery after ACP process exit
+- canary test for agent model-routing behavior (detects if/when the agent fixes model routing)
 
 Thin IntelliJ fixture-based tests for PSI symbol/reference behavior are still recommended as a final integration safety net when targeting parity-level confidence across IDE/platform updates.
 

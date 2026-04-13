@@ -216,7 +216,9 @@ class AgentConnection(
     }
 
     fun selectedModelDisplayName(): String? {
-        val modelId = selectedModel?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val modelId = confirmedSessionModelId()
+            ?: selectedModel?.trim()?.takeIf { it.isNotBlank() }
+            ?: return null
 
         val sessionModelName = session
             ?.configOptions
@@ -234,6 +236,21 @@ class AgentConnection(
             ?.trim()
             ?.takeIf { it.isNotBlank() }
         return cliModelName ?: modelId
+    }
+
+    private fun confirmedSessionModelId(): String? {
+        val fromConfig = session
+            ?.configOptions
+            ?.firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
+            ?.currentValue
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (fromConfig != null) return fromConfig
+        return session
+            ?.acpModels
+            ?.currentModelId
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
     }
 
     fun connectedStatusDetail(): String? {

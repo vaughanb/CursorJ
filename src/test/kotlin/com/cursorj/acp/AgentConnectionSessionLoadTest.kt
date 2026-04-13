@@ -99,6 +99,94 @@ class AgentConnectionSessionLoadTest {
         }
     }
 
+    @Test
+    fun `selectedModelDisplayName prefers ACP confirmed current value over stale selected model`() {
+        fixture(
+            modelInfos = listOf(
+                AcpProcessManager.ModelInfo(id = "gpt-5", displayName = "CLI GPT-5"),
+                AcpProcessManager.ModelInfo(id = "claude-opus", displayName = "CLI Claude Opus"),
+            ),
+        ).use { fixture ->
+            val connection = fixture.connection
+            connection.setSelectedModel("gpt-5")
+            setSession(
+                connection,
+                AcpSession(
+                    sessionId = "session-confirmed",
+                    client = connection.client,
+                    rollbackManager = TurnRollbackManager(NoopLocalHistoryGateway()),
+                    initialConfigOptions = listOf(
+                        ConfigOption(
+                            id = "model",
+                            category = "model",
+                            currentValue = "claude-opus",
+                            options = listOf(
+                                ConfigOptionValue(value = "claude-opus", name = "Session Claude Opus"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+            assertEquals("Session Claude Opus", connection.selectedModelDisplayName())
+        }
+    }
+
+    @Test
+    fun `selectedModelDisplayName matches session options case insensitively`() {
+        fixture(modelInfos = emptyList()).use { fixture ->
+            val connection = fixture.connection
+            connection.setSelectedModel("GPT-5")
+            setSession(
+                connection,
+                AcpSession(
+                    sessionId = "session-case",
+                    client = connection.client,
+                    rollbackManager = TurnRollbackManager(NoopLocalHistoryGateway()),
+                    initialConfigOptions = listOf(
+                        ConfigOption(
+                            id = "model",
+                            category = "model",
+                            currentValue = "gpt-5",
+                            options = listOf(
+                                ConfigOptionValue(value = "gpt-5", name = "GPT-5 Session"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+            assertEquals("GPT-5 Session", connection.selectedModelDisplayName())
+        }
+    }
+
+    @Test
+    fun `connectedStatusDetail uses ACP confirmed session model`() {
+        fixture(modelInfos = listOf(AcpProcessManager.ModelInfo(id = "gpt-5", displayName = "CLI GPT-5"))).use { fixture ->
+            val connection = fixture.connection
+            connection.setSelectedModel("gpt-5")
+            setSession(
+                connection,
+                AcpSession(
+                    sessionId = "session-status",
+                    client = connection.client,
+                    rollbackManager = TurnRollbackManager(NoopLocalHistoryGateway()),
+                    initialConfigOptions = listOf(
+                        ConfigOption(
+                            id = "model",
+                            category = "model",
+                            currentValue = "claude-opus",
+                            options = listOf(
+                                ConfigOptionValue(value = "claude-opus", name = "Session Claude Opus"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals("Connected (Session Claude Opus)", connection.connectedStatusDetail())
+        }
+    }
+
     private class AgentConnectionFixture(
         val connection: AgentConnection,
         private val disposable: com.intellij.openapi.Disposable,

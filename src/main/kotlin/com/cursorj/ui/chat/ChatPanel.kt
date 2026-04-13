@@ -86,6 +86,7 @@ class ChatPanel(
     private var desiredMode: SessionMode = SessionMode.AGENT
     private var activeHighlighters = mutableListOf<Pair<Editor, RangeHighlighter>>()
     private var firstPromptCarryoverContext: String? = null
+    private var pendingModelSwitchContext: String? = null
     private var lastProjectTreeRefreshAt = 0L
     private val minRefreshIntervalMs = 750L
 
@@ -591,11 +592,31 @@ class ChatPanel(
             try {
                 val currentSession = session ?: return@launch
                 if (ConfigOptionUiSupport.isModelConfigId(configId)) {
-                    log.info("Setting model via session/set_config_option: $value")
-                    connection?.setSelectedModel(value)
-                    currentSession.setConfigOption(configId, value)
-                    val connectedDetail = connection?.connectedStatusDetail() ?: "Connected"
-                    showStatus("$connectedDetail. Type a message to start.")
+                    val conn = connection ?: return@launch
+                    val targetModel = value.trim()
+                    if (targetModel.isBlank()) return@launch
+
+                    log.info(
+                        "model-switch: phase=request sessionId=${currentSession.sessionId} " +
+                            "requested=$targetModel",
+                    )
+                    currentSession.setConfigOption(configId, targetModel)
+                    val confirmedModel = currentSession.configOptions
+                        .firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
+                        ?.currentValue
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                    if (confirmedModel != null) {
+                        conn.setSelectedModel(confirmedModel)
+                    }
+                    log.info(
+                        "model-switch: phase=confirmed sessionId=${currentSession.sessionId} " +
+                            "requested=$targetModel confirmed=${confirmedModel ?: "<missing>"}",
+                    )
+                    val displayName = conn.selectedModelDisplayName() ?: confirmedModel ?: targetModel
+                    pendingModelSwitchContext = "The active model has been switched to: $displayName"
+                    val connectedDetail = conn.connectedStatusDetail() ?: "Connected"
+                    showStatus("$connectedDetail. Model switched.")
                     return@launch
                 }
                 currentSession.setConfigOption(configId, value)
@@ -753,6 +774,11 @@ class ChatPanel(
         visibleBlocks.addAll(buildRetrievedContext(text))
 
         val hiddenRuleBlocks = mutableListOf<ContentBlock>()
+        val modelContext = pendingModelSwitchContext
+        if (!modelContext.isNullOrBlank()) {
+            hiddenRuleBlocks.add(TextContent(text = modelContext))
+            pendingModelSwitchContext = null
+        }
         val settings = CursorJSettings.instance
         val rulesText = settings.getGlobalUserRules().joinToString("\n\n")
         if (rulesText.isNotBlank()) {
@@ -780,16 +806,22 @@ class ChatPanel(
     private suspend fun buildRetrievedContext(text: String): List<ContentBlock> {
         val settings = CursorJSettings.instance
         if (!settings.enableProjectIndexing) return emptyList()
+        if (service.project.isDisposed) return emptyList()
 
         val queryText = text.take(RETRIEVAL_QUERY_MAX_CHARS)
         val openFiles = FileEditorManager.getInstance(service.project).openFiles
             .map { it.path.replace('\\', '/') }
         val pathHint = service.activeFileProvider.activeFile?.path
-        val retrieval = service.workspaceIndexOrchestrator.retrieveForPrompt(
-            text = queryText,
-            pathHint = pathHint,
-            openFiles = openFiles,
-        )
+        val retrieval = runCatching {
+            service.workspaceIndexOrchestrator.retrieveForPrompt(
+                text = queryText,
+                pathHint = pathHint,
+                openFiles = openFiles,
+            )
+        }.getOrElse { e ->
+            log.debug("Failed to retrieve indexed context for prompt", e)
+            return emptyList()
+        }
         if (retrieval.hits.isEmpty()) return emptyList()
 
         var remainingBudget = settings.retrievalSnippetCharBudget

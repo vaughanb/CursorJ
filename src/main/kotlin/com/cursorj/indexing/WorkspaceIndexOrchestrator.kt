@@ -133,37 +133,44 @@ class WorkspaceIndexOrchestrator(
         val startedAt = System.currentTimeMillis()
         val timeoutMs = settings.retrievalTimeoutMs.toLong()
 
-        val result = withTimeoutOrNull(timeoutMs) {
-            val lexicalResult = lexical.searchText(
-                query = query.text,
-                path = query.pathHint,
-                maxResults = query.maxCandidates,
-                contextLines = 2,
-            )
-            if (lexicalResult.cacheHit) telemetry.recordCacheHit() else telemetry.recordCacheMiss()
-            val symbolHits = toSymbolHits(
-                symbols.findSymbols(
+        val result = runCatching {
+            withTimeoutOrNull(timeoutMs) {
+                val lexicalResult = lexical.searchText(
                     query = query.text,
                     path = query.pathHint,
                     maxResults = query.maxCandidates,
-                ),
-            )
-            val semanticHits = if (settings.enableSemanticIndexing) {
-                semantic.search(query.text, query.maxCandidates)
-            } else {
-                emptyList()
+                    contextLines = 2,
+                )
+                if (lexicalResult.cacheHit) telemetry.recordCacheHit() else telemetry.recordCacheMiss()
+                val symbolHits = toSymbolHits(
+                    symbols.findSymbols(
+                        query = query.text,
+                        path = query.pathHint,
+                        maxResults = query.maxCandidates,
+                    ),
+                )
+                val semanticHits = if (settings.enableSemanticIndexing) {
+                    semantic.search(query.text, query.maxCandidates)
+                } else {
+                    emptyList()
+                }
+                val fused = ranker.fuse(
+                    query = query,
+                    lexicalHits = lexicalResult.hits,
+                    symbolHits = symbolHits,
+                    semanticHits = semanticHits,
+                    maxResults = query.maxCandidates,
+                )
+                RetrievalResult(
+                    hits = fused,
+                    truncated = lexicalResult.truncated,
+                )
             }
-            val fused = ranker.fuse(
-                query = query,
-                lexicalHits = lexicalResult.hits,
-                symbolHits = symbolHits,
-                semanticHits = semanticHits,
-                maxResults = query.maxCandidates,
-            )
-            RetrievalResult(
-                hits = fused,
-                truncated = lexicalResult.truncated,
-            )
+        }.getOrElse { e ->
+            telemetry.recordFallback("retrieve-error")
+            telemetry.recordQuery("hybrid", System.currentTimeMillis() - startedAt)
+            log.debug("Indexed retrieval failed", e)
+            return RetrievalResult(latencyMs = System.currentTimeMillis() - startedAt)
         }
 
         val latency = System.currentTimeMillis() - startedAt

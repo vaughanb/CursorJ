@@ -13,6 +13,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -250,6 +251,33 @@ class AcpSessionTest {
     }
 
     @Test
+    fun `available commands update is parsed and notified`() = withSession { session ->
+        val observed = mutableListOf<List<String>>()
+        session.addAvailableCommandsListener { observed.add(it) }
+
+        session.handleSessionUpdate(
+            update(
+                "available_commands_update",
+                extra = buildJsonObject {
+                    put(
+                        "availableCommands",
+                        buildJsonArray {
+                            add(JsonPrimitive("help"))
+                            add(buildJsonObject { put("name", "build") })
+                            add(buildJsonObject { put("id", "test") })
+                            add(buildJsonObject { put("command", "deploy") })
+                        },
+                    )
+                },
+            ),
+        )
+
+        assertEquals(listOf("help", "build", "test", "deploy"), session.availableCommands)
+        assertEquals(1, observed.size)
+        assertEquals(session.availableCommands, observed.first())
+    }
+
+    @Test
     fun `recordAgentPlanFileWritten sets planCreated and onPlanFileTouch only for cursor plans markdown`() =
         withSession { session ->
             val touched = mutableListOf<String>()
@@ -466,6 +494,171 @@ class AcpSessionTest {
             assertEquals(expectedPath, session.agentWrittenPlanPath)
         } finally {
             root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `model config merge preserves prior options on partial updates`() = withSession { session ->
+        val snapshots = mutableListOf<List<ConfigOption>>()
+        session.addConfigListener { snapshots.add(it) }
+
+        val initial = listOf(
+            ConfigOption(
+                id = "model",
+                category = "model",
+                currentValue = "gpt-5",
+                options = listOf(
+                    ConfigOptionValue(value = "gpt-5", name = "GPT-5"),
+                    ConfigOptionValue(value = "claude-opus", name = "Claude Opus"),
+                ),
+            ),
+        )
+        session.handleSessionUpdate(
+            update(
+                "config_options_update",
+                extra = buildJsonObject {
+                    put(
+                        "configOptions",
+                        Json.encodeToJsonElement(ListSerializer(ConfigOption.serializer()), initial),
+                    )
+                },
+            ),
+        )
+
+        val partial = listOf(
+            ConfigOption(
+                id = "model",
+                category = "model",
+                currentValue = "claude-opus",
+                options = listOf(
+                    ConfigOptionValue(value = "claude-opus", name = "Claude Opus"),
+                ),
+            ),
+        )
+        session.handleSessionUpdate(
+            update(
+                "config_options_update",
+                extra = buildJsonObject {
+                    put(
+                        "configOptions",
+                        Json.encodeToJsonElement(ListSerializer(ConfigOption.serializer()), partial),
+                    )
+                },
+            ),
+        )
+
+        val merged = session.getConfigOption("model")
+        assertNotNull(merged)
+        assertEquals("claude-opus", merged.currentValue)
+        assertTrue(merged.options.any { it.value == "gpt-5" })
+        assertTrue(merged.options.any { it.value == "claude-opus" })
+        assertTrue(snapshots.isNotEmpty())
+        val lastSnapshot = snapshots.last()
+        val lastModel = lastSnapshot.firstOrNull { it.id == "model" }
+        assertNotNull(lastModel)
+        assertTrue(lastModel.options.any { it.value == "gpt-5" })
+    }
+
+    @Test
+    fun `non model config options are replaced by latest payload`() = withSession { session ->
+        val first = listOf(
+            ConfigOption(
+                id = "thought_level",
+                category = "thought_level",
+                currentValue = "medium",
+                options = listOf(
+                    ConfigOptionValue(value = "low", name = "Low"),
+                    ConfigOptionValue(value = "medium", name = "Medium"),
+                ),
+            ),
+        )
+        session.handleSessionUpdate(
+            update(
+                "config_options_update",
+                extra = buildJsonObject {
+                    put(
+                        "configOptions",
+                        Json.encodeToJsonElement(ListSerializer(ConfigOption.serializer()), first),
+                    )
+                },
+            ),
+        )
+
+        val second = listOf(
+            ConfigOption(
+                id = "thought_level",
+                category = "thought_level",
+                currentValue = "high",
+                options = listOf(
+                    ConfigOptionValue(value = "high", name = "High"),
+                ),
+            ),
+        )
+        session.handleSessionUpdate(
+            update(
+                "config_options_update",
+                extra = buildJsonObject {
+                    put(
+                        "configOptions",
+                        Json.encodeToJsonElement(ListSerializer(ConfigOption.serializer()), second),
+                    )
+                },
+            ),
+        )
+
+        val replaced = session.getConfigOption("thought_level")
+        assertNotNull(replaced)
+        assertEquals("high", replaced.currentValue)
+        assertEquals(listOf("high"), replaced.options.map { it.value })
+    }
+
+    @Test
+    fun `two sessions maintain independent model config state`() {
+        val disposable = Disposer.newDisposable("AcpSessionIsolationTest")
+        try {
+            val rollback = TurnRollbackManager(NoopLocalHistoryGateway())
+            val client = AcpClient(disposable)
+            val first = AcpSession("session-a", client, rollback)
+            val second = AcpSession("session-b", client, rollback)
+
+            val firstConfig = listOf(
+                ConfigOption(
+                    id = "model",
+                    category = "model",
+                    currentValue = "gpt-5",
+                    options = listOf(ConfigOptionValue("gpt-5", "GPT-5")),
+                ),
+            )
+            val secondConfig = listOf(
+                ConfigOption(
+                    id = "model",
+                    category = "model",
+                    currentValue = "claude-opus",
+                    options = listOf(ConfigOptionValue("claude-opus", "Claude Opus")),
+                ),
+            )
+
+            first.handleSessionUpdate(
+                update(
+                    "config_options_update",
+                    extra = buildJsonObject {
+                        put("configOptions", Json.encodeToJsonElement(ListSerializer(ConfigOption.serializer()), firstConfig))
+                    },
+                ),
+            )
+            second.handleSessionUpdate(
+                update(
+                    "config_options_update",
+                    extra = buildJsonObject {
+                        put("configOptions", Json.encodeToJsonElement(ListSerializer(ConfigOption.serializer()), secondConfig))
+                    },
+                ),
+            )
+
+            assertEquals("gpt-5", first.getConfigOption("model")?.currentValue)
+            assertEquals("claude-opus", second.getConfigOption("model")?.currentValue)
+        } finally {
+            Disposer.dispose(disposable)
         }
     }
 

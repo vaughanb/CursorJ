@@ -63,7 +63,7 @@ class IndexFreshnessManager(
 
     fun attach() {
         if (connection != null) return
-        connection = connectMessageBus(this)
+        connection = connectMessageBus(project)
         val bus = connection ?: return
         registerVfsListener(bus) { path, changeKind ->
             val normalizedPath = path.replace('\\', '/')
@@ -76,7 +76,7 @@ class IndexFreshnessManager(
         }
         if (listenToPsiChanges) {
             registerPsiListener(
-                this,
+                project,
                 { onBulkInvalidation("psi-children") },
                 { onBulkInvalidation("psi-property") },
             )

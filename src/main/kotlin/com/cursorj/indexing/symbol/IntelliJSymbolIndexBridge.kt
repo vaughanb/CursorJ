@@ -18,6 +18,10 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.util.PsiUtilCore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 open class IntelliJSymbolIndexBridge(
     private val project: Project,
@@ -27,9 +31,9 @@ open class IntelliJSymbolIndexBridge(
         path: String? = null,
         maxResults: Int = 25,
     ): List<SymbolInfo> = withContext(Dispatchers.Default) {
-        if (query.isBlank() || DumbService.isDumb(project)) return@withContext emptyList()
-        val results = mutableListOf<SymbolInfo>()
-        ApplicationManager.getApplication().runReadAction {
+        if (query.isBlank() || project.isDisposed || DumbService.isDumb(project)) return@withContext emptyList()
+        timedReadAction(READ_ACTION_TIMEOUT_MS) {
+            val results = mutableListOf<SymbolInfo>()
             iterateCandidateFiles(path) { psiFile ->
                 psiFile.accept(object : PsiRecursiveElementWalkingVisitor() {
                     override fun visitElement(element: com.intellij.psi.PsiElement) {
@@ -57,14 +61,14 @@ open class IntelliJSymbolIndexBridge(
                 })
                 results.size < maxResults
             }
-        }
-        results.sortedByDescending { it.score ?: 0.0 }.take(maxResults)
+            results.sortedByDescending { it.score ?: 0.0 }.take(maxResults)
+        } ?: emptyList()
     }
 
     open suspend fun listFileSymbols(path: String, maxResults: Int = 200): List<SymbolInfo> = withContext(Dispatchers.Default) {
-        if (path.isBlank() || DumbService.isDumb(project)) return@withContext emptyList()
-        ApplicationManager.getApplication().runReadAction<List<SymbolInfo>> {
-            val psiFile = resolvePsiFile(path) ?: return@runReadAction emptyList()
+        if (path.isBlank() || project.isDisposed || DumbService.isDumb(project)) return@withContext emptyList()
+        timedReadAction(READ_ACTION_TIMEOUT_MS) {
+            val psiFile = resolvePsiFile(path) ?: return@timedReadAction emptyList()
             val results = mutableListOf<SymbolInfo>()
             psiFile.accept(object : PsiRecursiveElementWalkingVisitor() {
                 override fun visitElement(element: com.intellij.psi.PsiElement) {
@@ -89,7 +93,7 @@ open class IntelliJSymbolIndexBridge(
                 }
             })
             results
-        }
+        } ?: emptyList()
     }
 
     open suspend fun findReferences(
@@ -98,13 +102,13 @@ open class IntelliJSymbolIndexBridge(
         column: Int,
         maxResults: Int = 100,
     ): List<SymbolLocation> = withContext(Dispatchers.Default) {
-        if (DumbService.isDumb(project)) return@withContext emptyList()
-        ApplicationManager.getApplication().runReadAction<List<SymbolLocation>> {
-            val psiFile = resolvePsiFile(path) ?: return@runReadAction emptyList()
-            val document = FileDocumentManager.getInstance().getDocument(psiFile.virtualFile) ?: return@runReadAction emptyList()
-            val offset = toOffset(document, line, column) ?: return@runReadAction emptyList()
-            val element = psiFile.findElementAt(offset) ?: return@runReadAction emptyList()
-            val target = PsiTreeUtil.getParentOfType(element, PsiNamedElement::class.java, false) ?: return@runReadAction emptyList()
+        if (project.isDisposed || DumbService.isDumb(project)) return@withContext emptyList()
+        timedReadAction(READ_ACTION_TIMEOUT_MS) {
+            val psiFile = resolvePsiFile(path) ?: return@timedReadAction emptyList()
+            val document = FileDocumentManager.getInstance().getDocument(psiFile.virtualFile) ?: return@timedReadAction emptyList()
+            val offset = toOffset(document, line, column) ?: return@timedReadAction emptyList()
+            val element = psiFile.findElementAt(offset) ?: return@timedReadAction emptyList()
+            val target = PsiTreeUtil.getParentOfType(element, PsiNamedElement::class.java, false) ?: return@timedReadAction emptyList()
             val scope = GlobalSearchScope.projectScope(project)
             val query = ReferencesSearch.search(target, scope)
             val refs = mutableListOf<SymbolLocation>()
@@ -114,7 +118,7 @@ open class IntelliJSymbolIndexBridge(
                 if (refs.size >= maxResults) break
             }
             refs
-        }
+        } ?: emptyList()
     }
 
     private fun iterateCandidateFiles(path: String?, consumer: (com.intellij.psi.PsiFile) -> Boolean) {
@@ -173,5 +177,27 @@ open class IntelliJSymbolIndexBridge(
         if (query.equals(name, ignoreCase = true)) return 1.0
         if (name.startsWith(query, ignoreCase = true)) return 0.85
         return 0.6
+    }
+
+    private fun <T> timedReadAction(timeoutMs: Long, action: () -> T): T? {
+        if (project.isDisposed) return null
+        val future = readActionExecutor.submit(Callable {
+            ApplicationManager.getApplication().runReadAction<T> { action() }
+        })
+        return try {
+            future.get(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (_: TimeoutException) {
+            future.cancel(true)
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    companion object {
+        private const val READ_ACTION_TIMEOUT_MS = 10_000L
+        private val readActionExecutor = Executors.newCachedThreadPool { r ->
+            Thread(r, "CursorJ-SymbolReadAction").apply { isDaemon = true }
+        }
     }
 }
