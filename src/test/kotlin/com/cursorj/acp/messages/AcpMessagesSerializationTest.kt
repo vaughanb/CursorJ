@@ -65,6 +65,10 @@ class AcpMessagesSerializationTest {
         assertEquals(20, params.maxResults)
     }
 
+    /**
+     * Hypothetical payload shape: real agents today expose max mode via `~/.cursor/cli-config.json`,
+     * not as an ACP config option. This test only ensures deserialization stays tolerant.
+     */
     @Test
     fun `session new result decodes toggle and multi config options`() {
         val raw = """

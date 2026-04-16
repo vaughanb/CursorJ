@@ -2,6 +2,7 @@ package com.cursorj.ui.toolwindow
 
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
+import com.cursorj.acp.MaxModeManager
 import com.cursorj.acp.AcpProcessManager
 import com.cursorj.context.ActiveFileProvider
 import com.cursorj.context.SelectionProvider
@@ -15,6 +16,7 @@ import com.cursorj.indexing.WorkspaceIndexOrchestrator
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbService
@@ -57,6 +59,7 @@ class CursorJService(
 
     private val log = Logger.getInstance(CursorJService::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var maxModeConfigPollJob: Job? = null
     @Volatile
     private var serviceDisposed = false
 
@@ -110,6 +113,38 @@ class CursorJService(
             workspaceIndexOrchestrator.start()
         }
         fetchModelsAsync()
+        startCliConfigMaxModePolling()
+    }
+
+    /**
+     * Polls `~/.cursor/cli-config.json` about every 10s so MAX mode stays in sync when the file is edited
+     * outside CursorJ (other tools, manual edit). The first sample establishes a baseline without broadcasting;
+     * later changes update all chat tabs via [SessionTabManager.syncAllChatPanelsMaxModeFromDisk].
+     */
+    private fun startCliConfigMaxModePolling() {
+        maxModeConfigPollJob?.cancel()
+        maxModeConfigPollJob = scope.launch {
+            var lastKnown: Boolean? = null
+            while (isActive) {
+                delay(10_000)
+                if (serviceDisposed || project.isDisposed) break
+                val enabled = withContext(Dispatchers.IO) {
+                    MaxModeManager.isMaxModeEnabled()
+                }
+                if (lastKnown == null) {
+                    lastKnown = enabled
+                    continue
+                }
+                if (lastKnown == enabled) continue
+                lastKnown = enabled
+                ApplicationManager.getApplication().invokeLater {
+                    if (serviceDisposed || project.isDisposed) return@invokeLater
+                    if (::tabManager.isInitialized) {
+                        tabManager.syncAllChatPanelsMaxModeFromDisk(enabled)
+                    }
+                }
+            }
+        }
     }
 
     private fun clearStaleSessionsIfDataMissing() {
@@ -236,6 +271,8 @@ class CursorJService(
 
     override fun dispose() {
         serviceDisposed = true
+        maxModeConfigPollJob?.cancel()
+        maxModeConfigPollJob = null
         promptHistoryManager.persist()
         chatTranscriptManager.persist()
         chatHistoryIndexManager.persist()

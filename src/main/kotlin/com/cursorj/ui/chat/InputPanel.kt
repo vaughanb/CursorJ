@@ -127,6 +127,13 @@ class InputPanel {
         isVisible = false
     }
 
+    private val maxModeToggle = JBCheckBox(CursorJBundle.message("chat.maxmode.label")).apply {
+        font = font.deriveFont(font.size2D - 1)
+        isOpaque = false
+        toolTipText = CursorJBundle.message("chat.maxmode.tooltip")
+        isVisible = true
+    }
+
     private val configControlsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
     }
@@ -173,6 +180,8 @@ class InputPanel {
     var onSelectionChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
     var onConfigOptionChanged: ((configId: String, value: String) -> Unit)? = null
+    /** Invoked when the user toggles MAX mode (after [setMaxMode] sync, not during). */
+    var onMaxModeToggled: ((Boolean) -> Unit)? = null
     var onHistoryPrev: ((String) -> String?)? = null
     var onHistoryNext: ((String) -> String?)? = null
 
@@ -289,9 +298,24 @@ class InputPanel {
             }
         }
 
+        maxModeToggle.addActionListener {
+            if (updatingMaxMode || updatingConfigWidgets) return@addActionListener
+            onMaxModeToggled?.invoke(maxModeToggle.isSelected)
+        }
+
     }
 
     private var updatingMode = false
+    private var updatingMaxMode = false
+
+    /**
+     * Updates the MAX checkbox without firing [onMaxModeToggled].
+     */
+    fun setMaxMode(enabled: Boolean) {
+        updatingMaxMode = true
+        maxModeToggle.isSelected = enabled
+        updatingMaxMode = false
+    }
 
     fun setMode(mode: SessionMode) {
         updatingMode = true
@@ -326,6 +350,10 @@ class InputPanel {
         configControlsRow.add(modeCombo)
 
         val row = ConfigOptionUiSupport.optionsForInputBar(options)
+        val hasModelInBar = row.any { ConfigOptionUiSupport.isModelSelector(it) && it.options.isNotEmpty() }
+        if (!hasModelInBar) {
+            configControlsRow.add(maxModeToggle)
+        }
         var modelShown = false
         for (opt in row) {
             when {
@@ -349,6 +377,7 @@ class InputPanel {
                     modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 220), 26)
                     configControlsRow.add(modelCombo)
                     modelCombo.isVisible = true
+                    configControlsRow.add(maxModeToggle)
                     modelShown = true
                     updatingModelCombo = false
                 }

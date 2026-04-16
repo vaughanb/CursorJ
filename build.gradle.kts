@@ -104,11 +104,7 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li>Model switching now uses ACP-spec <code>session/set_config_option</code> with post-switch verification, structured diagnostic logging, and a model-name context hint injected into the next prompt</li>
-                <li>Status bar and connected detail now reflect the ACP-confirmed active model rather than optimistic UI state</li>
-                <li>Added manual-only real-CLI integration test suite (gated by <code>CURSORJ_INTEGRATION=1</code>, hard-blocked on CI) covering ACP process lifecycle, connection/auth, session creation, model switching, terminal/filesystem handlers, and index search</li>
-                <li>Expanded unit tests for config-option merge behavior, per-session isolation, model display-name mapping, and reconnect status handling</li>
-                <li>Improved symbol index bridge with safer PSI access patterns</li>
+                <li>Added toggle for Max Mode</li>
             </ul>
         """.trimIndent()
     }

@@ -715,6 +715,7 @@ class MessageListPanel {
         innerPanel.add(statusLabel)
         innerPanel.revalidate()
         innerPanel.repaint()
+        scrollToBottom()
     }
 
     fun addErrorMessage(errorText: String) {

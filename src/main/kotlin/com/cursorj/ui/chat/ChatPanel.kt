@@ -5,6 +5,7 @@ import com.cursorj.acp.AcpException
 import com.cursorj.acp.AgentConnection
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.ConfigOptionUiSupport
+import com.cursorj.acp.MaxModeManager
 import com.cursorj.acp.ChatMessage
 import com.cursorj.acp.SessionMode
 import com.cursorj.acp.ToolActivity
@@ -103,6 +104,8 @@ class ChatPanel(
     var onFirstPrompt: ((String) -> Unit)? = null
     var onPromptSubmitted: ((String) -> Unit)? = null
     var onSessionReplaced: ((AcpSession) -> Unit)? = null
+    /** Called after MAX mode is written to cli-config.json so the tab can reconnect the agent. */
+    var onReconnectRequested: (() -> Unit)? = null
     val component: JComponent get() = rootPanel
 
     init {
@@ -129,6 +132,7 @@ class ChatPanel(
         inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onConfigOptionChanged = { configId, value -> handleConfigOptionChange(configId, value) }
+        inputPanel.onMaxModeToggled = { enabled -> handleMaxModeToggle(enabled) }
         inputPanel.onHistoryPrev = { currentInput ->
             service.promptHistoryManager.previous(historySessionKey, currentInput)
         }
@@ -160,6 +164,10 @@ class ChatPanel(
         messageListPanel.onDiffFileClick = { path, line, addedLines ->
             openFileInEditorWithHighlights(path, line, addedLines)
         }
+
+        SwingUtilities.invokeLater {
+            inputPanel.setMaxMode(MaxModeManager.isMaxModeEnabled())
+        }
     }
 
     fun updateConfigOptions(options: List<ConfigOption>) {
@@ -168,10 +176,62 @@ class ChatPanel(
         }
     }
 
+    /**
+     * Updates the MAX checkbox to match a value read from disk without firing the user toggle callback
+     * (used when `cli-config.json` changes outside CursorJ).
+     */
+    fun applyMaxModeFromDisk(enabled: Boolean) {
+        SwingUtilities.invokeLater {
+            inputPanel.setMaxMode(enabled)
+        }
+    }
+
     fun bindConnection(connection: AgentConnection) {
         this.connection = connection
+        inputPanel.setMaxMode(MaxModeManager.isMaxModeEnabled())
         connection.setPermissionPromptResolver { request ->
             queuePermissionRequest(request)
+        }
+    }
+
+    /**
+     * Clears connection/session refs before disposing [AgentConnection] for an agent process restart.
+     */
+    fun prepareForAgentReconnect() {
+        connection = null
+        session = null
+    }
+
+    /**
+     * Reloads the message list from the local transcript store (used after agent reconnect).
+     * [afterReload] runs on the EDT immediately after the list is rebuilt (e.g. to show a status line
+     * that would otherwise be cleared when the transcript UI is replaced).
+     */
+    fun reloadConversationFromLocalTranscript(afterReload: (() -> Unit)? = null) {
+        val messages = sliceToLastUserTurn(
+            service.chatTranscriptManager.transcriptFor(historySessionKey),
+        )
+        SwingUtilities.invokeLater {
+            messageListPanel.replaceConversation(messages)
+            refreshRollbackAvailability()
+            afterReload?.invoke()
+        }
+    }
+
+    private fun handleMaxModeToggle(enabled: Boolean) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                MaxModeManager.setMaxMode(enabled)
+            }
+            SwingUtilities.invokeLater {
+                if (!ok) {
+                    inputPanel.setMaxMode(!enabled)
+                    showError(CursorJBundle.message("chat.maxmode.writeFailed"))
+                    return@invokeLater
+                }
+                showStatus(CursorJBundle.message("chat.maxmode.reconnecting"))
+                onReconnectRequested?.invoke()
+            }
         }
     }
 
