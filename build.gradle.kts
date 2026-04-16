@@ -62,6 +62,11 @@ dependencies {
 }
 
 intellijPlatform {
+    // Avoid :instrumentCode (Ant/Javac2): Apache Ant requires JAVA_HOME/Packages for Microsoft JDKs,
+    // which that distribution does not ship — see https://github.com/microsoft/openjdk/issues/339.
+    // This project has no UI Designer .form files; UI is Kotlin-only.
+    instrumentCode = false
+
     pluginConfiguration {
         id = "com.cursorj"
         name = providers.gradleProperty("pluginName")
