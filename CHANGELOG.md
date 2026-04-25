@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Subagent tasks (`cursor/task`)**: Handle Cursor ACP subagent notifications and server requests; show a collapsible **Background tasks** list in chat (type, description, running vs completed duration) with tooltips for prompt summary, model, and agent id. JSON-RPC responses return `outcome: completed` so the agent does not block. Unit tests cover `CursorTaskPayload` parsing.
+- Token and cost usage display in chat when the Cursor agent reports ACP usage: per-assistant-message token breakdown from `session/prompt` results, a session context/cost bar from `usage_update` notifications, and a **Settings > Tools > CursorJ** toggle to show or hide usage UI.
 - Manual-only real-CLI integration test suite (`src/integrationTest/`) gated by `CURSORJ_INTEGRATION=1` and hard-blocked on CI. Covers ACP process lifecycle, connection/auth handshake, session creation, model switching, terminal/filesystem handler dispatch, index search, per-session isolation, reconnect recovery, and a canary test for agent model-routing behavior.
 - Post-switch verification: after model switch, plugin compares ACP-confirmed model against requested model and logs structured diagnostics.
 - Model-name context hint injected into the next prompt after a model switch so the agent can accurately self-report the active model.

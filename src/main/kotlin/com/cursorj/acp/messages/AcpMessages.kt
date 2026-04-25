@@ -250,8 +250,32 @@ data class SessionPromptParams(
 )
 
 @Serializable
+data class TokenUsage(
+    @SerialName("total_tokens") val totalTokens: Long? = null,
+    @SerialName("input_tokens") val inputTokens: Long? = null,
+    @SerialName("output_tokens") val outputTokens: Long? = null,
+    @SerialName("thought_tokens") val thoughtTokens: Long? = null,
+    @SerialName("cached_read_tokens") val cachedReadTokens: Long? = null,
+    @SerialName("cached_write_tokens") val cachedWriteTokens: Long? = null,
+)
+
+@Serializable
+data class UsageCost(
+    val amount: Double,
+    val currency: String,
+)
+
+@Serializable
+data class SessionUsageInfo(
+    val used: Long,
+    val size: Long,
+    val cost: UsageCost? = null,
+)
+
+@Serializable
 data class SessionPromptResult(
     val stopReason: String? = null,
+    val usage: TokenUsage? = null,
 )
 
 @Serializable

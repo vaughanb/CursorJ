@@ -41,6 +41,14 @@ class CursorJSettingsTest {
     }
 
     @Test
+    fun `show token usage defaults to true`() {
+        val settings = CursorJSettings()
+        assertTrue(settings.showTokenUsage)
+        settings.showTokenUsage = false
+        assertFalse(settings.showTokenUsage)
+    }
+
+    @Test
     fun `approved permission keys are normalized and sorted`() {
         val settings = CursorJSettings()
         settings.setApprovedPermissionKeys(setOf("  shell:npm  ", "fs/read_text_file", "shell:npm"))

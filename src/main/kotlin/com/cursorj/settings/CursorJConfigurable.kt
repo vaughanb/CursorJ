@@ -40,6 +40,7 @@ class CursorJConfigurable : Configurable {
     private var approvedToolsArea: JBTextArea? = null
     private var protectExternalWritesCheckbox: JBCheckBox? = null
     private var acpRawLoggingCheckbox: JBCheckBox? = null
+    private var showTokenUsageCheckbox: JBCheckBox? = null
     private var mainPanel: JPanel? = null
 
     override fun getDisplayName(): String = CursorJBundle.message("settings.title")
@@ -113,6 +114,9 @@ class CursorJConfigurable : Configurable {
         )
         acpRawLoggingCheckbox = JBCheckBox(
             CursorJBundle.message("settings.acp.rawLogging"),
+        )
+        showTokenUsageCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.showTokenUsage"),
         )
 
         val approvedToolsScroll = JBScrollPane(approvedToolsArea).apply {
@@ -192,6 +196,7 @@ class CursorJConfigurable : Configurable {
             )
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.advanced")), 1)
             .addComponent(acpRawLoggingCheckbox!!, 1)
+            .addComponent(showTokenUsageCheckbox!!, 1)
             .addComponentFillVertically(JPanel(), 0)
             .panel
 
@@ -215,6 +220,7 @@ class CursorJConfigurable : Configurable {
             selectedPermissionMode() != settings.permissionMode ||
             protectExternalWritesCheckbox?.isSelected != settings.protectExternalFileWrites ||
             acpRawLoggingCheckbox?.isSelected != settings.enableAcpRawLogging ||
+            showTokenUsageCheckbox?.isSelected != settings.showTokenUsage ||
             readApprovedTools() != settings.getApprovedPermissionKeys()
     }
 
@@ -236,6 +242,7 @@ class CursorJConfigurable : Configurable {
         settings.permissionMode = selectedPermissionMode()
         settings.protectExternalFileWrites = protectExternalWritesCheckbox?.isSelected ?: true
         settings.enableAcpRawLogging = acpRawLoggingCheckbox?.isSelected ?: false
+        settings.showTokenUsage = showTokenUsageCheckbox?.isSelected ?: true
         settings.setApprovedPermissionKeys(readApprovedTools())
         val knownModelIds = knownModelIdsFromOpenProjects()
         if (defaultModel.isNotBlank() && knownModelIds.isNotEmpty() && defaultModel !in knownModelIds) {
@@ -266,6 +273,7 @@ class CursorJConfigurable : Configurable {
         }
         protectExternalWritesCheckbox?.isSelected = settings.protectExternalFileWrites
         acpRawLoggingCheckbox?.isSelected = settings.enableAcpRawLogging
+        showTokenUsageCheckbox?.isSelected = settings.showTokenUsage
         approvedToolsArea?.text = settings.getApprovedPermissionKeys().sorted().joinToString("\n")
         projectRulesListPanel?.refresh()
     }
@@ -328,6 +336,7 @@ class CursorJConfigurable : Configurable {
         approvedToolsArea = null
         protectExternalWritesCheckbox = null
         acpRawLoggingCheckbox = null
+        showTokenUsageCheckbox = null
         mainPanel = null
     }
 }

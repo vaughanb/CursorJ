@@ -21,6 +21,8 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Undo All (Rollback Last Turn)**: Revert files to the state before the most recent agent turn using Local History
 - **Chat History**: Searchable chat history grouped by time; restore previous chats; clear history
 - **Status Bar**: Connection and indexing status (Connected, Processing, Indexing, Index ready, etc.)
+- **Token usage (optional)**: When the agent reports usage over ACP, show per-assistant-message token breakdown and a session context/cost bar in chat (toggle in **Settings > Tools > CursorJ**).
+- **Background tasks**: When the Cursor agent runs subagents (`cursor/task`), tasks appear in a collapsible list in the chat tool window (running vs completed, duration, tooltips).
 
 ## Prerequisites
 
@@ -74,6 +76,8 @@ The plugin declares client capabilities for:
 - **Editor indexing**: `editor/get_open_files`, `editor/find_symbol`, `editor/list_file_symbols`, `editor/find_references`
 - **Terminal**: Execute shell commands
 
+Cursor extension methods from the agent (for example `cursor/task` for subagents, `_cursor/update_todos`, `cursor/create_plan`) are handled so the agent can show todos, plans, and background task progress in the CursorJ UI where supported.
+
 ## Project Indexing
 
 CursorJ uses a hybrid local-first indexing model:
@@ -98,7 +102,7 @@ Settings are available in **Settings > Tools > CursorJ**:
 - **Project Rules**: Manage rule files in `.cursor/rules/` from the same settings page (shown when an open project is available)
 - **Context & Indexing**: Auto-attach active file; enable project indexing; lexical persistence; semantic reranking; retrieval limits (max candidates, snippet budget, timeout); index retention days and max DB size; manual "Rebuild index now"
 - **Permissions**: Tool permission mode (Ask Every Time / Run Everything); approved tools allowlist; protect writes outside workspace
-- **Advanced**: ACP raw JSON debug logging (diagnostics)
+- **Advanced**: ACP raw JSON debug logging (diagnostics); optional **Show token usage and context bar in chat** when the agent reports per-turn and session usage over ACP
 
 The status bar shows connection and indexing lifecycle (Connected, Disconnected, Processing, Indexing, Index ready, Indexing failed).
 
@@ -155,6 +159,7 @@ Current tests validate:
 - per-session config isolation (two sessions maintain independent model state)
 - model display-name mapping (session label > CLI label > raw id, case-insensitive)
 - `connectedStatusDetail` sources model from ACP-confirmed session config
+- **CursorTaskPayload** parsing for `cursor/task` (string and custom `subagentType`, completion payloads, log truncation)
 
 Integration tests (manual-only, `CURSORJ_INTEGRATION=1`) additionally cover:
 

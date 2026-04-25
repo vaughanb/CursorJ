@@ -107,4 +107,42 @@ class AcpMessagesSerializationTest {
         assertEquals("toggle", result.configOptions[0].type)
         assertEquals("model", result.configOptions[2].category)
     }
+
+    @Test
+    fun `session prompt result decodes usage fields`() {
+        val raw = """
+            {
+              "stopReason": "end_turn",
+              "usage": {
+                "total_tokens": 53000,
+                "input_tokens": 35000,
+                "output_tokens": 12000,
+                "thought_tokens": 5000,
+                "cached_read_tokens": 5000,
+                "cached_write_tokens": 1000
+              }
+            }
+        """.trimIndent()
+        val result = json.decodeFromString(SessionPromptResult.serializer(), raw)
+        assertEquals("end_turn", result.stopReason)
+        val u = requireNotNull(result.usage)
+        assertEquals(53000L, u.totalTokens)
+        assertEquals(35000L, u.inputTokens)
+        assertEquals(12000L, u.outputTokens)
+        assertEquals(5000L, u.thoughtTokens)
+        assertEquals(5000L, u.cachedReadTokens)
+        assertEquals(1000L, u.cachedWriteTokens)
+    }
+
+    @Test
+    fun `session usage info round trip`() {
+        val info = SessionUsageInfo(
+            used = 31400L,
+            size = 200000L,
+            cost = UsageCost(amount = 0.045, currency = "USD"),
+        )
+        val encoded = json.encodeToString(SessionUsageInfo.serializer(), info)
+        val decoded = json.decodeFromString(SessionUsageInfo.serializer(), encoded)
+        assertEquals(info, decoded)
+    }
 }

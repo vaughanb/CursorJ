@@ -8,6 +8,7 @@ import com.cursorj.acp.ConfigOptionUiSupport
 import com.cursorj.acp.MaxModeManager
 import com.cursorj.acp.ChatMessage
 import com.cursorj.acp.SessionMode
+import com.cursorj.acp.SubagentTaskEvent
 import com.cursorj.acp.ToolActivity
 import com.cursorj.acp.messages.*
 import com.cursorj.rollback.RollbackStatus
@@ -243,11 +244,23 @@ class ChatPanel(
             firstPromptCarryoverContext = null
         }
         SwingUtilities.invokeLater {
+            messageListPanel.clearBackgroundTasks()
             if (existingMessages.isNotEmpty()) {
                 messageListPanel.replaceConversation(existingMessages)
             }
             refreshRollbackAvailability()
         }
+        session.addUsageListener { info ->
+            SwingUtilities.invokeLater {
+                messageListPanel.updateSessionUsage(info)
+            }
+        }
+        session.sessionUsage?.let { usage ->
+            SwingUtilities.invokeLater {
+                messageListPanel.updateSessionUsage(usage)
+            }
+        }
+
         session.addMessageListener { message ->
             if (!message.isStreaming) {
                 service.chatTranscriptManager.addMessage(historySessionKey, message)
@@ -292,6 +305,12 @@ class ChatPanel(
                     refreshProjectTreeThrottled()
                 }
                 refreshRollbackAvailability()
+            }
+        }
+
+        session.addSubagentTaskListener { event ->
+            SwingUtilities.invokeLater {
+                messageListPanel.updateSubagentTask(event)
             }
         }
 

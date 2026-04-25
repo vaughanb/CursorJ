@@ -3,7 +3,9 @@ package com.cursorj.acp
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ConfigOptionValue
 import com.cursorj.acp.messages.PlanEntry
+import com.cursorj.acp.messages.SessionUsageInfo
 import com.cursorj.acp.messages.TodoItem
+import com.cursorj.acp.messages.TokenUsage
 import com.cursorj.rollback.LocalHistoryGateway
 import com.cursorj.rollback.TurnRollbackManager
 import com.intellij.history.ByteContent
@@ -17,6 +19,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -27,6 +30,39 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AcpSessionTest {
+    @Test
+    fun `usage update stores session usage and notifies listeners`() = withSession { session ->
+        val seen = mutableListOf<SessionUsageInfo>()
+        session.addUsageListener { seen.add(it) }
+        session.handleSessionUpdate(
+            buildJsonObject {
+                put("sessionUpdate", "usage_update")
+                put("used", JsonPrimitive(53000))
+                put("size", JsonPrimitive(200000))
+                putJsonObject("cost") {
+                    put("amount", 0.045)
+                    put("currency", "USD")
+                }
+            },
+        )
+        assertEquals(1, seen.size)
+        assertEquals(53000L, seen[0].used)
+        assertEquals(200000L, seen[0].size)
+        assertEquals(0.045, seen[0].cost?.amount)
+        assertEquals("USD", seen[0].cost?.currency)
+        assertEquals(seen[0], session.sessionUsage)
+    }
+
+    @Test
+    fun `applyTurnUsage attaches to last assistant message`() = withSession { session ->
+        session.handleSessionUpdate(update("agent_message_chunk", contentText = "Hi"))
+        session.handleSessionUpdate(update("agent_message_end", contentText = ""))
+        val usage = TokenUsage(inputTokens = 10L, outputTokens = 5L)
+        session.applyTurnUsageToLastAssistant(usage)
+        assertEquals(usage, session.messages.last().turnUsage)
+        assertEquals(usage, session.lastTurnUsage)
+    }
+
     @Test
     fun `maps known mode values and defaults unknown values to agent`() {
         assertEquals(SessionMode.AGENT, SessionMode.fromValue("agent"))

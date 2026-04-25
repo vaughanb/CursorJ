@@ -24,6 +24,8 @@ data class ChatMessage(
     val content: String,
     val toolCalls: List<ToolCallUpdate> = emptyList(),
     val isStreaming: Boolean = false,
+    /** Per-turn token usage from [SessionPromptResult.usage] when the agent reports it. */
+    val turnUsage: TokenUsage? = null,
 )
 
 data class ToolActivity(
@@ -129,11 +131,22 @@ class AcpSession(
     private val planListeners = mutableListOf<(List<PlanEntry>) -> Unit>()
     private val editDiffListeners = mutableListOf<(EditDiffContent) -> Unit>()
     private val availableCommandsListeners = mutableListOf<(List<String>) -> Unit>()
+    private val usageListeners = mutableListOf<(SessionUsageInfo) -> Unit>()
+    private val subagentTaskListeners = mutableListOf<(SubagentTaskEvent) -> Unit>()
+
+    private val _subagentTaskHistory = mutableListOf<SubagentTaskEvent>()
+    private val subagentTaskHistoryLock = Any()
 
     @Volatile
     private var pendingFirstUpdate: CompletableDeferred<Unit>? = null
 
     private val _currentAgentText = StringBuilder()
+
+    private var _sessionUsage: SessionUsageInfo? = null
+    val sessionUsage: SessionUsageInfo? get() = _sessionUsage
+
+    private var _lastTurnUsage: TokenUsage? = null
+    val lastTurnUsage: TokenUsage? get() = _lastTurnUsage
 
     fun addUpdateListener(listener: (SessionUpdate) -> Unit) {
         updateListeners.add(listener)
@@ -166,6 +179,17 @@ class AcpSession(
     fun addAvailableCommandsListener(listener: (List<String>) -> Unit) {
         availableCommandsListeners.add(listener)
     }
+
+    fun addUsageListener(listener: (SessionUsageInfo) -> Unit) {
+        usageListeners.add(listener)
+    }
+
+    fun addSubagentTaskListener(listener: (SubagentTaskEvent) -> Unit) {
+        subagentTaskListeners.add(listener)
+    }
+
+    val subagentTaskHistory: List<SubagentTaskEvent>
+        get() = synchronized(subagentTaskHistoryLock) { _subagentTaskHistory.toList() }
 
     fun getConfigOption(category: String): ConfigOption? {
         return _configOptions.firstOrNull { it.category == category }
@@ -294,6 +318,16 @@ class AcpSession(
                         updateAvailableCommands(commands)
                     }
                 }
+                "usage_update" -> {
+                    val used = obj["used"]?.jsonPrimitive?.longOrNull ?: 0L
+                    val size = obj["size"]?.jsonPrimitive?.longOrNull ?: 0L
+                    val cost = obj["cost"]?.takeUnless { it is JsonNull }?.let {
+                        runCatching { json.decodeFromJsonElement<UsageCost>(it) }.getOrNull()
+                    }
+                    val usageInfo = SessionUsageInfo(used = used, size = size, cost = cost)
+                    _sessionUsage = usageInfo
+                    notifyUsageListeners(usageInfo)
+                }
                 else -> {
                     log.info("Unhandled session update type: $updateType, keys: ${obj.keys}")
                 }
@@ -386,6 +420,43 @@ class AcpSession(
         }
     }
 
+    /**
+     * Handles Cursor ACP `cursor/task` (subagent) payloads from notifications or server requests.
+     * @return parsed event for JSON-RPC result fields, or null if the payload could not be parsed.
+     */
+    fun handleCursorTask(params: JsonElement): SubagentTaskEvent? {
+        val obj = params as? JsonObject
+        val event = CursorTaskPayload.parse(params) ?: run {
+            log.warn("cursor/task: parse failed, param keys=${obj?.keys}")
+            return null
+        }
+        val promptRaw = obj?.get("prompt")?.jsonPrimitive?.contentOrNull
+        if (!promptRaw.isNullOrBlank()) {
+            log.info(
+                "cursor/task id=${event.toolCallId} type=${event.subagentTypeLabel} " +
+                    "desc=${event.description.take(120)} prompt=${CursorTaskPayload.promptForLog(promptRaw)}",
+            )
+        } else {
+            log.info(
+                "cursor/task id=${event.toolCallId} type=${event.subagentTypeLabel} " +
+                    "desc=${event.description.take(120)}",
+            )
+        }
+        synchronized(subagentTaskHistoryLock) {
+            val idx = _subagentTaskHistory.indexOfLast { it.toolCallId == event.toolCallId }
+            if (idx >= 0) {
+                _subagentTaskHistory[idx] = event
+            } else {
+                _subagentTaskHistory.add(event)
+            }
+            while (_subagentTaskHistory.size > MAX_SUBAGENT_TASK_HISTORY) {
+                _subagentTaskHistory.removeAt(0)
+            }
+        }
+        notifySubagentTaskListeners(event)
+        return event
+    }
+
     private fun extractEditDiffs(toolCallId: String, obj: JsonObject) {
         val contentArray = obj["content"]?.let {
             if (it is JsonArray) it else null
@@ -467,6 +538,22 @@ class AcpSession(
             notifyMessageListeners(finalMessage)
         }
         _currentAgentText.clear()
+    }
+
+    /**
+     * Attaches [usage] to the most recent finalized assistant message (same turn as [SessionPromptResult]).
+     */
+    internal fun applyTurnUsageToLastAssistant(usage: TokenUsage) {
+        _lastTurnUsage = usage
+        for (i in _messages.indices.reversed()) {
+            val msg = _messages[i]
+            if (msg.role == "assistant" && !msg.isStreaming) {
+                val updated = msg.copy(turnUsage = usage)
+                _messages[i] = updated
+                notifyMessageListeners(updated)
+                return
+            }
+        }
     }
 
     private fun formatToolActivity(obj: JsonObject): ToolActivity? {
@@ -575,6 +662,7 @@ class AcpSession(
         pendingFirstUpdate = firstUpdateSignal
 
         var interrupted = false
+        var lastPromptResult: SessionPromptResult? = null
         val stuckToolSignal = CompletableDeferred<ToolCallWatchdogSignal>()
         val promptDeferred = sessionScope.async(start = CoroutineStart.LAZY) {
             client.sessionPrompt(sessionId, content)
@@ -616,6 +704,7 @@ class AcpSession(
                 promptDeferred.start()
                 select {
                     promptDeferred.onAwait { result ->
+                        lastPromptResult = result
                         result
                     }
                     stuckToolSignal.onAwait { signal ->
@@ -664,6 +753,7 @@ class AcpSession(
             promptDeferred.cancel()
             isProcessing = false
             finalizeCurrentText()
+            lastPromptResult?.usage?.let { applyTurnUsageToLastAssistant(it) }
             clearTrackedToolCalls()
             rollbackManager.completeTurn(sessionId, turnId, interrupted = interrupted)
         }
@@ -863,12 +953,32 @@ class AcpSession(
         }
     }
 
+    private fun notifyUsageListeners(info: SessionUsageInfo) {
+        for (listener in usageListeners) {
+            try {
+                listener(info)
+            } catch (e: Exception) {
+                log.warn("Usage listener error", e)
+            }
+        }
+    }
+
     private fun notifyActivityListeners(activity: String) {
         for (listener in activityListeners) {
             try {
                 listener(activity)
             } catch (e: Exception) {
                 log.warn("Activity listener error", e)
+            }
+        }
+    }
+
+    private fun notifySubagentTaskListeners(event: SubagentTaskEvent) {
+        for (listener in subagentTaskListeners) {
+            try {
+                listener(event)
+            } catch (e: Exception) {
+                log.warn("Subagent task listener error", e)
             }
         }
     }
@@ -1033,6 +1143,7 @@ class AcpSession(
         private const val FIRST_UPDATE_TIMEOUT_MS = 90_000L
         private const val LIVENESS_CHECK_INTERVAL_MS = 5_000L
         private const val MAX_TURN_DURATION_MS = 15L * 60L * 1000L
+        private const val MAX_SUBAGENT_TASK_HISTORY = 20
 
         val debugLogFile: java.io.File? by lazy {
             val home = System.getProperty("user.home") ?: return@lazy null

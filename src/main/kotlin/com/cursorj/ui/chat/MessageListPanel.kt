@@ -3,6 +3,11 @@ package com.cursorj.ui.chat
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AcpContentExtractor
 import com.cursorj.acp.ChatMessage
+import com.cursorj.acp.SubagentTaskEvent
+import com.cursorj.acp.messages.SessionUsageInfo
+import com.cursorj.acp.messages.UsageCost
+import com.cursorj.settings.CursorJSettings
+import com.cursorj.ui.components.UsageLabel
 import com.cursorj.acp.messages.PermissionOption
 import com.cursorj.acp.messages.RequestPermissionParams
 import com.cursorj.permissions.PermissionPolicy
@@ -34,6 +39,8 @@ class MessageListPanel {
     private var streamingRenderer: MessageRenderer? = null
     private var progressIndicator: ProgressIndicatorPanel? = null
     private var scrollToBottomQueued = false
+    private var sessionUsageBarPanel: JPanel? = null
+    private var backgroundTasksStrip: BackgroundTasksStrip? = null
 
     val component: JComponent get() = panel
 
@@ -61,11 +68,17 @@ class MessageListPanel {
                 updatedComponent = streamingRenderer!!.component
                 streamingRenderer = null
             } else {
-                val renderer = MessageRenderer(message)
-                innerPanel.add(renderer.component)
-                messageComponents.add(renderer)
-                fullLayoutPassNeeded = true
-                updatedComponent = renderer.component
+                val last = messageComponents.lastOrNull()
+                if (last != null && last.matchesUsagePatchTarget(message)) {
+                    last.update(message)
+                    updatedComponent = last.component
+                } else {
+                    val renderer = MessageRenderer(message)
+                    innerPanel.add(renderer.component)
+                    messageComponents.add(renderer)
+                    fullLayoutPassNeeded = true
+                    updatedComponent = renderer.component
+                }
             }
         }
         if (fullLayoutPassNeeded) {
@@ -85,6 +98,8 @@ class MessageListPanel {
         permissionCards.clear()
         toolCallLabels.clear()
         streamingRenderer = null
+        removeSessionUsageBar()
+        backgroundTasksStrip = null
         innerPanel.removeAll()
         messageComponents.clear()
         diffPanels.clear()
@@ -99,6 +114,38 @@ class MessageListPanel {
         innerPanel.revalidate()
         innerPanel.repaint()
         scrollToBottom()
+    }
+
+    fun clearBackgroundTasks() {
+        val strip = backgroundTasksStrip ?: return
+        innerPanel.remove(strip.root)
+        backgroundTasksStrip = null
+        innerPanel.revalidate()
+        innerPanel.repaint()
+    }
+
+    fun updateSubagentTask(event: SubagentTaskEvent) {
+        if (backgroundTasksStrip == null) {
+            backgroundTasksStrip = BackgroundTasksStrip()
+            insertComponentBeforeProgress(backgroundTasksStrip!!.root)
+        }
+        backgroundTasksStrip!!.applyEvent(event)
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    private fun insertComponentBeforeProgress(c: JComponent) {
+        val progComp = progressIndicator?.component
+        if (progComp != null) {
+            for (i in 0 until innerPanel.componentCount) {
+                if (innerPanel.getComponent(i) === progComp) {
+                    innerPanel.add(c, i)
+                    return
+                }
+            }
+        }
+        innerPanel.add(c)
     }
 
     fun showProgress(text: String = "Agent is working...", color: Color? = null) {
@@ -184,6 +231,70 @@ class MessageListPanel {
         }
         innerPanel.revalidate()
         innerPanel.repaint()
+    }
+
+    /**
+     * Session-level context window and cumulative cost from ACP `usage_update` notifications.
+     */
+    fun updateSessionUsage(info: SessionUsageInfo?) {
+        removeSessionUsageBar()
+        if (!CursorJSettings.instance.showTokenUsage || info == null || info.size <= 0L) {
+            return
+        }
+        val used = info.used.coerceAtLeast(0L)
+        val size = info.size
+        val pct = if (size > 0L) ((used * 100L) / size).toInt().coerceIn(0, 100) else 0
+        val usedStr = UsageLabel.formatTokenCount(used)
+        val sizeStr = UsageLabel.formatTokenCount(size)
+        val costPart = info.cost?.let { c -> " · ${formatSessionCost(c)}" }.orEmpty()
+        val label = JLabel("Context: $usedStr / $sizeStr ($pct%)$costPart").apply {
+            border = JBUI.Borders.empty(4, 8, 4, 8)
+            font = font.deriveFont(font.size2D - 1f)
+            foreground = sessionUsageForeground(pct)
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        val bar = object : JPanel(BorderLayout()) {
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            name = "session-usage-bar"
+            add(label, BorderLayout.WEST)
+        }
+        sessionUsageBarPanel = bar
+        innerPanel.add(bar, 0)
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    private fun removeSessionUsageBar() {
+        sessionUsageBarPanel?.let { innerPanel.remove(it) }
+        sessionUsageBarPanel = null
+    }
+
+    private fun formatSessionCost(c: UsageCost): String {
+        val cur = c.currency.trim().uppercase()
+        val amt = c.amount
+        return if (cur == "USD") {
+            "$" + trimCostAmount(amt)
+        } else {
+            "${trimCostAmount(amt)} $cur"
+        }
+    }
+
+    private fun trimCostAmount(amt: Double): String {
+        val s = String.format("%.4f", amt)
+        return s.trimEnd('0').trimEnd('.').ifEmpty { "0" }
+    }
+
+    private fun sessionUsageForeground(pct: Int): Color {
+        return when {
+            pct >= 95 -> JBColor(Color(0xC62828), Color(0xFF8A80))
+            pct >= 90 -> JBColor(Color(0xEF6C00), Color(0xFFB74D))
+            pct >= 75 -> JBColor(Color(0xF9A825), Color(0xFFD54F))
+            else -> JBColor(Color(0x2E7D32), Color(0x81C784))
+        }
     }
 
     fun addDiffPanel(filePath: String, oldText: String, newText: String) {
@@ -760,6 +871,117 @@ class MessageListPanel {
             json.encodeToString(JsonElement.serializer(), arguments)
         } catch (_: Exception) {
             arguments.toString()
+        }
+    }
+
+    private class BackgroundTasksStrip {
+        private val lastEventById = linkedMapOf<String, SubagentTaskEvent>()
+        private var expanded = true
+        private val entriesPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        private val headerLabel = JLabel().apply {
+            font = font.deriveFont(Font.BOLD, font.size2D - 1f)
+            foreground = JBColor(Color(0x6E6E6E), Color(0x9C9C9C))
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            border = JBUI.Borders.empty(4, 8)
+        }
+        val root: JComponent = object : JPanel(BorderLayout()) {
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            name = "background-tasks-strip"
+            border = JBUI.Borders.empty(2, 8, 4, 8)
+            add(headerLabel, BorderLayout.NORTH)
+            add(entriesPanel, BorderLayout.CENTER)
+        }
+
+        init {
+            headerLabel.addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    expanded = !expanded
+                    entriesPanel.isVisible = expanded
+                    refreshHeaderText()
+                }
+            })
+            entriesPanel.isVisible = expanded
+            refreshHeaderText()
+        }
+
+        fun applyEvent(event: SubagentTaskEvent) {
+            lastEventById[event.toolCallId] = event
+            if (!event.isComplete) {
+                expanded = true
+                entriesPanel.isVisible = true
+            }
+            rebuildEntries()
+            refreshHeaderText()
+        }
+
+        private fun activeCount(): Int = lastEventById.values.count { !it.isComplete }
+
+        private fun refreshHeaderText() {
+            val active = activeCount()
+            val total = lastEventById.size
+            val text = CursorJBundle.message("chat.subagent.header", active, total)
+            headerLabel.text = (if (expanded) "\u25bc " else "\u25b6 ") + text
+            headerLabel.toolTipText = CursorJBundle.message("chat.subagent.header.tooltip")
+        }
+
+        private fun rebuildEntries() {
+            entriesPanel.removeAll()
+            val textColor = JBColor(Color(0x5C6370), Color(0xABB2BF))
+            val metaColor = JBColor(Color(0x8E9BAA), Color(0x6B7785))
+            val fontSmall = entriesPanel.font.deriveFont(entriesPanel.font.size2D - 2f)
+            for (ev in lastEventById.values) {
+                val row = object : JPanel(BorderLayout()) {
+                    override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+                }.apply {
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    border = JBUI.Borders.empty(2, 12, 2, 12)
+                }
+                row.add(
+                    JLabel(rowMainText(ev)).apply {
+                        foreground = textColor
+                        font = fontSmall
+                    },
+                    BorderLayout.CENTER,
+                )
+                row.add(
+                    JLabel(rowStatusText(ev)).apply {
+                        foreground = metaColor
+                        font = fontSmall
+                    },
+                    BorderLayout.EAST,
+                )
+                row.toolTipText = rowTooltip(ev)
+                entriesPanel.add(row)
+            }
+            entriesPanel.revalidate()
+            entriesPanel.repaint()
+        }
+
+        private fun rowMainText(ev: SubagentTaskEvent): String =
+            "[${ev.subagentTypeLabel}] ${ev.description}"
+
+        private fun rowStatusText(ev: SubagentTaskEvent): String =
+            if (ev.isComplete) {
+                val sec = (ev.durationMs!! / 1000.0).coerceAtLeast(0.001)
+                String.format(Locale.US, "%.1fs", sec)
+            } else {
+                CursorJBundle.message("chat.subagent.running")
+            }
+
+        private fun rowTooltip(ev: SubagentTaskEvent): String {
+            val parts = mutableListOf<String>()
+            ev.promptSummary?.let { parts.add(it) }
+            ev.model?.let { parts.add("Model: $it") }
+            ev.agentId?.let { parts.add("Agent: $it") }
+            return parts.joinToString("\n").ifEmpty { ev.description }
         }
     }
 
