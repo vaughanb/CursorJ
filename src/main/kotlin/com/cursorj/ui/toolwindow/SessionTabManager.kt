@@ -33,7 +33,7 @@ import javax.swing.*
 class SessionTabManager(
     private val service: CursorJService,
     private val toolWindow: ToolWindow,
-) {
+) : Disposable {
     private val log = Logger.getInstance(SessionTabManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -67,6 +67,10 @@ class SessionTabManager(
     private var startupRestoreTotal = 0
     private var startupRestoreFinished = 0
     private var startupRestoreSucceeded = 0
+
+    override fun dispose() {
+        scope.cancel()
+    }
 
     private val accentColor = JBColor(Color(0x4083C9), Color(0x4A88C7))
     private val arrowFg = JBColor(Color(0x999999), Color(0x888888))

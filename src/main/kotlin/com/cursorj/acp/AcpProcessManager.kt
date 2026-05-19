@@ -21,6 +21,10 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
     val isRunning: Boolean
         get() = process?.isAlive == true
 
+    /** When true, [stop] uses a short wait so IDE shutdown is not blocked per tab. */
+    @Volatile
+    var fastStop: Boolean = false
+
     init {
         Disposer.register(parentDisposable, this)
     }
@@ -96,7 +100,8 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
                 writer?.close()
                 reader?.close()
                 proc.destroyForcibly()
-                proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                val waitMs = if (fastStop) FAST_STOP_WAIT_MS else NORMAL_STOP_WAIT_MS
+                proc.waitFor(waitMs, TimeUnit.MILLISECONDS)
                 log.info("Cursor agent ACP process stopped")
             } catch (e: Exception) {
                 log.warn("Error stopping agent process", e)
@@ -220,5 +225,7 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
 
     companion object {
         private const val PIPE_BUFFER_SIZE = 65_536
+        private const val NORMAL_STOP_WAIT_MS = 5_000L
+        private const val FAST_STOP_WAIT_MS = 500L
     }
 }

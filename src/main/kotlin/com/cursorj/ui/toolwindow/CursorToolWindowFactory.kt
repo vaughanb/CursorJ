@@ -89,6 +89,7 @@ class CursorJService(
         backfillChatHistoryIfNeeded()
         pruneEmptySessionArtifacts()
         tabManager = SessionTabManager(this, toolWindow)
+        Disposer.register(this, tabManager)
         tabManager.addInitialTab()
         val indexingListener: (WorkspaceIndexOrchestrator.IndexLifecycleUpdate) -> Unit = { update ->
             val detail = when (update.state) {
