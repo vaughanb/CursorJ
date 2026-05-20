@@ -36,6 +36,8 @@ class AgentConnection(
     private var _modelInfos: List<AcpProcessManager.ModelInfo> = modelInfos
     @Volatile
     private var connectionGeneration = 0L
+    @Volatile
+    private var shuttingDown = false
 
     val modelInfos: List<AcpProcessManager.ModelInfo> get() = _modelInfos
 
@@ -93,6 +95,23 @@ class AgentConnection(
         if (initialModel != null) {
             selectedModel = initialModel
         }
+        // Runs before AcpClient / AcpProcessManager children are disposed (reverse registration order).
+        Disposer.register(this, Disposable {
+            prepareForShutdown()
+        })
+    }
+
+    private fun shouldMaintainConnection(): Boolean =
+        !shuttingDown && !project.isDisposed
+
+    private fun prepareForShutdown() {
+        shuttingDown = true
+        connectionGeneration++
+        isConnected = false
+        scope.cancel()
+        session?.dispose()
+        session = null
+        permissionHandler.setPromptResolver(null)
     }
 
     fun connectAsync() {
@@ -340,6 +359,10 @@ class AgentConnection(
     }
 
     private fun handleDisconnect() {
+        if (!shouldMaintainConnection()) {
+            isConnected = false
+            return
+        }
         if (!isConnected) return
         val gen = connectionGeneration
         session?.markActiveTurnInterrupted()
@@ -349,7 +372,7 @@ class AgentConnection(
 
         scope.launch {
             delay(2000)
-            if (gen != connectionGeneration) {
+            if (!shouldMaintainConnection() || gen != connectionGeneration) {
                 log.info("Skipping reconnect — connection generation changed ($gen -> $connectionGeneration)")
                 return@launch
             }
@@ -358,7 +381,9 @@ class AgentConnection(
     }
 
     private suspend fun attemptReconnect() {
+        connectionGeneration++
         for (attempt in 1..3) {
+            if (!shouldMaintainConnection()) return
             log.info("Reconnect attempt $attempt/3...")
             broadcastStatus("Reconnecting (attempt $attempt/3)...")
 
@@ -472,9 +497,10 @@ class AgentConnection(
     }
 
     override fun dispose() {
-        scope.cancel()
-        session?.dispose()
-        session = null
+        prepareForShutdown()
+        client.disconnect()
+        processManager.fastStop = true
+        processManager.stop()
         terminalHandler.disposeAll()
     }
 
