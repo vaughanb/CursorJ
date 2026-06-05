@@ -2,6 +2,8 @@ package com.cursorj.indexing.freshness
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectFileIndex
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileDeleteEvent
@@ -12,6 +14,21 @@ import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiTreeChangeAdapter
 import com.intellij.psi.PsiTreeChangeEvent
 import com.intellij.util.messages.MessageBusConnection
+
+private fun belongsToProject(project: Project, path: String): Boolean {
+    if (project.isDisposed) return false
+    val virtualFile = LocalFileSystem.getInstance().findFileByPath(path)
+    if (virtualFile != null) {
+        val fileIndex = runCatching { ProjectFileIndex.getInstance(project) }.getOrNull()
+        if (fileIndex != null) {
+            return fileIndex.isInContent(virtualFile)
+        }
+    }
+    val basePath = project.basePath ?: return false
+    val normPath = path.replace('\\', '/')
+    val normBase = basePath.replace('\\', '/')
+    return normPath.startsWith(normBase)
+}
 
 class IndexFreshnessManager(
     private val project: Project,
@@ -27,6 +44,10 @@ class IndexFreshnessManager(
             override fun after(events: List<VFileEvent>) {
                 for (event in events) {
                     val path = event.path
+                    val isRelevant = belongsToProject(project, path) ||
+                            (event is VFileMoveEvent && belongsToProject(project, event.oldPath))
+                    if (!isRelevant) continue
+
                     when (event) {
                         is VFileDeleteEvent -> sink(path, VfsChangeKind.REMOVED)
                         is VFileMoveEvent -> sink(path, VfsChangeKind.MOVED)

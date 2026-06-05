@@ -32,30 +32,44 @@ class SQLiteIndexStore(
 ) : AutoCloseable {
     private val log = Logger.getInstance(SQLiteIndexStore::class.java)
     private val dbFile = File(workspaceRoot, ".cursorj/index/index-v1.db")
-    private val dbLock = ReentrantLock()
-    private var connection: Connection? = null
+    private val readLock = ReentrantLock()
+    private val writeLock = ReentrantLock()
+    private var readConnection: Connection? = null
+    private var writeConnection: Connection? = null
 
     fun open() {
-        dbLock.withLock {
-            if (connection != null) return
-            dbFile.parentFile?.mkdirs()
-            ensureDriverRegistered()
-            val jdbcUrl = "jdbc:sqlite:${dbFile.absolutePath.replace('\\', '/')}"
-            connection = DriverManager.getConnection(jdbcUrl).apply {
-                autoCommit = true
+        writeLock.withLock {
+            readLock.withLock {
+                if (writeConnection != null) return
+                dbFile.parentFile?.mkdirs()
+                ensureDriverRegistered()
+                val jdbcUrl = "jdbc:sqlite:${dbFile.absolutePath.replace('\\', '/')}"
+                writeConnection = DriverManager.getConnection(jdbcUrl).apply {
+                    autoCommit = true
+                }
+                SqlMigrations.migrate(writeConnection!!)
+                
+                readConnection = DriverManager.getConnection(jdbcUrl).apply {
+                    autoCommit = true
+                }
+                readConnection!!.createStatement().use { stmt ->
+                    stmt.execute("PRAGMA journal_mode=WAL")
+                    stmt.execute("PRAGMA synchronous=NORMAL")
+                    stmt.execute("PRAGMA temp_store=MEMORY")
+                    stmt.execute("PRAGMA foreign_keys=ON")
+                }
             }
-            SqlMigrations.migrate(connection!!)
         }
     }
 
-    fun isOpen(): Boolean = dbLock.withLock { connection != null }
+    fun isOpen(): Boolean = readLock.withLock { readConnection != null }
 
     fun existsOnDisk(): Boolean = dbFile.isFile
 
     fun databasePath(): String = dbFile.absolutePath
 
     fun clearAll() {
-        withConnection { conn ->
+        withWriteConnection { conn ->
             conn.createStatement().use { stmt ->
                 stmt.executeUpdate("DELETE FROM lexical_hits")
                 stmt.executeUpdate("DELETE FROM documents")
@@ -65,7 +79,7 @@ class SQLiteIndexStore(
 
     fun removePath(path: String) {
         val normalized = normalizePath(path)
-        withConnection { conn ->
+        withWriteConnection { conn ->
             conn.prepareStatement("DELETE FROM lexical_hits WHERE path = ?").use { ps ->
                 ps.setString(1, normalized)
                 ps.executeUpdate()
@@ -79,7 +93,7 @@ class SQLiteIndexStore(
 
     fun document(path: String): StoredDocument? {
         val normalized = normalizePath(path)
-        return withConnection { conn ->
+        return withReadConnection { conn ->
             conn.prepareStatement(
                 """
                 SELECT path, content_hash, size_bytes, mtime_ms, indexed_at_ms
@@ -89,7 +103,7 @@ class SQLiteIndexStore(
             ).use { ps ->
                 ps.setString(1, normalized)
                 ps.executeQuery().use { rs ->
-                    if (!rs.next()) return@withConnection null
+                    if (!rs.next()) return@withReadConnection null
                     StoredDocument(
                         path = rs.getString("path"),
                         contentHash = rs.getString("content_hash"),
@@ -104,7 +118,7 @@ class SQLiteIndexStore(
 
     fun upsertDocument(path: String, contentHash: String, sizeBytes: Long, mtimeMs: Long, language: String?) {
         val normalized = normalizePath(path)
-        withConnection { conn ->
+        withWriteConnection { conn ->
             conn.prepareStatement(
                 """
                 INSERT INTO documents(path, content_hash, size_bytes, mtime_ms, language, indexed_at_ms)
@@ -130,7 +144,7 @@ class SQLiteIndexStore(
 
     fun replaceLexicalHits(path: String, hits: List<StoredLexicalHit>) {
         val normalized = normalizePath(path)
-        withConnection { conn ->
+        withWriteConnection { conn ->
             val prevAutoCommit = conn.autoCommit
             conn.autoCommit = false
             try {
@@ -192,7 +206,7 @@ class SQLiteIndexStore(
             append(" ORDER BY score_hint DESC, path ASC, line ASC LIMIT ?")
         }
 
-        return withConnection { conn ->
+        return withReadConnection { conn ->
             conn.prepareStatement(sql).use { ps ->
                 if (caseSensitive) {
                     ps.setString(1, needle)
@@ -226,7 +240,7 @@ class SQLiteIndexStore(
     }
 
     fun documentCount(): Long {
-        return withConnection { conn ->
+        return withReadConnection { conn ->
             conn.createStatement().use { stmt ->
                 stmt.executeQuery("SELECT COUNT(*) FROM documents").use { rs ->
                     if (rs.next()) rs.getLong(1) else 0L
@@ -236,7 +250,7 @@ class SQLiteIndexStore(
     }
 
     fun allDocuments(): List<StoredDocument> {
-        return withConnection { conn ->
+        return withReadConnection { conn ->
             conn.createStatement().use { stmt ->
                 stmt.executeQuery(
                     """
@@ -263,7 +277,7 @@ class SQLiteIndexStore(
     }
 
     fun allDocumentPaths(): List<String> {
-        return withConnection { conn ->
+        return withReadConnection { conn ->
             conn.createStatement().use { stmt ->
                 stmt.executeQuery("SELECT path FROM documents").use { rs ->
                     val paths = mutableListOf<String>()
@@ -277,7 +291,7 @@ class SQLiteIndexStore(
     }
 
     fun pruneByIndexedAt(minIndexedAtMs: Long) {
-        withConnection { conn ->
+        withWriteConnection { conn ->
             val stalePaths = mutableListOf<String>()
             conn.prepareStatement("SELECT path FROM documents WHERE indexed_at_ms < ?").use { ps ->
                 ps.setLong(1, minIndexedAtMs)
@@ -291,13 +305,23 @@ class SQLiteIndexStore(
         }
     }
 
-    private fun requireConnection(): Connection {
-        return connection ?: throw IllegalStateException("SQLite store is not open")
+    private fun requireReadConnection(): Connection {
+        return readConnection ?: throw IllegalStateException("SQLite store is not open")
     }
 
-    private inline fun <T> withConnection(block: (Connection) -> T): T {
-        return dbLock.withLock {
-            block(requireConnection())
+    private fun requireWriteConnection(): Connection {
+        return writeConnection ?: throw IllegalStateException("SQLite store is not open")
+    }
+
+    private inline fun <T> withReadConnection(block: (Connection) -> T): T {
+        return readLock.withLock {
+            block(requireReadConnection())
+        }
+    }
+
+    private inline fun <T> withWriteConnection(block: (Connection) -> T): T {
+        return writeLock.withLock {
+            block(requireWriteConnection())
         }
     }
 
@@ -306,10 +330,15 @@ class SQLiteIndexStore(
     }
 
     override fun close() {
-        dbLock.withLock {
-            runCatching { connection?.close() }
-                .onFailure { log.warn("Failed closing SQLite connection", it) }
-            connection = null
+        writeLock.withLock {
+            readLock.withLock {
+                runCatching { readConnection?.close() }
+                    .onFailure { log.warn("Failed closing SQLite read connection", it) }
+                runCatching { writeConnection?.close() }
+                    .onFailure { log.warn("Failed closing SQLite write connection", it) }
+                readConnection = null
+                writeConnection = null
+            }
         }
     }
 

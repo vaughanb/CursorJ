@@ -1,6 +1,7 @@
 package com.cursorj.indexing.lexical
 
 import com.cursorj.indexing.storage.SQLiteIndexStore
+import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -253,14 +254,70 @@ class LexicalSearchIndexTest {
         }
     }
 
-    private fun projectWithBasePath(basePath: String?): Project {
+    @Test
+    fun `warmupWorkspace aborts immediately if project is disposed`() = runBlocking {
+        val root = Files.createTempDirectory("cursorj-lexical-disposed").toFile()
+        try {
+            var projectDisposed = false
+            File(root, "src").mkdirs()
+            repeat(10) { idx ->
+                File(root, "src/File$idx.kt").writeText("fun fn$idx() = $idx")
+            }
+            val store = SQLiteIndexStore(root.absolutePath)
+            store.open()
+            val project = projectWithBasePath(root.absolutePath) { projectDisposed }
+            val index = LexicalSearchIndex(project, store)
+
+            projectDisposed = true
+            val warmup = index.warmupWorkspace()
+            assertEquals(0, warmup.indexedFiles)
+            assertEquals(0, warmup.skippedFiles)
+            store.close()
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `warmupWorkspace respects user exclude patterns`() = runBlocking {
+        val root = Files.createTempDirectory("cursorj-lexical-exclude").toFile()
+        try {
+            File(root, "src").mkdirs()
+            File(root, "src/Included.kt").writeText("fun included() = 1")
+            File(root, "src/Excluded.log").writeText("error logs here")
+            File(root, "src/ExcludedDir").mkdirs()
+            File(root, "src/ExcludedDir/File.kt").writeText("class ExcludedFile")
+
+            val store = SQLiteIndexStore(root.absolutePath)
+            store.open()
+            val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
+
+            val settings = CursorJSettings.instance
+            val prevExclude = settings.indexExcludePatterns
+            settings.indexExcludePatterns = "*.log, **/ExcludedDir/**"
+
+            try {
+                val warmup = index.warmupWorkspace()
+                assertEquals(1, warmup.indexedFiles)
+                assertTrue(warmup.skippedFiles >= 2)
+            } finally {
+                settings.indexExcludePatterns = prevExclude
+                store.close()
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+
+    private fun projectWithBasePath(basePath: String?, isDisposedProvider: () -> Boolean = { false }): Project {
         return Proxy.newProxyInstance(
             Project::class.java.classLoader,
             arrayOf(Project::class.java),
         ) { _, method, _ ->
             when (method.name) {
                 "getBasePath" -> basePath
-                "isDisposed" -> false
+                "isDisposed" -> isDisposedProvider()
                 "isDefault" -> false
                 "getName" -> "test-project"
                 "getLocationHash" -> "test-hash"

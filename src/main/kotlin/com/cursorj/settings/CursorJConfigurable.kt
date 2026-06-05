@@ -35,6 +35,7 @@ class CursorJConfigurable : Configurable {
     private var retrievalTimeoutField: JBTextField? = null
     private var indexRetentionDaysField: JBTextField? = null
     private var indexMaxDatabaseMbField: JBTextField? = null
+    private var indexExcludePatternsField: JBTextField? = null
     private var rebuildIndexButton: JButton? = null
     private var permissionModeCombo: JComboBox<String>? = null
     private var approvedToolsArea: JBTextArea? = null
@@ -92,6 +93,12 @@ class CursorJConfigurable : Configurable {
         retrievalTimeoutField = JBTextField()
         indexRetentionDaysField = JBTextField()
         indexMaxDatabaseMbField = JBTextField()
+        indexExcludePatternsField = JBTextField().apply {
+            putClientProperty(
+                "JTextField.placeholderText",
+                CursorJBundle.message("settings.indexing.excludePatterns.placeholder"),
+            )
+        }
         rebuildIndexButton = JButton(CursorJBundle.message("settings.indexing.rebuild")).apply {
             addActionListener {
                 val openProjects = ProjectManager.getInstance().openProjects
@@ -179,6 +186,12 @@ class CursorJConfigurable : Configurable {
                 1,
                 false,
             )
+            .addLabeledComponent(
+                JBLabel(CursorJBundle.message("settings.indexing.excludePatterns")),
+                indexExcludePatternsField!!,
+                1,
+                false,
+            )
             .addComponent(rebuildIndexButton!!, 1)
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.permissions")), 1)
             .addLabeledComponent(
@@ -217,6 +230,7 @@ class CursorJConfigurable : Configurable {
             readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000) != settings.retrievalTimeoutMs ||
             readIntField(indexRetentionDaysField, settings.indexRetentionDays, 1, 365) != settings.indexRetentionDays ||
             readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096) != settings.indexMaxDatabaseMb ||
+            (indexExcludePatternsField?.text?.trim() ?: "") != settings.indexExcludePatterns ||
             selectedPermissionMode() != settings.permissionMode ||
             protectExternalWritesCheckbox?.isSelected != settings.protectExternalFileWrites ||
             acpRawLoggingCheckbox?.isSelected != settings.enableAcpRawLogging ||
@@ -239,6 +253,7 @@ class CursorJConfigurable : Configurable {
         settings.retrievalTimeoutMs = readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000)
         settings.indexRetentionDays = readIntField(indexRetentionDaysField, settings.indexRetentionDays, 1, 365)
         settings.indexMaxDatabaseMb = readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096)
+        settings.indexExcludePatterns = indexExcludePatternsField?.text?.trim().orEmpty()
         settings.permissionMode = selectedPermissionMode()
         settings.protectExternalFileWrites = protectExternalWritesCheckbox?.isSelected ?: true
         settings.enableAcpRawLogging = acpRawLoggingCheckbox?.isSelected ?: false
@@ -267,6 +282,7 @@ class CursorJConfigurable : Configurable {
         retrievalTimeoutField?.text = settings.retrievalTimeoutMs.toString()
         indexRetentionDaysField?.text = settings.indexRetentionDays.toString()
         indexMaxDatabaseMbField?.text = settings.indexMaxDatabaseMb.toString()
+        indexExcludePatternsField?.text = settings.indexExcludePatterns
         permissionModeCombo?.selectedIndex = when (PermissionMode.fromId(settings.permissionMode)) {
             PermissionMode.RUN_EVERYTHING -> 1
             else -> 0
@@ -331,6 +347,7 @@ class CursorJConfigurable : Configurable {
         retrievalTimeoutField = null
         indexRetentionDaysField = null
         indexMaxDatabaseMbField = null
+        indexExcludePatternsField = null
         rebuildIndexButton = null
         permissionModeCombo = null
         approvedToolsArea = null

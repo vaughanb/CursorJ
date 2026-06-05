@@ -1,10 +1,16 @@
 package com.cursorj.indexing.lexical
 
+import com.cursorj.indexing.IndexExcludeMatcher
+import com.cursorj.settings.CursorJSettings
 import com.cursorj.indexing.model.RetrievalHit
 import com.cursorj.indexing.storage.SQLiteIndexStore
 import com.cursorj.indexing.storage.StoredLexicalHit
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectFileIndex
+import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -54,11 +60,13 @@ open class LexicalSearchIndex(
                 ?.map { it.toRetrievalHit() }
                 ?: emptyList()
         }.getOrDefault(emptyList())
-        if (persistedHits.size >= maxResults) {
+
+        if (activeStore != null) {
+            // When SQLite store is active, we rely entirely on its records and avoid synchronous filesystem crawls.
             return@withContext SearchResult(
                 hits = persistedHits.take(maxResults),
-                truncated = true,
-                cacheHit = true,
+                truncated = persistedHits.size >= maxResults,
+                cacheHit = persistedHits.isNotEmpty(),
             )
         }
 
@@ -68,6 +76,7 @@ open class LexicalSearchIndex(
         var truncated = hits.size >= maxResults
         val dedupeKeys = hits.map { "${it.path}:${it.startLine}:${it.endLine}" }.toMutableSet()
         walkFiles(basePath) { file ->
+            if (project.isDisposed || !isActive) return@walkFiles false
             if (hits.size >= maxResults) {
                 truncated = true
                 return@walkFiles false
@@ -160,32 +169,116 @@ open class LexicalSearchIndex(
         var indexed = 0
         var skipped = 0
 
-        walkFiles(workspaceRoot) { file ->
-            if (store?.isOpen() != true) return@walkFiles false
-            val sizeBytes = file.length()
-            if (sizeBytes > maxFileSizeBytes || looksBinary(file)) {
-                skipped++
-                return@walkFiles true
+        val fileIndex = runCatching { ProjectFileIndex.getInstance(project) }.getOrNull()
+        if (fileIndex != null) {
+            val projectFiles = mutableListOf<VirtualFile>()
+            ApplicationManager.getApplication().runReadAction {
+                if (project.isDisposed) return@runReadAction
+                fileIndex.iterateContent { file ->
+                    if (!file.isDirectory && file.isValid) {
+                        projectFiles.add(file)
+                    }
+                    true
+                }
             }
-            val normalizedPath = normalizePath(file.path)
-            seenPaths.add(normalizedPath)
-            val mtimeMs = file.lastModified()
-            val existing = existingDocumentsByPath[normalizedPath]
-            if (existing != null && existing.sizeBytes == sizeBytes && existing.mtimeMs == mtimeMs) {
-                skipped++
-                return@walkFiles true
+
+            var loopCount = 0
+            for (file in projectFiles) {
+                if (project.isDisposed || !isActive) break
+                if (store?.isOpen() != true) break
+
+                // Throttling: yield/delay every 25 files to prevent disk/CPU saturation
+                loopCount++
+                if (loopCount % 25 == 0) {
+                    kotlinx.coroutines.delay(15)
+                }
+
+                val normalizedPath = normalizePath(file.path)
+                val excludePatterns = runCatching { CursorJSettings.instance.indexExcludePatterns }.getOrDefault("")
+                if (IndexExcludeMatcher.isPathExcluded(normalizedPath, excludePatterns)) {
+                    skipped++
+                    continue
+                }
+
+                val sizeBytes = file.length
+                val ext = file.extension?.lowercase() ?: ""
+                val isBinary = file.fileType.isBinary || ext in setOf(
+                    "png", "jpg", "jpeg", "gif", "webp", "ico",
+                    "class", "jar", "zip", "gz", "tar", "7z",
+                    "pdf", "exe", "dll", "so", "dylib", "bin",
+                )
+                if (sizeBytes > maxFileSizeBytes || isBinary) {
+                    skipped++
+                    continue
+                }
+                seenPaths.add(normalizedPath)
+                val mtimeMs = file.timeStamp
+                val existing = existingDocumentsByPath[normalizedPath]
+                if (existing != null && existing.sizeBytes == sizeBytes && existing.mtimeMs == mtimeMs) {
+                    skipped++
+                    continue
+                }
+                val content = runCatching {
+                    ApplicationManager.getApplication().runReadAction<String?> {
+                        if (file.isValid) {
+                            val document = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getCachedDocument(file)
+                            document?.text ?: String(file.contentsToByteArray(), StandardCharsets.UTF_8)
+                        } else null
+                    }
+                }.getOrNull()
+                if (content == null) {
+                    skipped++
+                    continue
+                }
+                runCatching { indexFile(normalizedPath, content) }
+                indexed++
+                if ((indexed + skipped) % 100 == 0) {
+                    onProgress?.invoke(indexed, skipped)
+                }
             }
-            val content = runCatching { file.readText(StandardCharsets.UTF_8) }.getOrNull()
-            if (content == null) {
-                skipped++
-                return@walkFiles true
+        } else {
+            var loopCount = 0
+            walkFiles(workspaceRoot) { file ->
+                if (project.isDisposed || !isActive) return@walkFiles false
+                if (store?.isOpen() != true) return@walkFiles false
+
+                // Throttling: sleep every 25 files to prevent disk/CPU saturation
+                loopCount++
+                if (loopCount % 25 == 0) {
+                    Thread.sleep(15)
+                }
+
+                val normalizedPath = normalizePath(file.path)
+                val excludePatterns = runCatching { CursorJSettings.instance.indexExcludePatterns }.getOrDefault("")
+                if (IndexExcludeMatcher.isPathExcluded(normalizedPath, excludePatterns)) {
+                    skipped++
+                    return@walkFiles true
+                }
+
+                val sizeBytes = file.length()
+                if (sizeBytes > maxFileSizeBytes || looksBinary(file)) {
+                    skipped++
+                    return@walkFiles true
+                }
+                seenPaths.add(normalizedPath)
+                val mtimeMs = file.lastModified()
+                val existing = existingDocumentsByPath[normalizedPath]
+                if (existing != null && existing.sizeBytes == sizeBytes && existing.mtimeMs == mtimeMs) {
+                    skipped++
+                    return@walkFiles true
+                }
+                val content = runCatching { file.readText(StandardCharsets.UTF_8) }.getOrNull()
+                if (content == null) {
+                    skipped++
+                    return@walkFiles true
+                }
+                runCatching { indexFile(normalizedPath, content) }
+                indexed++
+                if ((indexed + skipped) % 100 == 0) {
+                    onProgress?.invoke(indexed, skipped)
+                }
+                true
             }
-            runCatching { indexFile(normalizedPath, content) }
-            indexed++
-            if ((indexed + skipped) % 100 == 0) {
-                onProgress?.invoke(indexed, skipped)
-            }
-            true
         }
 
         val removedCount = runCatching {
@@ -306,6 +399,7 @@ open class LexicalSearchIndex(
     }
 
     private fun walkFiles(root: File, onFile: (File) -> Boolean) {
+        if (project.isDisposed) return
         if (!root.exists()) return
         if (root.isFile) {
             onFile(root)
@@ -314,9 +408,11 @@ open class LexicalSearchIndex(
         val stack = ArrayDeque<File>()
         stack.add(root)
         while (stack.isNotEmpty()) {
+            if (project.isDisposed) return
             val dir = stack.removeLast()
             val children = dir.listFiles() ?: continue
             for (child in children) {
+                if (project.isDisposed) return
                 if (child.isDirectory) {
                     if (shouldSkipDirectory(child)) continue
                     stack.add(child)

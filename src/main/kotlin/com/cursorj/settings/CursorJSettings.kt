@@ -41,6 +41,7 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         var showTokenUsage: Boolean = true,
         var runEverythingConfirmationAcknowledged: Boolean = false,
         var savedSessionIds: MutableList<String> = mutableListOf(),
+        var indexExcludePatterns: String = "",
     )
 
     private val stateLock = Any()
@@ -236,6 +237,13 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
             fireSettingsChanged()
         }
 
+    var indexExcludePatterns: String
+        get() = synchronized(stateLock) { myState.indexExcludePatterns }
+        set(value) {
+            synchronized(stateLock) { myState.indexExcludePatterns = value }
+            fireSettingsChanged()
+        }
+
     fun getApprovedPermissionKeys(): Set<String> = synchronized(stateLock) {
         myState.approvedPermissionKeys
             .map { it.trim() }
@@ -292,7 +300,18 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
     }
 
     companion object {
+        private var testInstance: CursorJSettings? = null
+
         val instance: CursorJSettings
-            get() = ApplicationManager.getApplication().getService(CursorJSettings::class.java)
+            get() {
+                val app = ApplicationManager.getApplication()
+                if (app == null) {
+                    if (testInstance == null) {
+                        testInstance = CursorJSettings()
+                    }
+                    return testInstance!!
+                }
+                return app.getService(CursorJSettings::class.java)
+            }
     }
 }
