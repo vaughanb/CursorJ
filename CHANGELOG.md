@@ -4,8 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-05
+
 ### Added
 
+- **Custom Index Exclusions (`indexExcludePatterns`)**: Exclude specific files and directories from project indexing using glob patterns (e.g., `*.log`, `**/dist/**`), customizable in the settings panel.
 - **Subagent tasks (`cursor/task`)**: Handle Cursor ACP subagent notifications and server requests; show a collapsible **Background tasks** list in chat (type, description, running vs completed duration) with tooltips for prompt summary, model, and agent id. JSON-RPC responses return `outcome: completed` so the agent does not block. Unit tests cover `CursorTaskPayload` parsing.
 - Token and cost usage display in chat when the Cursor agent reports ACP usage: per-assistant-message token breakdown from `session/prompt` results, a session context/cost bar from `usage_update` notifications, and a **Settings > Tools > CursorJ** toggle to show or hide usage UI.
 - Manual-only real-CLI integration test suite (`src/integrationTest/`) gated by `CURSORJ_INTEGRATION=1` and hard-blocked on CI. Covers ACP process lifecycle, connection/auth handshake, session creation, model switching, terminal/filesystem handler dispatch, index search, per-session isolation, reconnect recovery, and a canary test for agent model-routing behavior.
@@ -19,6 +22,9 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- **Concurrent SQLite Indexing (WAL)**: Separated SQLite reads and writes to separate connections and locks, allowing concurrent WAL reading/writing to prevent database lock contention.
+- **Index Throttling & Yielding**: Workspace indexing warmup scans now yield and delay every 25 files to prevent CPU/disk IO saturation.
+- **VFS Event Debouncing & Batching**: Coalesce and debounce incoming file-system change tasks (500ms quiet window, 2s max) to batch updates and avoid performance bottlenecks.
 - Model switching now uses in-place `session/set_config_option` per ACP spec; no longer creates a new session on every model change.
 - Status bar and `connectedStatusDetail` now prefer ACP-confirmed session model (`configOptions.currentValue`) over stale local `selectedModel`.
 - Structured model-switch diagnostic logging in `AcpSession` and `ChatPanel` with session/model correlation fields.

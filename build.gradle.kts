@@ -104,7 +104,13 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li>Added toggle for Max Mode</li>
+                <li><strong>Workspace Indexing Performance:</strong> SQLite read/write connection separation using WAL mode prevents UI hangs by allowing concurrent index lookups.</li>
+                <li><strong>Startup & Thread Throttling:</strong> Warmup coroutines yield CPU/disk resources every 25 files, avoiding IDE freezes during startup.</li>
+                <li><strong>Debounced VFS Events:</strong> File change events are grouped and debounced (500ms window) to minimize redundant write transactions.</li>
+                <li><strong>Custom Exclusions:</strong> Added settings UI to exclude specific folders/files via glob patterns (e.g., <code>*.log</code>, <code>**/dist/**</code>).</li>
+                <li><strong>Subagent Task UI:</strong> Added background subagent task monitoring with status, tooltips, and collapsible runtimes.</li>
+                <li><strong>Token & Cost Tracking:</strong> Real-time display of token consumption and cost breakdown directly in the chat panel.</li>
+                <li><strong>Stability & Model Control:</strong> Hardened ACP session lifecycle management, in-place model switching, and reliable status reporting.</li>
             </ul>
         """.trimIndent()
     }
