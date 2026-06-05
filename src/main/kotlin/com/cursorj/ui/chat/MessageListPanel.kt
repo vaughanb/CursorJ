@@ -53,7 +53,7 @@ class MessageListPanel {
         if (message.isStreaming) {
             hideProgress()
             if (streamingRenderer == null) {
-                streamingRenderer = MessageRenderer(message)
+                streamingRenderer = MessageRenderer(message, onToolCallFileClick)
                 innerPanel.add(streamingRenderer!!.component)
                 messageComponents.add(streamingRenderer!!)
                 fullLayoutPassNeeded = true
@@ -73,7 +73,7 @@ class MessageListPanel {
                     last.update(message)
                     updatedComponent = last.component
                 } else {
-                    val renderer = MessageRenderer(message)
+                    val renderer = MessageRenderer(message, onToolCallFileClick)
                     innerPanel.add(renderer.component)
                     messageComponents.add(renderer)
                     fullLayoutPassNeeded = true
@@ -106,7 +106,7 @@ class MessageListPanel {
 
         for (message in messages) {
             if (message.content.isBlank()) continue
-            val renderer = MessageRenderer(message.copy(isStreaming = false))
+            val renderer = MessageRenderer(message.copy(isStreaming = false), onToolCallFileClick)
             innerPanel.add(renderer.component)
             messageComponents.add(renderer)
         }

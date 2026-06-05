@@ -79,18 +79,21 @@ class ChatPanel(
 
     private var connection: AgentConnection? = null
     private var session: AcpSession? = null
-    private val attachedFiles = mutableListOf<ResourceLinkContent>()
     private val pendingSelectionQueue = PendingSelectionQueue()
     private var pendingToolCall: Pair<String, ToolActivity>? = null
     private val permissionRequestSeq = AtomicInteger(1)
     private val chatThemeRefreshScheduled = AtomicBoolean(false)
     private val pendingPermissionResponses = ConcurrentHashMap<String, CompletableFuture<String>>()
     private var desiredMode: SessionMode = SessionMode.AGENT
+    private val attachedFiles = mutableListOf<ResourceLinkContent>()
+    private val attachedImages = mutableListOf<Pair<String, LocalImageContent>>()
     private var activeHighlighters = mutableListOf<Pair<Editor, RangeHighlighter>>()
     private var firstPromptCarryoverContext: String? = null
     private var pendingModelSwitchContext: String? = null
     private var lastProjectTreeRefreshAt = 0L
     private val minRefreshIntervalMs = 750L
+    private lateinit var dragDropProvider: DragDropProvider
+    private lateinit var chatInputTextArea: JComponent
 
     private val agentProgressColor = JBColor(Color(0x6B9BD2), Color(0x6B9BD2))
     private val planProgressColor = JBColor(Color(0xD4A017), Color(0xD4A017))
@@ -131,6 +134,12 @@ class ChatPanel(
         inputPanel.onQueueMessage = { text -> handleQueueMessage(text) }
         inputPanel.onRollback = { handleRollback() }
         inputPanel.onSelectionChipRemoved = { selectionId -> handleSelectionChipRemoved(selectionId) }
+        inputPanel.onImageChipRemoved = { imageId ->
+            attachedImages.removeIf { it.first == imageId }
+        }
+        inputPanel.fileReferenceValidator = { ref ->
+            resolveReferencePath(ref)?.let { java.io.File(it).exists() } == true
+        }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onConfigOptionChanged = { configId, value -> handleConfigOptionChange(configId, value) }
         inputPanel.onMaxModeToggled = { enabled -> handleMaxModeToggle(enabled) }
@@ -145,17 +154,17 @@ class ChatPanel(
         messageQueuePanel.onEdit = { index, newText -> handleQueueEdit(index, newText) }
         messageQueuePanel.onSendNow = { index -> handleQueueSendNow(index) }
 
-        val dragDrop = DragDropProvider { blocks ->
-            for (block in blocks) {
-                if (block is ResourceLinkContent) {
-                    attachedFiles.add(block)
-                    inputPanel.addFileChip(block.name ?: block.uri)
-                }
-            }
+        dragDropProvider = DragDropProvider { blocks, dropIndex ->
+            importContentBlocks(blocks, dropIndex)
         }
-        dragDrop.install(rootPanel)
-        dragDrop.install(inputPanel.component)
-        dragDrop.install(inputPanel.dropTargetComponent)
+        dragDropProvider.install(rootPanel)
+        dragDropProvider.install(inputPanel.component)
+        chatInputTextArea = inputPanel.dropTargetComponent
+        dragDropProvider.install(chatInputTextArea)
+
+        ChatInputPasteInterceptor.register(chatInputTextArea) { transferable, caretOffset ->
+            importPastedTransferable(transferable, caretOffset)
+        }
 
         installThemeChangeListeners()
 
@@ -330,8 +339,9 @@ class ChatPanel(
 
     fun sendPrompt(text: String) {
         onPromptSubmitted?.invoke(text)
+        val processedText = replaceFileReferencesWithMarkdownLinks(text)
         SwingUtilities.invokeLater {
-            val userMessage = ChatMessage(role = "user", content = text)
+            val userMessage = ChatMessage(role = "user", content = processedText)
             messageListPanel.updateOrAddMessage(userMessage)
             messageListPanel.showProgress(color = modeProgressColor())
             inputPanel.setProcessing(true)
@@ -359,7 +369,7 @@ class ChatPanel(
                     }
                 }
                 val carryoverContext = firstPromptCarryoverContext
-                val promptPayload = buildPromptPayload(text, carryoverContext)
+                val promptPayload = buildPromptPayload(processedText, carryoverContext)
                 s.sendPrompt(promptPayload.contentBlocks, promptPayload.displayUserText)
                 if (!carryoverContext.isNullOrBlank()) {
                     firstPromptCarryoverContext = null
@@ -368,7 +378,7 @@ class ChatPanel(
                 throw e
             } catch (e: Exception) {
                 if (isContextExhausted(e)) {
-                    recoverFromContextExhaustion(text)
+                    recoverFromContextExhaustion(processedText)
                 } else {
                     log.warn("Error sending prompt", e)
                     showError(e.message ?: "Failed to send prompt")
@@ -379,8 +389,8 @@ class ChatPanel(
                     commitPendingToolCall()
                     messageListPanel.hideProgress()
                     refreshRollbackAvailability()
-                    attachedFiles.clear()
-                    inputPanel.clearFileChips()
+                    attachedImages.clear()
+                    inputPanel.clearImageChips()
                     clearQueuedSelectionContext()
                     if (desiredMode == SessionMode.PLAN &&
                         (session?.planCreated == true || !session?.agentWrittenPlanPath.isNullOrBlank())
@@ -470,8 +480,8 @@ class ChatPanel(
                 messageListPanel.hideProgress()
                 clearQueuedSelectionContext()
                 messageQueuePanel.clear()
-                attachedFiles.clear()
-                inputPanel.clearFileChips()
+                attachedImages.clear()
+                inputPanel.clearImageChips()
                 inputPanel.setProcessing(false)
                 service.promptHistoryManager.clearNavigation(historySessionKey)
                 refreshRollbackAvailability()
@@ -501,8 +511,6 @@ class ChatPanel(
                 commitPendingToolCall()
                 messageListPanel.hideProgress()
                 refreshRollbackAvailability()
-                attachedFiles.clear()
-                inputPanel.clearFileChips()
                 clearQueuedSelectionContext()
                 service.promptHistoryManager.clearNavigation(historySessionKey)
                 sendPrompt(text)
@@ -846,8 +854,17 @@ class ChatPanel(
         if (CursorJSettings.instance.autoAttachActiveFile) {
             visibleBlocks.addAll(service.activeFileProvider.buildContextBlocks())
         }
-        for (file in attachedFiles) {
-            visibleBlocks.add(file)
+        val regex = Regex("""\[([^]]+)]\(file://([^)]+)\)""")
+        val extractedPaths = mutableSetOf<String>()
+        for (match in regex.findAll(text)) {
+            val name = match.groupValues[1]
+            val path = match.groupValues[2]
+            if (extractedPaths.add(path.lowercase())) {
+                visibleBlocks.add(ResourceLinkContent(uri = path, name = name))
+            }
+        }
+        for ((_, img) in attachedImages) {
+            visibleBlocks.add(img)
         }
         visibleBlocks.addAll(pendingSelectionQueue.flattenBlocks())
         visibleBlocks.addAll(buildRetrievedContext(text))
@@ -965,7 +982,85 @@ class ChatPanel(
         }
     }
 
+    private fun importPastedTransferable(transferable: java.awt.datatransfer.Transferable, dropIndex: Int): Boolean {
+        val blocks = dragDropProvider.extractAttachableBlocksFromTransferable(transferable)
+        if (blocks.isEmpty()) return false
+        importContentBlocks(blocks, dropIndex)
+        return true
+    }
+
+    private fun importContentBlocks(blocks: List<ContentBlock>, dropIndex: Int = -1) {
+        val references = mutableListOf<String>()
+        val imageBlocks = mutableListOf<LocalImageContent>()
+        for (block in blocks) {
+            when (block) {
+                is ResourceLinkContent -> references.add(getFileReferenceString(block.uri))
+                is LocalImageContent -> imageBlocks.add(block)
+                is TextContent, is ImageContent, is ResourceContent -> Unit
+            }
+        }
+        if (references.isNotEmpty()) {
+            inputPanel.insertText(references.joinToString(" ") + " ", dropIndex)
+        }
+        if (imageBlocks.isNotEmpty()) {
+            attachImageBlocks(imageBlocks)
+        }
+    }
+
+    private fun attachImageBlocks(blocks: List<LocalImageContent>) {
+        for (block in blocks) {
+            val id = "img-${System.currentTimeMillis()}-${block.name.hashCode()}"
+            attachedImages.add(id to block)
+            inputPanel.addImageChip(id, block.name)
+        }
+    }
+
+    private fun getFileReferenceString(absolutePath: String): String {
+        val basePath = service.project.basePath
+        val cleanPath = absolutePath.replace('\\', '/')
+        val ref = if (basePath != null && cleanPath.startsWith(basePath.replace('\\', '/'))) {
+            cleanPath.removePrefix(basePath.replace('\\', '/')).trimStart('/')
+        } else {
+            cleanPath
+        }
+        return if (ref.contains(' ')) {
+            "@\"$ref\""
+        } else {
+            "@$ref"
+        }
+    }
+
+    private fun resolveReferencePath(ref: String): String? {
+        val normalized = FileReferenceSupport.normalizeReferencePath(ref)
+        if (normalized.isBlank()) return null
+
+        val direct = java.io.File(normalized)
+        if (direct.isAbsolute) {
+            return direct.absolutePath
+        }
+
+        val basePath = service.project.basePath ?: return normalized
+        return java.io.File(basePath, normalized).absolutePath
+    }
+
+    private fun replaceFileReferencesWithMarkdownLinks(text: String): String {
+        return FileReferenceSupport.referenceRegex.replace(text) { match ->
+            val extractedPath = FileReferenceSupport.extractPath(match)
+            val absolutePath = resolveReferencePath(extractedPath) ?: return@replace match.value
+            val file = java.io.File(absolutePath)
+            if (file.exists()) {
+                val name = file.name
+                "[$name](file://$absolutePath)"
+            } else {
+                match.value
+            }
+        }
+    }
+
     override fun dispose() {
+        if (::chatInputTextArea.isInitialized) {
+            ChatInputPasteInterceptor.unregister(chatInputTextArea)
+        }
         CursorJConnectionStatus.removeListener(statusListener)
         clearDiffHighlights()
         scope.cancel()

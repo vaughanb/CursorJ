@@ -90,7 +90,8 @@ intellijPlatform {
                 <li>Full agentic coding with file editing, terminal commands, and codebase understanding</li>
                 <li>Project indexing with lexical search, symbol lookup, and optional semantic reranking</li>
                 <li>Reliable SQLite-backed lexical persistence with safe concurrent index updates</li>
-                <li>Active file and selection context injection with drag-and-drop file references</li>
+                <li>Inline <code>@file</code> references and image attachments via drag-and-drop or paste</li>
+                <li>Active file and selection context injection</li>
                 <li>Multiple concurrent chat sessions with intelligent tab naming</li>
                 <li>Chat history with search and restore; prompt history</li>
                 <li>Unified rules management for global user rules and project rules (<code>.cursor/rules/</code>)</li>
@@ -104,13 +105,14 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li><strong>Workspace Indexing Performance:</strong> SQLite read/write connection separation using WAL mode prevents UI hangs by allowing concurrent index lookups.</li>
-                <li><strong>Startup & Thread Throttling:</strong> Warmup coroutines yield CPU/disk resources every 25 files, avoiding IDE freezes during startup.</li>
-                <li><strong>Debounced VFS Events:</strong> File change events are grouped and debounced (500ms window) to minimize redundant write transactions.</li>
-                <li><strong>Custom Exclusions:</strong> Added settings UI to exclude specific folders/files via glob patterns (e.g., <code>*.log</code>, <code>**/dist/**</code>).</li>
-                <li><strong>Subagent Task UI:</strong> Added background subagent task monitoring with status, tooltips, and collapsible runtimes.</li>
-                <li><strong>Token & Cost Tracking:</strong> Real-time display of token consumption and cost breakdown directly in the chat panel.</li>
-                <li><strong>Stability & Model Control:</strong> Hardened ACP session lifecycle management, in-place model switching, and reliable status reporting.</li>
+                <li><strong>Inline file &amp; image attachments:</strong> Drag-and-drop or paste project files as Cursor-style <code>@file</code> references, or attach images as removable chips sent to the agent.</li>
+                <li><strong>Workspace indexing performance:</strong> SQLite WAL read/write separation, startup throttling, and debounced VFS updates reduce IDE hangs during indexing.</li>
+                <li><strong>Custom index exclusions:</strong> Exclude folders and files from indexing with glob patterns in <strong>Settings &gt; Tools &gt; CursorJ</strong>.</li>
+                <li><strong>Subagent task UI:</strong> Collapsible background task list for <code>cursor/task</code> with status, duration, and tooltips.</li>
+                <li><strong>Token &amp; cost tracking:</strong> Per-message token breakdown and session usage bar (toggle in settings).</li>
+                <li><strong>Richer chat markdown:</strong> Tables, task lists, nested quotes, strikethrough, autolinks, emoji aliases, and theme-aware colors.</li>
+                <li><strong>Stability &amp; model control:</strong> Hardened ACP session stop logic, in-place model switching, and ACP-confirmed status reporting.</li>
+                <li><strong>Plan mode fixes:</strong> Build button and on-disk plan sync when the agent edits plans under <code>.cursor/plans</code>.</li>
             </ul>
         """.trimIndent()
     }

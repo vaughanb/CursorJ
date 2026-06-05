@@ -235,6 +235,14 @@ data class ImageContent(
 ) : ContentBlock
 
 @Serializable
+@SerialName("local_image")
+data class LocalImageContent(
+    val name: String,
+    val mimeType: String,
+    val data: String,
+) : ContentBlock
+
+@Serializable
 @SerialName("resource")
 data class ResourceContent(
     val uri: String,

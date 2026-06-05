@@ -19,6 +19,9 @@ All notable changes to this project are documented in this file.
 - ACP model metadata parsing from `session/new` to keep model state in sync with the active session.
 - Unit tests covering agent plan path detection, session handling of plan edit diffs and "Plan saved" tool text, and filesystem notifications for plan writes under `.cursor/plans`.
 - Unit tests for chat markdown palette selection (`MarkdownRenderer`) and editor inserted-line highlight fallbacks (`EditorInsertedDiffHighlight`).
+- **Inline `@file` references in chat input**: Drag-and-drop project files into the prompt as Cursor-style inline references with pill highlighting; on send, references become markdown file links and are attached as `ResourceLinkContent` blocks for the agent.
+- **Image attachments in chat input**: Paste or drop image files (including clipboard images and Linux screenshot file paths) as removable chips above the input; images are sent to the agent via ACP `ImageContent`.
+- Clickable `file://` links in user chat messages open the referenced file in the editor.
 
 ### Changed
 
@@ -38,6 +41,7 @@ All notable changes to this project are documented in this file.
 - Greatly improved markdown rendering in chat, including richer support for headings, tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks.
 - Chat embedded HTML (messages and collapsible diffs) picks text colors from the bubble surface and refreshes when the LaF or editor color scheme changes.
 - Improved symbol index bridge with safer PSI access patterns.
+- Non-image drag-and-drop in chat inserts inline `@path` references at the drop caret instead of separate attachment chips above the input.
 
 ### Fixed
 
@@ -49,6 +53,10 @@ All notable changes to this project are documented in this file.
 - Plan mode: an open plan document could stay stale while the agent wrote changes to disk; the IDE refreshes the virtual file and reloads open editors when the tracked plan path is touched.
 - Plan mode: improved recognition of the agent's plan file (`cursor/create_plan` / `_cursor/create_plan`, "Plan saved to ..." in tool updates, and markdown paths under `.cursor/plans`) for **View Plan** and related behavior.
 - "Added line" highlights when opening a file from chat no longer follow UI theme alone when the editor uses a different color scheme (unreadable contrast in mixed light/dark setups).
+- File reference detection in chat input matches paths with extensions (e.g. `@main.go`, `@src/App.kt`).
+- Multiple image attachment chips wrap to additional rows instead of clipping in a single-line chip area.
+- Image paste on Linux (file-path clipboard data) attaches images instead of inserting raw paths into the prompt.
+- Fixed IDE `BadLocationException` when pasting images by intercepting paste at the IntelliJ editor-action layer.
 
 ## [0.7.0] - 2026-03-12
 

@@ -15,7 +15,10 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.*
 
-class MessageRenderer(private var message: ChatMessage) {
+class MessageRenderer(
+    private var message: ChatMessage,
+    private val onFileClick: ((String) -> Unit)? = null
+) {
     private val log = Logger.getInstance(MessageRenderer::class.java)
 
     private val panel = object : JPanel() {
@@ -42,6 +45,17 @@ class MessageRenderer(private var message: ChatMessage) {
         border = JBUI.Borders.empty(4, 8)
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
         minimumSize = Dimension(0, 0)
+        addHyperlinkListener { e ->
+            if (e.eventType == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
+                val urlStr = e.description
+                if (urlStr.startsWith("file://")) {
+                    val path = urlStr.removePrefix("file://")
+                    onFileClick?.invoke(path)
+                } else if (urlStr.startsWith("http://") || urlStr.startsWith("https://")) {
+                    com.intellij.ide.BrowserUtil.browse(urlStr)
+                }
+            }
+        }
     }
 
     private val bubblePanel = object : JPanel(BorderLayout()) {

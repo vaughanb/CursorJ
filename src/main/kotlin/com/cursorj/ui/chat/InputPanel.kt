@@ -14,11 +14,21 @@ import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
 import javax.swing.DefaultListCellRenderer
+import javax.swing.event.CaretEvent
+import javax.swing.event.CaretListener
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.text.AbstractDocument
+import javax.swing.text.AttributeSet
+import javax.swing.text.Document
+import javax.swing.text.DocumentFilter
+import javax.swing.text.Highlighter
+import javax.swing.text.Position
 import javax.swing.text.View
 
 class InputPanel {
@@ -154,16 +164,20 @@ class InputPanel {
     private var isProcessing = false
     private var lastKnownRootWidth = -1
 
-    private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+    private val fileChipsPanel = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 4)).apply {
         isOpaque = false
     }
-    private val selectionChipPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+    private val imageChipsPanel = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 4)).apply {
+        isOpaque = false
+    }
+    private val selectionChipPanel = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 4)).apply {
         isOpaque = false
     }
     private val chipsStack = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
         add(fileChipsPanel)
+        add(imageChipsPanel)
         add(selectionChipPanel)
     }
     private val fileChipsWrapper = JPanel(BorderLayout()).apply {
@@ -178,12 +192,24 @@ class InputPanel {
     var onQueueMessage: ((String) -> Unit)? = null
     var onRollback: (() -> Unit)? = null
     var onSelectionChipRemoved: ((String) -> Unit)? = null
+    var onImageChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
     var onConfigOptionChanged: ((configId: String, value: String) -> Unit)? = null
     /** Invoked when the user toggles MAX mode (after [setMaxMode] sync, not during). */
     var onMaxModeToggled: ((Boolean) -> Unit)? = null
     var onHistoryPrev: ((String) -> String?)? = null
     var onHistoryNext: ((String) -> String?)? = null
+    var fileReferenceValidator: ((String) -> Boolean)? = null
+        set(value) {
+            field = value
+            updateHighlights()
+        }
+
+    private val chipBgColor = JBColor(Color(0xE0F0FF), Color(0x2A405A))
+    private val chipBorderColor = JBColor(Color(0xB0D4FF), Color(0x3A5A7A))
+    private val pillPainter = PillHighlightPainter(chipBgColor, chipBorderColor)
+    private val activeHighlightTags = mutableListOf<Any>()
+    private var adjustingReferenceEdit = false
 
     val component: JComponent get() = rootPanel
     val dropTargetComponent: JComponent get() = textArea
@@ -224,8 +250,22 @@ class InputPanel {
         rootPanel.add(topActionsPanel, BorderLayout.NORTH)
         rootPanel.add(container, BorderLayout.CENTER)
 
+        installReferenceEditGuard()
+
         textArea.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
+                if (e.keyCode == KeyEvent.VK_BACK_SPACE) {
+                    if (handleBackspaceOrDelete(isDelete = false)) {
+                        e.consume()
+                        return
+                    }
+                } else if (e.keyCode == KeyEvent.VK_DELETE) {
+                    if (handleBackspaceOrDelete(isDelete = true)) {
+                        e.consume()
+                        return
+                    }
+                }
+
                 if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
                     e.consume()
                     doSend()
@@ -255,9 +295,18 @@ class InputPanel {
         })
 
         textArea.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = adjustTextAreaHeight()
-            override fun removeUpdate(e: DocumentEvent) = adjustTextAreaHeight()
-            override fun changedUpdate(e: DocumentEvent) = adjustTextAreaHeight()
+            override fun insertUpdate(e: DocumentEvent) {
+                adjustTextAreaHeight()
+                scheduleUpdateHighlights()
+            }
+            override fun removeUpdate(e: DocumentEvent) {
+                adjustTextAreaHeight()
+                scheduleUpdateHighlights()
+            }
+            override fun changedUpdate(e: DocumentEvent) {
+                adjustTextAreaHeight()
+                scheduleUpdateHighlights()
+            }
         })
 
         rootPanel.addComponentListener(object : ComponentAdapter() {
@@ -269,6 +318,17 @@ class InputPanel {
                 if (width != lastKnownRootWidth) {
                     lastKnownRootWidth = width
                     adjustTextAreaHeight()
+                    if (fileChipsWrapper.isVisible) {
+                        updateChipPanelLayout()
+                    }
+                }
+            }
+        })
+
+        fileChipsWrapper.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) {
+                if (fileChipsWrapper.isVisible) {
+                    updateChipPanelLayout()
                 }
             }
         })
@@ -446,6 +506,17 @@ class InputPanel {
         textArea.text = text
         textArea.caretPosition = textArea.document.length
         adjustTextAreaHeight()
+        updateHighlights()
+    }
+
+    fun insertText(text: String, index: Int = -1) {
+        val doc = textArea.document
+        val insertPos = if (index in 0..doc.length) index else textArea.caretPosition.coerceIn(0, doc.length)
+        textArea.insert(text, insertPos)
+        textArea.caretPosition = (insertPos + text.length).coerceAtLeast(0)
+        textArea.requestFocusInWindow()
+        adjustTextAreaHeight()
+        updateHighlights()
     }
 
     fun setRollbackEnabled(enabled: Boolean) {
@@ -458,7 +529,7 @@ class InputPanel {
     }
 
     fun addFileChip(name: String) {
-        val chip = createChip(name, removable = true) {
+        val chip = createChip(name, icon = null, removable = true) {
             fileChipsPanel.remove(it)
             updateFileChipsVisibility()
         }
@@ -467,7 +538,7 @@ class InputPanel {
     }
 
     fun addSelectionChip(id: String, label: String) {
-        val chip = createChip(label, removable = true) {
+        val chip = createChip(label, icon = null, removable = true) {
             val chipId = it.name ?: return@createChip
             selectionChipPanel.remove(it)
             updateFileChipsVisibility()
@@ -475,6 +546,18 @@ class InputPanel {
         }
         chip.name = id
         selectionChipPanel.add(chip)
+        updateFileChipsVisibility()
+    }
+
+    fun addImageChip(id: String, name: String) {
+        val chip = createChip(name, icon = AllIcons.FileTypes.Image, removable = true) {
+            val chipId = it.name ?: return@createChip
+            imageChipsPanel.remove(it)
+            updateFileChipsVisibility()
+            onImageChipRemoved?.invoke(chipId)
+        }
+        chip.name = id
+        imageChipsPanel.add(chip)
         updateFileChipsVisibility()
     }
 
@@ -488,8 +571,14 @@ class InputPanel {
         updateFileChipsVisibility()
     }
 
+    fun clearImageChips() {
+        imageChipsPanel.removeAll()
+        updateFileChipsVisibility()
+    }
+
     private fun createChip(
         text: String,
+        icon: Icon?,
         removable: Boolean,
         onRemove: ((JPanel) -> Unit)?,
     ): JPanel {
@@ -499,6 +588,10 @@ class InputPanel {
                 JBUI.Borders.empty(1, 4),
             )
             isOpaque = false
+        }
+        if (icon != null) {
+            val iconLabel = JLabel(icon)
+            chip.add(iconLabel)
         }
         val label = JLabel(text).apply {
             font = font.deriveFont(font.size2D - 1)
@@ -521,15 +614,30 @@ class InputPanel {
     }
 
     private fun updateFileChipsVisibility() {
-        fileChipsWrapper.isVisible = fileChipsPanel.componentCount > 0 || selectionChipPanel.componentCount > 0
+        val hasFileChips = fileChipsPanel.componentCount > 0
+        val hasImageChips = imageChipsPanel.componentCount > 0
+        val hasSelectionChips = selectionChipPanel.componentCount > 0
+        fileChipsPanel.isVisible = hasFileChips
+        imageChipsPanel.isVisible = hasImageChips
+        selectionChipPanel.isVisible = hasSelectionChips
+        fileChipsWrapper.isVisible = hasFileChips || hasImageChips || hasSelectionChips
+        updateChipPanelLayout()
+    }
+
+    private fun updateChipPanelLayout() {
         fileChipsPanel.revalidate()
-        fileChipsPanel.repaint()
+        imageChipsPanel.revalidate()
         selectionChipPanel.revalidate()
-        selectionChipPanel.repaint()
+        chipsStack.revalidate()
         fileChipsWrapper.revalidate()
-        fileChipsWrapper.repaint()
         rootPanel.revalidate()
         rootPanel.repaint()
+        SwingUtilities.invokeLater {
+            if (!fileChipsWrapper.isVisible) return@invokeLater
+            fileChipsWrapper.revalidate()
+            rootPanel.revalidate()
+            rootPanel.repaint()
+        }
     }
 
     private fun doSend() {
@@ -595,6 +703,242 @@ class InputPanel {
             scrollPane.preferredSize = Dimension(scrollPane.preferredSize.width, targetHeight)
             rootPanel.revalidate()
             rootPanel.repaint()
+        }
+    }
+
+    private fun handleBackspaceOrDelete(isDelete: Boolean): Boolean {
+        val validator = fileReferenceValidator ?: return false
+        val text = textArea.text
+        val caret = textArea.caretPosition.coerceIn(0, text.length)
+        if (!isDelete && caret <= 0) return false
+        if (isDelete && caret >= text.length) return false
+
+        for (span in FileReferenceSupport.findValidSpans(text, validator)) {
+            val inRange = if (isDelete) {
+                caret in span.start until span.end
+            } else {
+                caret in (span.start + 1)..span.end
+            }
+            if (inRange) {
+                textArea.replaceRange("", span.start, span.end)
+                textArea.caretPosition = span.start
+                adjustTextAreaHeight()
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun installReferenceEditGuard() {
+        val document = textArea.document as? AbstractDocument ?: return
+
+        document.documentFilter = object : DocumentFilter() {
+            override fun insertString(fb: FilterBypass, offset: Int, string: String?, attr: AttributeSet?) {
+                val insert = string ?: return
+                guardedInsert(fb, offset, insert, attr, replaceLength = 0)
+            }
+
+            override fun replace(fb: FilterBypass, offset: Int, length: Int, text: String?, attrs: AttributeSet?) {
+                val insert = text ?: return
+                guardedInsert(fb, offset, insert, attrs, replaceLength = length)
+            }
+
+            private fun guardedInsert(
+                fb: FilterBypass,
+                offset: Int,
+                insert: String,
+                attr: AttributeSet?,
+                replaceLength: Int,
+            ) {
+                val validator = fileReferenceValidator
+                if (validator == null) {
+                    if (replaceLength > 0) {
+                        super.replace(fb, offset, replaceLength, insert, attr)
+                    } else {
+                        super.insertString(fb, offset, insert, attr)
+                    }
+                    return
+                }
+
+                val docText = fb.document.getText(0, fb.document.length)
+                val spans = FileReferenceSupport.findValidSpans(docText, validator)
+                val containing = FileReferenceSupport.spanContaining(spans, offset)
+                val (insertOffset, insertText) = when {
+                    containing != null -> containing.end to leadingSpaceIfNeeded(fb.document, containing.end, insert)
+                    else -> {
+                        val refEnding = spans.firstOrNull { it.end == offset }
+                        if (refEnding != null) {
+                            offset to leadingSpaceIfNeeded(fb.document, offset, insert)
+                        } else {
+                            offset to insert
+                        }
+                    }
+                }
+
+                if (replaceLength > 0) {
+                    super.replace(fb, insertOffset, replaceLength, insertText, attr)
+                } else {
+                    super.insertString(fb, insertOffset, insertText, attr)
+                }
+                if (insertOffset != offset) {
+                    moveCaretLater(insertOffset + insertText.length)
+                }
+            }
+
+            override fun remove(fb: FilterBypass, offset: Int, length: Int) {
+                if (length <= 0) return
+                val validator = fileReferenceValidator
+                if (validator == null) {
+                    super.remove(fb, offset, length)
+                    return
+                }
+
+                val text = fb.document.getText(0, fb.document.length)
+                val spans = FileReferenceSupport.findValidSpans(text, validator)
+                val removeEnd = offset + length
+                val affected = spans.filter { span -> span.start < removeEnd && span.end > offset }
+                if (affected.isEmpty()) {
+                    super.remove(fb, offset, length)
+                    return
+                }
+
+                val expandedStart = minOf(offset, affected.minOf { it.start })
+                val expandedEnd = maxOf(removeEnd, affected.maxOf { it.end })
+                super.remove(fb, expandedStart, expandedEnd - expandedStart)
+                moveCaretLater(expandedStart)
+            }
+        }
+
+        textArea.addCaretListener(CaretListener { e ->
+            if (adjustingReferenceEdit) return@CaretListener
+            if (e.dot != e.mark) return@CaretListener
+            val validator = fileReferenceValidator ?: return@CaretListener
+            val spans = FileReferenceSupport.findValidSpans(textArea.text, validator)
+            val span = FileReferenceSupport.spanContaining(spans, e.dot) ?: return@CaretListener
+            moveCaret(span.end)
+        })
+
+        textArea.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) {
+                val validator = fileReferenceValidator ?: return
+                @Suppress("DEPRECATION")
+                val pos = textArea.viewToModel(e.point).coerceAtLeast(0)
+                val spans = FileReferenceSupport.findValidSpans(textArea.text, validator)
+                val span = FileReferenceSupport.spanContaining(spans, pos) ?: return
+                moveCaret(span.end)
+            }
+        })
+    }
+
+    private fun leadingSpaceIfNeeded(document: Document, offset: Int, insert: String): String {
+        if (insert.isEmpty() || insert.first().isWhitespace()) return insert
+        if (offset <= 0) return insert
+        return if (document.getText(offset - 1, 1) == " ") insert else " $insert"
+    }
+
+    private fun moveCaret(position: Int) {
+        adjustingReferenceEdit = true
+        try {
+            textArea.caretPosition = position.coerceIn(0, textArea.document.length)
+        } finally {
+            adjustingReferenceEdit = false
+        }
+    }
+
+    private fun moveCaretLater(position: Int) {
+        SwingUtilities.invokeLater { moveCaret(position) }
+    }
+
+    private fun scheduleUpdateHighlights() {
+        SwingUtilities.invokeLater { updateHighlights() }
+    }
+
+    private fun updateHighlights() {
+        val highlighter = textArea.highlighter ?: return
+        val text = textArea.text
+
+        for (tag in activeHighlightTags) {
+            highlighter.removeHighlight(tag)
+        }
+        activeHighlightTags.clear()
+
+        val validator = fileReferenceValidator ?: return
+
+        for (span in FileReferenceSupport.findValidSpans(text, validator)) {
+            val tag = highlighter.addHighlight(span.start, span.end, pillPainter)
+            if (tag != null) {
+                activeHighlightTags.add(tag)
+            }
+        }
+        textArea.repaint()
+    }
+
+    class PillHighlightPainter(
+        private val bgColor: Color,
+        private val borderColor: Color,
+    ) : Highlighter.HighlightPainter {
+        override fun paint(g: Graphics, p0: Int, p1: Int, bounds: Shape, c: javax.swing.text.JTextComponent) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            try {
+                for (rect in highlightRects(c, p0, p1)) {
+                    paintPill(g2, rect)
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        private fun paintPill(g2: Graphics2D, rect: Rectangle) {
+            val padX = 2
+            val padY = 1
+            val x = rect.x - padX
+            val y = rect.y + padY
+            val w = rect.width + padX * 2
+            val h = rect.height - padY * 2
+            if (w <= 0 || h <= 0) return
+
+            g2.color = bgColor
+            g2.fillRoundRect(x, y, w, h, 6, 6)
+
+            g2.color = borderColor
+            g2.stroke = BasicStroke(1f)
+            g2.drawRoundRect(x, y, w, h - 1, 6, 6)
+        }
+
+        private fun highlightRects(c: javax.swing.text.JTextComponent, start: Int, end: Int): List<Rectangle> {
+            if (start >= end) return emptyList()
+            val ui = c.ui ?: return emptyList()
+
+            val rects = mutableListOf<Rectangle>()
+            var segmentStart = start
+            while (segmentStart < end) {
+                val segmentEnd = lineEndOffset(c, segmentStart).coerceAtMost(end)
+                val startRect = ui.modelToView2D(c, segmentStart, Position.Bias.Forward)?.bounds ?: break
+                val endRect = ui.modelToView2D(c, segmentEnd, Position.Bias.Backward)?.bounds ?: break
+
+                val x = startRect.x.toInt()
+                val y = startRect.y.toInt()
+                val height = startRect.height.toInt()
+                val width = if (Math.abs(startRect.y - endRect.y) < 0.5) {
+                    (endRect.x + endRect.width - startRect.x).toInt()
+                } else {
+                    val lineEndRect = ui.modelToView2D(c, segmentEnd, Position.Bias.Backward)?.bounds ?: startRect
+                    (lineEndRect.x + lineEndRect.width - startRect.x).toInt()
+                }
+
+                if (width > 0 && height > 0) {
+                    rects.add(Rectangle(x, y, width, height))
+                }
+                segmentStart = segmentEnd
+            }
+            return rects
+        }
+
+        private fun lineEndOffset(c: javax.swing.text.JTextComponent, offset: Int): Int {
+            val root = c.document.defaultRootElement
+            val line = root.getElementIndex(offset)
+            return root.getElement(line).endOffset
         }
     }
 

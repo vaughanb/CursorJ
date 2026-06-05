@@ -665,7 +665,14 @@ class AcpSession(
         var lastPromptResult: SessionPromptResult? = null
         val stuckToolSignal = CompletableDeferred<ToolCallWatchdogSignal>()
         val promptDeferred = sessionScope.async(start = CoroutineStart.LAZY) {
-            client.sessionPrompt(sessionId, content)
+            val mappedContent = content.map { block ->
+                if (block is LocalImageContent) {
+                    ImageContent(data = block.data, mimeType = block.mimeType)
+                } else {
+                    block
+                }
+            }
+            client.sessionPrompt(sessionId, mappedContent)
         }
         val watchdogJob = sessionScope.launch {
             monitorToolCalls(stuckToolSignal)
