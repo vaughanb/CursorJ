@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - Unreleased
+
 ### Added
 
 - **Cursor Skills (plugin UX)**: Recursive discovery of `SKILL.md` across standard project and global skill directories; **Settings > Tools > CursorJ** panel to list/add/edit/remove project skills; inline chat input `/` and `@` completion for skills merged with ACP `available_commands_update`, shown in a non-focus-stealing popup so the user can keep typing to filter (arrow keys navigate, Enter/Tab accept, Esc dismisses); `@` skill picks insert a file-style reference resolved to `SKILL.md` for `ResourceLinkContent`; optional manual integration test documents whether the real agent surfaces skills in ACP available commands.

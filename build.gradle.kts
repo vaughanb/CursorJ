@@ -112,14 +112,8 @@ intellijPlatform {
             <ul>
                 <li><strong>Cursor Skills:</strong> Discover <code>SKILL.md</code> skills, manage them in settings, and use inline <code>/</code> and <code>@</code> completion in chat (ACP <code>available_commands_update</code> merged in) that keeps focus in the input so you can keep typing to filter.</li>
                 <li><strong>Interactive agent questions:</strong> Answer structured <code>cursor/ask_question</code> prompts and plan-mode multiple-choice questions using native chat cards.</li>
-                <li><strong>Inline file &amp; image attachments:</strong> Drag-and-drop or paste project files as Cursor-style <code>@file</code> references, or attach images as removable chips sent to the agent.</li>
-                <li><strong>Workspace indexing performance:</strong> SQLite WAL read/write separation, startup throttling, and debounced VFS updates reduce IDE hangs during indexing.</li>
-                <li><strong>Custom index exclusions:</strong> Exclude folders and files from indexing with glob patterns in <strong>Settings &gt; Tools &gt; CursorJ</strong>.</li>
-                <li><strong>Subagent task UI:</strong> Collapsible background task list for <code>cursor/task</code> with status, duration, and tooltips.</li>
-                <li><strong>Token &amp; cost tracking:</strong> Per-message token breakdown and session usage bar (toggle in settings).</li>
-                <li><strong>Richer chat markdown:</strong> Tables, task lists, nested quotes, strikethrough, autolinks, emoji aliases, and theme-aware colors.</li>
-                <li><strong>Stability &amp; model control:</strong> Hardened ACP session stop logic, in-place model switching, and ACP-confirmed status reporting.</li>
-                <li><strong>Plan mode fixes:</strong> Build button and on-disk plan sync when the agent edits plans under <code>.cursor/plans</code>.</li>
+                <li><strong>Central machine-local storage:</strong> SQLite indexes, chat history, transcripts, and prompt history now live under <code>~/.cursorj/projects/&lt;project&gt;-&lt;hash&gt;/</code>, with safe one-time migration from legacy workspace <code>.cursorj</code> folders.</li>
+                <li><strong>Richer tool-call activity labels:</strong> Chat now shows file names and line ranges for reads, search patterns/globs for searches, and URLs for web fetches instead of generic tool activity text.</li>
             </ul>
         """.trimIndent()
     }
