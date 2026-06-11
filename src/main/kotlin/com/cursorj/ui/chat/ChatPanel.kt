@@ -1080,8 +1080,8 @@ class ChatPanel(
     }
 
     private fun pathKeyForSkillFile(skill: SkillDefinition): String {
-        return runCatching { java.io.File(skill.skillFile.path).canonicalPath.replace('\\', '/').lowercase() }
-            .getOrElse { skill.skillFile.path.replace('\\', '/').lowercase() }
+        return runCatching { java.io.File(skill.skillFilePath).canonicalPath.replace('\\', '/').lowercase() }
+            .getOrElse { skill.skillFilePath.replace('\\', '/').lowercase() }
     }
 
     private fun isValidChatReference(ref: String): Boolean {
@@ -1094,7 +1094,7 @@ class ChatPanel(
     }
 
     private fun formatSkillAtReference(skill: SkillDefinition): String {
-        return getFileReferenceString(skill.skillFile.path.replace('\\', '/'))
+        return getFileReferenceString(skill.skillFilePath.replace('\\', '/'))
     }
 
     private fun importPastedTransferable(transferable: java.awt.datatransfer.Transferable, dropIndex: Int): Boolean {

@@ -4,6 +4,8 @@ import com.cursorj.CursorJBundle
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.components.JBList
 import com.intellij.util.ui.JBUI
@@ -88,7 +90,7 @@ class SkillsListPanel(private val project: Project) : JPanel(BorderLayout()) {
         val created = SkillsService.createSkill(project, trimmed)
         if (created != null) {
             refresh()
-            FileEditorManager.getInstance(project).openFile(created, true)
+            openFileInEditor(created.absolutePath)
         } else {
             Messages.showErrorDialog(
                 project,
@@ -131,12 +133,24 @@ class SkillsListPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun canDeleteInProject(def: SkillDefinition): Boolean {
         val base = project.basePath?.replace('\\', '/')?.trimEnd('/') ?: return false
-        val folder = def.folder.path.replace('\\', '/')
+        val folder = def.folderPath.replace('\\', '/')
         return folder.startsWith(base)
     }
 
     private fun editSelectedSkill() {
         val selected = list.selectedValue ?: return
-        FileEditorManager.getInstance(project).openFile(selected.skillFile, true)
+        openFileInEditor(selected.skillFilePath)
+    }
+
+    private fun openFileInEditor(path: String) {
+        resolveVirtualFile(path)?.let { file ->
+            FileEditorManager.getInstance(project).openFile(file, true)
+        }
+    }
+
+    private fun resolveVirtualFile(path: String): VirtualFile? {
+        val normalized = path.replace('\\', '/')
+        return LocalFileSystem.getInstance().refreshAndFindFileByPath(normalized)
+            ?: LocalFileSystem.getInstance().findFileByPath(normalized)
     }
 }

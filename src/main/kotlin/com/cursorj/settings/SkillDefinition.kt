@@ -1,7 +1,5 @@
 package com.cursorj.settings
 
-import com.intellij.openapi.vfs.VirtualFile
-
 /** Where a skill was discovered on disk. */
 enum class SkillSourceKind {
     CURSOR,
@@ -21,8 +19,8 @@ enum class SkillScope {
  *
  * @param name Skill invocation name (the folder containing SKILL.md; frontmatter `name` is advisory).
  * @param description From frontmatter when present.
- * @param skillFile The SKILL.md virtual file when resolved in the VFS.
- * @param folder The directory containing SKILL.md (skill root folder).
+ * @param skillFilePath Absolute path to SKILL.md.
+ * @param folderPath Absolute path to the directory containing SKILL.md (skill root folder).
  * @param nestedScopeDir For skills under e.g. `apps/web/.cursor/skills/`, the path prefix (`apps/web`) relative to project base; null for repo-root skills.
  * @param paths Glob patterns from frontmatter limiting activation.
  * @param disableModelInvocation When true, skill is manual-only (`/name`).
@@ -31,8 +29,8 @@ enum class SkillScope {
 data class SkillDefinition(
     val name: String,
     val description: String,
-    val skillFile: VirtualFile,
-    val folder: VirtualFile,
+    val skillFilePath: String,
+    val folderPath: String,
     val nestedScopeDir: String?,
     val paths: List<String>,
     val disableModelInvocation: Boolean,

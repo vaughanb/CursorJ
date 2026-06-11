@@ -137,21 +137,11 @@ object SkillsService {
         }
         val description = fm.description.orEmpty()
 
-        val vf = VfsUtil.findFileByIoFile(skillMd, true)
-            ?: run {
-                log.warn("Could not resolve skill file in VFS: ${skillMd.path}")
-                return null
-            }
-        val folderVf = vf.parent ?: run {
-            log.warn("Skill file has no parent in VFS: ${skillMd.path}")
-            return null
-        }
-
         return SkillDefinition(
             name = name,
             description = description,
-            skillFile = vf,
-            folder = folderVf,
+            skillFilePath = skillMd.absolutePath,
+            folderPath = folder.absolutePath,
             nestedScopeDir = nestedScopeDir,
             paths = fm.paths,
             disableModelInvocation = fm.disableModelInvocation,
@@ -195,9 +185,9 @@ object SkillsService {
 
     /**
      * Creates `.cursor/skills/<name>/SKILL.md` under the project with a valid scaffold.
-     * @return the created [VirtualFile] or null on failure / collision.
+     * @return the created file or null on failure / collision.
      */
-    fun createSkill(project: Project, name: String): VirtualFile? {
+    fun createSkill(project: Project, name: String): File? {
         val basePath = project.basePath ?: return null
         val sanitized = sanitizeSkillFolderName(name)
         val skillsDir = File(File(basePath, ".cursor"), "skills")
@@ -218,8 +208,7 @@ object SkillsService {
         val content = buildSkillScaffold(sanitized)
         return try {
             skillMd.writeText(content, Charsets.UTF_8)
-            LocalFileSystem.getInstance().refreshAndFindFileByIoFile(skillMd)
-                ?: VfsUtil.findFileByIoFile(skillMd, true)
+            skillMd
         } catch (e: Exception) {
             log.warn("Failed to create SKILL.md", e)
             runCatching { skillFolder.deleteRecursively() }
@@ -248,20 +237,14 @@ object SkillsService {
      */
     fun deleteSkill(project: Project, definition: SkillDefinition): Boolean {
         val basePath = project.basePath ?: return false
-        val folderPath = definition.folder.path.replace('\\', '/')
+        val folderPath = definition.folderPath.replace('\\', '/')
         if (!isUnderProjectSkillRoots(basePath, folderPath)) {
             log.warn("Refusing to delete skill outside allowed project skill dirs: $folderPath")
             return false
         }
-        val ioFolder = File(definition.folder.path)
+        val ioFolder = File(definition.folderPath)
         return try {
-            val deleted = ioFolder.deleteRecursively()
-            ioFolder.parentFile?.let { p ->
-                runCatching {
-                    LocalFileSystem.getInstance().refreshAndFindFileByIoFile(p)?.refresh(false, true)
-                }
-            }
-            deleted
+            ioFolder.deleteRecursively()
         } catch (e: Exception) {
             log.warn("Failed to delete skill folder", e)
             false

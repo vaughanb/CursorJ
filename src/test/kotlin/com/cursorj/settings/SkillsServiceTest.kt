@@ -1,9 +1,7 @@
 package com.cursorj.settings
 
 import com.intellij.openapi.project.Project
-import com.intellij.testFramework.ApplicationRule
 import org.junit.After
-import org.junit.ClassRule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
@@ -16,12 +14,6 @@ import org.junit.Assert.assertTrue
 
 @RunWith(JUnit4::class)
 class SkillsServiceTest {
-
-    companion object {
-        @JvmField
-        @ClassRule
-        val appRule: ApplicationRule = ApplicationRule()
-    }
 
     private val tempDirs = mutableListOf<File>()
 
@@ -143,14 +135,11 @@ class SkillsServiceTest {
         val outside = File(base, "not-skills/evil/SKILL.md")
         check(outside.parentFile.mkdirs())
         outside.writeText("---\nname: evil\n---\n")
-        val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
-            .refreshAndFindFileByPath(outside.absolutePath.replace('\\', '/'))!!
-        val folder = vf.parent!!
         val fake = SkillDefinition(
             name = "evil",
             description = "",
-            skillFile = vf,
-            folder = folder,
+            skillFilePath = outside.absolutePath,
+            folderPath = outside.parentFile.absolutePath,
             nestedScopeDir = null,
             paths = emptyList(),
             disableModelInvocation = false,
