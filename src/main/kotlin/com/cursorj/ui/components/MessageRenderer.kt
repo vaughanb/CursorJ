@@ -213,6 +213,10 @@ class MessageRenderer(
         usageRow.isVisible = true
     }
 
+    /** True when this is a non-user bubble showing exactly [content] (used to de-duplicate parsed plan questions). */
+    fun matchesContent(content: String): Boolean =
+        message.role != "user" && message.content == content
+
     /** True when [incoming] is the same assistant bubble with token usage to merge (ACP turn completion). */
     fun matchesUsagePatchTarget(incoming: ChatMessage): Boolean {
         return message.role == "assistant" &&

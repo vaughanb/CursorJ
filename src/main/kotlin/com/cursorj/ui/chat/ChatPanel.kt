@@ -11,10 +11,13 @@ import com.cursorj.acp.SessionMode
 import com.cursorj.acp.SubagentTaskEvent
 import com.cursorj.acp.ToolActivity
 import com.cursorj.acp.messages.*
+import com.cursorj.handlers.AskQuestionOutcome
 import com.cursorj.rollback.RollbackStatus
 import com.cursorj.context.DragDropProvider
 import com.cursorj.permissions.PermissionMode
 import com.cursorj.settings.CursorJSettings
+import com.cursorj.settings.SkillDefinition
+import com.cursorj.settings.SkillsService
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.cursorj.ui.toolwindow.CursorJService
 import com.cursorj.ui.util.EditorInsertedDiffHighlight
@@ -82,9 +85,12 @@ class ChatPanel(
     private val pendingSelectionQueue = PendingSelectionQueue()
     private var pendingToolCall: Pair<String, ToolActivity>? = null
     private val permissionRequestSeq = AtomicInteger(1)
+    private val askQuestionSeq = AtomicInteger(1)
     private val chatThemeRefreshScheduled = AtomicBoolean(false)
     private val pendingPermissionResponses = ConcurrentHashMap<String, CompletableFuture<String>>()
+    private val pendingAskQuestionResponses = ConcurrentHashMap<String, CompletableFuture<AskQuestionOutcome>>()
     private var desiredMode: SessionMode = SessionMode.AGENT
+    private var lastPlanQuestionSignature: String? = null
     private val attachedFiles = mutableListOf<ResourceLinkContent>()
     private val attachedImages = mutableListOf<Pair<String, LocalImageContent>>()
     private var activeHighlighters = mutableListOf<Pair<Editor, RangeHighlighter>>()
@@ -94,6 +100,7 @@ class ChatPanel(
     private val minRefreshIntervalMs = 750L
     private lateinit var dragDropProvider: DragDropProvider
     private lateinit var chatInputTextArea: JComponent
+    private var cachedSkillFilePaths: Set<String> = emptySet()
 
     private val agentProgressColor = JBColor(Color(0x6B9BD2), Color(0x6B9BD2))
     private val planProgressColor = JBColor(Color(0xD4A017), Color(0xD4A017))
@@ -138,7 +145,10 @@ class ChatPanel(
             attachedImages.removeIf { it.first == imageId }
         }
         inputPanel.fileReferenceValidator = { ref ->
-            resolveReferencePath(ref)?.let { java.io.File(it).exists() } == true
+            isValidChatReference(ref)
+        }
+        inputPanel.onSkillReferenceInserted = { skill ->
+            inputPanel.addFileChip("Skill: ${skill.name}")
         }
         inputPanel.onModeChanged = { mode -> handleModeChange(mode) }
         inputPanel.onConfigOptionChanged = { configId, value -> handleConfigOptionChange(configId, value) }
@@ -177,6 +187,7 @@ class ChatPanel(
 
         SwingUtilities.invokeLater {
             inputPanel.setMaxMode(MaxModeManager.isMaxModeEnabled())
+            refreshSkillInputCompletion()
         }
     }
 
@@ -202,6 +213,10 @@ class ChatPanel(
         connection.setPermissionPromptResolver { request ->
             queuePermissionRequest(request)
         }
+        connection.setAskQuestionResolver { request ->
+            queueAskQuestion(request)
+        }
+        refreshSkillInputCompletion()
     }
 
     /**
@@ -210,6 +225,9 @@ class ChatPanel(
     fun prepareForAgentReconnect() {
         connection = null
         session = null
+        SwingUtilities.invokeLater {
+            inputPanel.setSlashCommands(emptyList())
+        }
     }
 
     /**
@@ -283,6 +301,9 @@ class ChatPanel(
                 if (!message.isStreaming && session.isProcessing) {
                     messageListPanel.showProgress(color = modeProgressColor())
                 }
+                if (!message.isStreaming) {
+                    maybeRenderPlanQuestions(message)
+                }
                 refreshRollbackAvailability()
             }
         }
@@ -333,6 +354,14 @@ class ChatPanel(
         session.addConfigListener { options ->
             updateConfigOptions(options)
         }
+
+        session.addAvailableCommandsListener { commands ->
+            SwingUtilities.invokeLater {
+                inputPanel.setSlashCommands(commands)
+            }
+        }
+        inputPanel.setSlashCommands(session.availableCommands)
+        refreshSkillInputCompletion()
 
         refreshRollbackAvailability()
     }
@@ -740,6 +769,50 @@ class ChatPanel(
         return true
     }
 
+    /**
+     * Renders selectable options for plan-mode clarifying questions that the agent emits as plain
+     * text. Current `cursor-agent` ACP builds do not expose the structured `ask_question` tool, so
+     * [PlanQuestionParser] recovers the choices from prose; selecting them sends the reply as the
+     * next prompt. Must be called on the EDT.
+     */
+    private fun maybeRenderPlanQuestions(message: ChatMessage) {
+        if (desiredMode != SessionMode.PLAN) return
+        if (message.role == "user") return
+        val content = message.content
+        if (content.isBlank()) return
+        val signature = content.trim()
+        if (signature == lastPlanQuestionSignature) return
+
+        val questions = PlanQuestionParser.parse(content)
+        if (questions.isEmpty()) return
+
+        lastPlanQuestionSignature = signature
+        messageListPanel.hidePlanQuestionSource(content)
+        messageListPanel.addPlanQuestionCard(questions) { reply ->
+            sendPrompt(reply)
+        }
+    }
+
+    /**
+     * Renders the structured `cursor/ask_question` card and returns a future the agent's ACP request
+     * handler blocks on. Used when a Cursor-aware agent build exposes the interactive question tool;
+     * otherwise the agent falls back to permission requests and [maybeRenderPlanQuestions].
+     */
+    private fun queueAskQuestion(request: AskQuestionParams): CompletableFuture<AskQuestionOutcome> {
+        val requestId = "ask-question-${askQuestionSeq.getAndIncrement()}"
+        val response = CompletableFuture<AskQuestionOutcome>()
+        pendingAskQuestionResponses[requestId] = response
+        response.whenComplete { _, _ -> pendingAskQuestionResponses.remove(requestId) }
+        SwingUtilities.invokeLater {
+            messageListPanel.addAskQuestionCard(request) { outcome ->
+                if (!response.isDone) {
+                    response.complete(outcome)
+                }
+            }
+        }
+        return response
+    }
+
     private fun queuePermissionRequest(request: RequestPermissionParams): CompletableFuture<String> {
         val requestId = "permission-${permissionRequestSeq.getAndIncrement()}"
         val response = CompletableFuture<String>()
@@ -982,6 +1055,48 @@ class ChatPanel(
         }
     }
 
+    private fun refreshSkillInputCompletion() {
+        val skills = discoverSkillsForCompletion()
+        SwingUtilities.invokeLater {
+            inputPanel.setSkillDefinitions(skills)
+            inputPanel.skillAtReferenceFormatter = { skill -> formatSkillAtReference(skill) }
+            inputPanel.skillCompletionProvider = { discoverSkillsForCompletion() }
+            session?.let { inputPanel.setSlashCommands(it.availableCommands) }
+        }
+    }
+
+    /**
+     * Discovers skills and refreshes the reference cache. Used both for the periodic refresh and as the
+     * live provider queried when a completion popup opens, so skills created after session bind still appear.
+     */
+    private fun discoverSkillsForCompletion(): List<SkillDefinition> {
+        if (service.project.isDisposed) return emptyList()
+        val skills = runCatching { SkillsService.discoverSkills(service.project) }.getOrElse { e ->
+            log.debug("discoverSkills failed", e)
+            emptyList()
+        }
+        cachedSkillFilePaths = skills.map { pathKeyForSkillFile(it) }.toSet()
+        return skills
+    }
+
+    private fun pathKeyForSkillFile(skill: SkillDefinition): String {
+        return runCatching { java.io.File(skill.skillFile.path).canonicalPath.replace('\\', '/').lowercase() }
+            .getOrElse { skill.skillFile.path.replace('\\', '/').lowercase() }
+    }
+
+    private fun isValidChatReference(ref: String): Boolean {
+        val path = resolveReferencePath(ref) ?: return false
+        val file = java.io.File(path)
+        if (file.exists()) return true
+        val key = runCatching { file.canonicalPath.replace('\\', '/').lowercase() }
+            .getOrElse { path.replace('\\', '/').lowercase() }
+        return key in cachedSkillFilePaths
+    }
+
+    private fun formatSkillAtReference(skill: SkillDefinition): String {
+        return getFileReferenceString(skill.skillFile.path.replace('\\', '/'))
+    }
+
     private fun importPastedTransferable(transferable: java.awt.datatransfer.Transferable, dropIndex: Int): Boolean {
         val blocks = dragDropProvider.extractAttachableBlocksFromTransferable(transferable)
         if (blocks.isEmpty()) return false
@@ -1068,6 +1183,10 @@ class ChatPanel(
             if (!future.isDone) future.complete("reject-once")
         }
         pendingPermissionResponses.clear()
+        pendingAskQuestionResponses.values.forEach { future ->
+            if (!future.isDone) future.complete(AskQuestionOutcome.Cancelled)
+        }
+        pendingAskQuestionResponses.clear()
     }
 
     companion object {

@@ -8,8 +8,11 @@ import com.cursorj.acp.messages.SessionUsageInfo
 import com.cursorj.acp.messages.UsageCost
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.components.UsageLabel
+import com.cursorj.acp.messages.AskQuestionParams
 import com.cursorj.acp.messages.PermissionOption
 import com.cursorj.acp.messages.RequestPermissionParams
+import com.cursorj.handlers.AskQuestionAnswer
+import com.cursorj.handlers.AskQuestionOutcome
 import com.cursorj.permissions.PermissionPolicy
 import com.cursorj.ui.components.CollapsibleDiffPanel
 import com.cursorj.ui.components.MessageRenderer
@@ -319,6 +322,18 @@ class MessageListPanel {
         }
     }
 
+    /**
+     * Hides the most recent non-user bubble whose text is [content] so a parsed plan question is shown
+     * only once, as its interactive card. The renderer is kept (not removed) so a later token-usage
+     * patch for the same message still resolves to it instead of re-adding a visible duplicate.
+     */
+    fun hidePlanQuestionSource(content: String) {
+        val renderer = messageComponents.lastOrNull { it.matchesContent(content) } ?: return
+        renderer.component.isVisible = false
+        innerPanel.revalidate()
+        innerPanel.repaint()
+    }
+
     /** Interactive plan/design questions: distinct styling, full-text clickable rows (not a permission dropdown). */
     private fun addAgentQuestionCard(
         requestId: String,
@@ -509,6 +524,436 @@ class MessageListPanel {
         innerPanel.revalidate()
         innerPanel.repaint()
         scrollToBottom()
+    }
+
+    /**
+     * Renders a selectable card for plan-mode questions recovered from agent prose by
+     * [PlanQuestionParser]. Each question allows a single selection; [onSubmit] receives a composed
+     * reply once every question is answered and the user clicks send.
+     *
+     * This is the client-side fallback for current `cursor-agent` ACP builds, which deliver
+     * clarifying questions as plain text rather than the structured interactive permission requests
+     * handled by [addAgentQuestionCard].
+     */
+    fun addPlanQuestionCard(
+        questions: List<ParsedQuestion>,
+        onSubmit: (String) -> Unit,
+    ) {
+        if (questions.isEmpty()) return
+
+        val borderColor = JBColor(Color(0xCC9F52), Color(0x8D6A33))
+        val bgColor = JBColor(Color(0xFFF9EE), Color(0x3A3222))
+        val titleColor = JBColor(Color(0x7C530E), Color(0xD0A86A))
+        val secondaryColor = JBColor(Color(0x6E6E6E), Color(0x9C9C9C))
+        val rowBaseBg = JBColor(Color(0xFFFFFF), Color(0x2F2C26))
+        val rowHoverBg = JBColor(Color(0xFFF3E0), Color(0x4A4030))
+        val rowSelectedBg = JBColor(Color(0xFCE2B0), Color(0x5A4A2E))
+        val rowBorderColor = JBColor(Color(0xE0C995), Color(0x6B5E48))
+        val rowSelectedBorder = JBColor(Color(0xCC9F52), Color(0xB8915A))
+        val rowTextColor = JBColor(Color(0x3D3518), Color(0xDDD5C8))
+
+        val card = object : JPanel() {
+            init {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            }
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(borderColor, 1),
+                JBUI.Borders.empty(8, 10),
+            )
+            isOpaque = true
+            background = bgColor
+            name = "plan-question-card"
+        }
+
+        card.add(
+            JLabel(CursorJBundle.message("chat.question.cardTitle")).apply {
+                foreground = titleColor
+                font = font.deriveFont(Font.BOLD)
+                alignmentX = Component.LEFT_ALIGNMENT
+            },
+        )
+
+        val selectedMarkers = arrayOfNulls<String>(questions.size)
+        val rowsByQuestion = List(questions.size) { mutableListOf<JPanel>() }
+        var submitted = false
+
+        val statusLabel = JLabel().apply {
+            isVisible = false
+            foreground = secondaryColor
+            alignmentX = Component.LEFT_ALIGNMENT
+            font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
+        }
+        val sendButton = JButton(CursorJBundle.message("chat.question.send")).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            isEnabled = false
+        }
+
+        fun allAnswered(): Boolean = selectedMarkers.all { it != null }
+
+        val optionFontSize = (card.font.size2D - 2f).coerceAtLeast(11f)
+
+        for ((qIndex, question) in questions.withIndex()) {
+            card.add(Box.createVerticalStrut(8))
+            question.prompt?.takeIf { it.isNotBlank() }?.let { prompt ->
+                card.add(
+                    JTextArea(prompt).apply {
+                        isEditable = false
+                        lineWrap = true
+                        wrapStyleWord = true
+                        isOpaque = false
+                        foreground = titleColor
+                        border = JBUI.Borders.empty(0)
+                        columns = 56
+                        alignmentX = Component.LEFT_ALIGNMENT
+                        font = font.deriveFont(Font.BOLD, (font.size2D - 1f).coerceAtLeast(11f))
+                    },
+                )
+                card.add(Box.createVerticalStrut(4))
+            }
+
+            val listPanel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                alignmentX = Component.LEFT_ALIGNMENT
+                isOpaque = false
+            }
+
+            fun refreshQuestionRows() {
+                for ((idx, row) in rowsByQuestion[qIndex].withIndex()) {
+                    val isSelected = selectedMarkers[qIndex] == question.options[idx].marker
+                    row.background = if (isSelected) rowSelectedBg else rowBaseBg
+                    row.border = JBUI.Borders.compound(
+                        JBUI.Borders.customLine(if (isSelected) rowSelectedBorder else rowBorderColor, 1),
+                        JBUI.Borders.empty(4, 8),
+                    )
+                }
+            }
+
+            for (option in question.options) {
+                val row = JPanel(BorderLayout()).apply {
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    border = JBUI.Borders.compound(
+                        JBUI.Borders.customLine(rowBorderColor, 1),
+                        JBUI.Borders.empty(4, 8),
+                    )
+                    background = rowBaseBg
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                }
+                val textArea = JTextArea("${option.marker}) ${option.label}").apply {
+                    isEditable = false
+                    lineWrap = true
+                    wrapStyleWord = true
+                    isOpaque = false
+                    foreground = rowTextColor
+                    border = JBUI.Borders.empty(0)
+                    columns = 64
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    font = font.deriveFont(Font.PLAIN, optionFontSize)
+                }
+                row.add(textArea, BorderLayout.CENTER)
+                rowsByQuestion[qIndex].add(row)
+
+                val hover = object : MouseAdapter() {
+                    override fun mouseEntered(e: MouseEvent) {
+                        if (!submitted && selectedMarkers[qIndex] != option.marker) row.background = rowHoverBg
+                    }
+
+                    override fun mouseExited(e: MouseEvent) {
+                        if (!submitted && selectedMarkers[qIndex] != option.marker) row.background = rowBaseBg
+                    }
+
+                    override fun mouseClicked(e: MouseEvent) {
+                        if (submitted) return
+                        selectedMarkers[qIndex] = option.marker
+                        refreshQuestionRows()
+                        sendButton.isEnabled = allAnswered()
+                    }
+                }
+                row.addMouseListener(hover)
+                textArea.addMouseListener(hover)
+                listPanel.add(row)
+                listPanel.add(Box.createVerticalStrut(4))
+            }
+
+            card.add(listPanel)
+        }
+
+        sendButton.addActionListener {
+            if (submitted || !allAnswered()) return@addActionListener
+            submitted = true
+            for (rows in rowsByQuestion) {
+                for (row in rows) {
+                    row.isEnabled = false
+                    row.cursor = Cursor.getDefaultCursor()
+                    (row.getComponent(0) as? JTextArea)?.let {
+                        it.isEnabled = false
+                        it.cursor = Cursor.getDefaultCursor()
+                    }
+                }
+            }
+            sendButton.isEnabled = false
+            statusLabel.text = CursorJBundle.message("chat.question.submitted")
+            statusLabel.isVisible = true
+            onSubmit(composePlanQuestionReply(questions, selectedMarkers))
+        }
+
+        card.add(Box.createVerticalStrut(8))
+        card.add(sendButton)
+        card.add(Box.createVerticalStrut(4))
+        card.add(statusLabel)
+
+        innerPanel.add(card)
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    /**
+     * Renders a structured card for the agent's `cursor/ask_question` ACP extension, supporting
+     * single- and multi-select questions. [onComplete] receives the user's outcome exactly once.
+     */
+    fun addAskQuestionCard(
+        request: AskQuestionParams,
+        onComplete: (AskQuestionOutcome) -> Unit,
+    ) {
+        if (request.questions.isEmpty()) {
+            onComplete(AskQuestionOutcome.Skipped("No questions provided"))
+            return
+        }
+
+        val borderColor = JBColor(Color(0xCC9F52), Color(0x8D6A33))
+        val bgColor = JBColor(Color(0xFFF9EE), Color(0x3A3222))
+        val titleColor = JBColor(Color(0x7C530E), Color(0xD0A86A))
+        val secondaryColor = JBColor(Color(0x6E6E6E), Color(0x9C9C9C))
+        val rowBaseBg = JBColor(Color(0xFFFFFF), Color(0x2F2C26))
+        val rowHoverBg = JBColor(Color(0xFFF3E0), Color(0x4A4030))
+        val rowSelectedBg = JBColor(Color(0xFCE2B0), Color(0x5A4A2E))
+        val rowBorderColor = JBColor(Color(0xE0C995), Color(0x6B5E48))
+        val rowSelectedBorder = JBColor(Color(0xCC9F52), Color(0xB8915A))
+        val rowTextColor = JBColor(Color(0x3D3518), Color(0xDDD5C8))
+
+        val card = object : JPanel() {
+            init {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            }
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(borderColor, 1),
+                JBUI.Borders.empty(8, 10),
+            )
+            isOpaque = true
+            background = bgColor
+            name = "ask-question-card"
+        }
+
+        card.add(
+            JLabel(request.title?.takeIf { it.isNotBlank() } ?: CursorJBundle.message("chat.question.cardTitle")).apply {
+                foreground = titleColor
+                font = font.deriveFont(Font.BOLD)
+                alignmentX = Component.LEFT_ALIGNMENT
+            },
+        )
+
+        val selections = List(request.questions.size) { mutableSetOf<String>() }
+        val rowsByQuestion = List(request.questions.size) { mutableListOf<Pair<String, JPanel>>() }
+        var submitted = false
+
+        val statusLabel = JLabel().apply {
+            isVisible = false
+            foreground = secondaryColor
+            alignmentX = Component.LEFT_ALIGNMENT
+            font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
+        }
+        val sendButton = JButton(CursorJBundle.message("chat.question.send")).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            isEnabled = false
+        }
+
+        fun allAnswered(): Boolean = selections.all { it.isNotEmpty() }
+
+        val optionFontSize = (card.font.size2D - 2f).coerceAtLeast(11f)
+
+        for ((qIndex, question) in request.questions.withIndex()) {
+            card.add(Box.createVerticalStrut(8))
+            question.prompt.takeIf { it.isNotBlank() }?.let { prompt ->
+                card.add(
+                    JTextArea(prompt).apply {
+                        isEditable = false
+                        lineWrap = true
+                        wrapStyleWord = true
+                        isOpaque = false
+                        foreground = titleColor
+                        border = JBUI.Borders.empty(0)
+                        columns = 56
+                        alignmentX = Component.LEFT_ALIGNMENT
+                        font = font.deriveFont(Font.BOLD, (font.size2D - 1f).coerceAtLeast(11f))
+                    },
+                )
+            }
+            card.add(
+                JLabel(
+                    if (question.allowMultiple) {
+                        CursorJBundle.message("chat.question.hint.multi")
+                    } else {
+                        CursorJBundle.message("chat.question.hint.single")
+                    },
+                ).apply {
+                    foreground = secondaryColor
+                    font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
+                    alignmentX = Component.LEFT_ALIGNMENT
+                },
+            )
+            card.add(Box.createVerticalStrut(4))
+
+            val listPanel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                alignmentX = Component.LEFT_ALIGNMENT
+                isOpaque = false
+            }
+
+            fun refreshQuestionRows() {
+                for ((optionId, row) in rowsByQuestion[qIndex]) {
+                    val isSelected = selections[qIndex].contains(optionId)
+                    row.background = if (isSelected) rowSelectedBg else rowBaseBg
+                    row.border = JBUI.Borders.compound(
+                        JBUI.Borders.customLine(if (isSelected) rowSelectedBorder else rowBorderColor, 1),
+                        JBUI.Borders.empty(4, 8),
+                    )
+                }
+            }
+
+            for (option in question.options) {
+                val row = JPanel(BorderLayout()).apply {
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    border = JBUI.Borders.compound(
+                        JBUI.Borders.customLine(rowBorderColor, 1),
+                        JBUI.Borders.empty(4, 8),
+                    )
+                    background = rowBaseBg
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                }
+                val textArea = JTextArea(option.label).apply {
+                    isEditable = false
+                    lineWrap = true
+                    wrapStyleWord = true
+                    isOpaque = false
+                    foreground = rowTextColor
+                    border = JBUI.Borders.empty(0)
+                    columns = 64
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    font = font.deriveFont(Font.PLAIN, optionFontSize)
+                }
+                row.add(textArea, BorderLayout.CENTER)
+                rowsByQuestion[qIndex].add(option.id to row)
+
+                val hover = object : MouseAdapter() {
+                    override fun mouseEntered(e: MouseEvent) {
+                        if (!submitted && !selections[qIndex].contains(option.id)) row.background = rowHoverBg
+                    }
+
+                    override fun mouseExited(e: MouseEvent) {
+                        if (!submitted && !selections[qIndex].contains(option.id)) row.background = rowBaseBg
+                    }
+
+                    override fun mouseClicked(e: MouseEvent) {
+                        if (submitted) return
+                        val selected = selections[qIndex]
+                        if (question.allowMultiple) {
+                            if (!selected.add(option.id)) selected.remove(option.id)
+                        } else {
+                            selected.clear()
+                            selected.add(option.id)
+                        }
+                        refreshQuestionRows()
+                        sendButton.isEnabled = allAnswered()
+                    }
+                }
+                row.addMouseListener(hover)
+                textArea.addMouseListener(hover)
+                listPanel.add(row)
+                listPanel.add(Box.createVerticalStrut(4))
+            }
+
+            card.add(listPanel)
+        }
+
+        fun disableCard() {
+            submitted = true
+            for (rows in rowsByQuestion) {
+                for ((_, row) in rows) {
+                    row.isEnabled = false
+                    row.cursor = Cursor.getDefaultCursor()
+                    (row.getComponent(0) as? JTextArea)?.let {
+                        it.isEnabled = false
+                        it.cursor = Cursor.getDefaultCursor()
+                    }
+                }
+            }
+            sendButton.isEnabled = false
+        }
+
+        val skipButton = JButton(CursorJBundle.message("chat.question.skip")).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+
+        sendButton.addActionListener {
+            if (submitted || !allAnswered()) return@addActionListener
+            val answers = request.questions.mapIndexed { idx, question ->
+                AskQuestionAnswer(
+                    questionId = question.id,
+                    selectedOptionIds = question.options.map { it.id }.filter { selections[idx].contains(it) },
+                )
+            }
+            disableCard()
+            statusLabel.text = CursorJBundle.message("chat.question.submitted")
+            statusLabel.isVisible = true
+            onComplete(AskQuestionOutcome.Answered(answers))
+        }
+
+        skipButton.addActionListener {
+            if (submitted) return@addActionListener
+            disableCard()
+            skipButton.isEnabled = false
+            statusLabel.text = CursorJBundle.message("chat.question.skipped")
+            statusLabel.isVisible = true
+            onComplete(AskQuestionOutcome.Skipped(null))
+        }
+
+        val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            add(sendButton)
+            add(skipButton)
+        }
+
+        card.add(Box.createVerticalStrut(8))
+        card.add(buttonRow)
+        card.add(Box.createVerticalStrut(4))
+        card.add(statusLabel)
+
+        innerPanel.add(card)
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    private fun composePlanQuestionReply(questions: List<ParsedQuestion>, selectedMarkers: Array<String?>): String {
+        val builder = StringBuilder()
+        for ((index, question) in questions.withIndex()) {
+            val marker = selectedMarkers[index] ?: continue
+            val option = question.options.firstOrNull { it.marker == marker } ?: continue
+            if (builder.isNotEmpty()) builder.append("\n\n")
+            val prompt = question.prompt
+            if (questions.size > 1 && !prompt.isNullOrBlank()) {
+                builder.append(prompt.trim()).append('\n')
+            }
+            builder.append(marker).append(") ").append(option.label)
+        }
+        return builder.toString().trim()
     }
 
     private fun addToolPermissionRequestCard(

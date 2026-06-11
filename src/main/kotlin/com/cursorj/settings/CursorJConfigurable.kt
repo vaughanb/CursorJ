@@ -26,6 +26,7 @@ class CursorJConfigurable : Configurable {
     private var defaultModelField: JBTextField? = null
     private var globalUserRulesListPanel: GlobalUserRulesListPanel? = null
     private var projectRulesListPanel: ProjectRulesListPanel? = null
+    private var skillsListPanel: SkillsListPanel? = null
     private var autoAttachCheckbox: JBCheckBox? = null
     private var projectIndexingCheckbox: JBCheckBox? = null
     private var lexicalPersistenceCheckbox: JBCheckBox? = null
@@ -72,10 +73,14 @@ class CursorJConfigurable : Configurable {
         val projectRulesDescription = JBLabel(
             CursorJBundle.message("settings.projectRules.description"),
         )
+        val skillsDescription = JBLabel(CursorJBundle.message("settings.skills.description"))
         val activeProject = ProjectManager.getInstance().openProjects.firstOrNull { !it.isDisposed }
         projectRulesListPanel = activeProject?.let { ProjectRulesListPanel(it) }
         val projectRulesContent: JComponent = projectRulesListPanel
             ?: JBLabel(CursorJBundle.message("settings.projectRules.unavailable"))
+        skillsListPanel = activeProject?.let { SkillsListPanel(it) }
+        val skillsContent: JComponent = skillsListPanel
+            ?: JBLabel(CursorJBundle.message("settings.skills.unavailable"))
         autoAttachCheckbox = JBCheckBox(
             CursorJBundle.message("settings.auto.attach"),
         )
@@ -151,6 +156,9 @@ class CursorJConfigurable : Configurable {
             .addComponent(TitledSeparator(CursorJBundle.message("settings.rules.project.title")), 1)
             .addComponent(projectRulesDescription, 1)
             .addComponent(projectRulesContent, 1)
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.rules.skills.title")), 1)
+            .addComponent(skillsDescription, 1)
+            .addComponent(skillsContent, 1)
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.indexing")), 1)
             .addComponent(autoAttachCheckbox!!, 1)
             .addComponent(projectIndexingCheckbox!!, 1)
@@ -292,6 +300,7 @@ class CursorJConfigurable : Configurable {
         showTokenUsageCheckbox?.isSelected = settings.showTokenUsage
         approvedToolsArea?.text = settings.getApprovedPermissionKeys().sorted().joinToString("\n")
         projectRulesListPanel?.refresh()
+        skillsListPanel?.refresh()
     }
 
     private fun selectedPermissionMode(): String {
@@ -338,6 +347,7 @@ class CursorJConfigurable : Configurable {
         defaultModelField = null
         globalUserRulesListPanel = null
         projectRulesListPanel = null
+        skillsListPanel = null
         autoAttachCheckbox = null
         projectIndexingCheckbox = null
         lexicalPersistenceCheckbox = null

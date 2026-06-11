@@ -16,8 +16,9 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic reranking
 - **Permission Control**: Approve or reject agent tool calls with native IntelliJ dialogs; choose "Ask Every Time" or "Run Everything"
 - **Rules**: Global user rules (injected into every prompt) and project rules (`.cursor/rules/`)
+- **Cursor Skills**: Discovers `SKILL.md` under `.cursor/skills/`, `.agents/skills/`, `.claude/skills/`, `.codex/skills/` (and `~/` equivalents); manage scaffolds in **Settings > Tools > CursorJ**; type `/` in chat for an inline command/skill completion list (merged with ACP slash commands) and `@` for skill file references; the popup keeps focus in the input so you can keep typing to filter, and `@` inserts a path reference so the agent receives `ResourceLinkContent` for the skill file
 - **Model Selection**: Choose from ACP-provided model options directly in the dropdown for reliable per-session switching
-- **Mode Switching**: Switch between Agent, Plan, and Ask modes (Plan mode includes Build and View Plan)
+- **Mode Switching**: Switch between Agent, Plan, and Ask modes (Plan mode includes Build and View Plan, plus native multiple-choice cards for agent questions)
 - **Undo All (Rollback Last Turn)**: Revert files to the state before the most recent agent turn using Local History
 - **Chat History**: Searchable chat history grouped by time; restore previous chats; clear history
 - **Status Bar**: Connection and indexing status (Connected, Processing, Indexing, Index ready, etc.)
@@ -76,7 +77,7 @@ The plugin declares client capabilities for:
 - **Editor indexing**: `editor/get_open_files`, `editor/find_symbol`, `editor/list_file_symbols`, `editor/find_references`
 - **Terminal**: Execute shell commands
 
-Cursor extension methods from the agent (for example `cursor/task` for subagents, `_cursor/update_todos`, `cursor/create_plan`) are handled so the agent can show todos, plans, and background task progress in the CursorJ UI where supported.
+Cursor extension methods from the agent (for example `cursor/task` for subagents, `_cursor/update_todos`, `cursor/create_plan`, and `cursor/ask_question`) are handled so the agent can show todos, plans, interactive questions, and background task progress in the CursorJ UI where supported.
 
 ## Project Indexing
 
@@ -89,7 +90,7 @@ CursorJ uses a hybrid local-first indexing model:
 
 Persistence details:
 
-- Lexical metadata and hits are stored under `.cursorj/index/index-v1.db` in the workspace
+- Lexical SQLite DB, chat history index, chat transcripts, and prompt history are stored under **`~/.cursorj/projects/<projectDirName>-<hash>/`** (per canonical workspace path), not in the project tree, so no `.gitignore` entry is needed. On first use, existing data under `<workspace>/.cursorj/` is moved into that directory when the central copy is absent.
 - Semantic vectors/chunks are currently memory-only
 - Index lifecycle states include startup build, incremental build, stale rebuild, ready, and failed
 
@@ -100,6 +101,7 @@ Settings are available in **Settings > Tools > CursorJ**:
 - **Agent**: Path to agent binary (auto-detect from PATH when empty), default model
 - **Global User Rules**: Inject custom rules into every prompt
 - **Project Rules**: Manage rule files in `.cursor/rules/` from the same settings page (shown when an open project is available)
+- **Skills**: List, add, edit, and remove project skills (writes under `.cursor/skills/`); global skills remain read-only in the list
 - **Context & Indexing**: Auto-attach active file; enable project indexing; lexical persistence; semantic reranking; retrieval limits (max candidates, snippet budget, timeout); index retention days and max DB size; manual "Rebuild index now"
 - **Permissions**: Tool permission mode (Ask Every Time / Run Everything); approved tools allowlist; protect writes outside workspace
 - **Advanced**: ACP raw JSON debug logging (diagnostics); optional **Show token usage and context bar in chat** when the agent reports per-turn and session usage over ACP
@@ -171,6 +173,7 @@ Integration tests (manual-only, `CURSORJ_INTEGRATION=1`) additionally cover:
 - per-session isolation with distinct session ids and independent model config
 - reconnect recovery after ACP process exit
 - canary test for agent model-routing behavior (detects if/when the agent fixes model routing)
+- optional check whether a workspace `SKILL.md` appears in ACP `available_commands_update` (skipped if the agent does not advertise it)
 
 Thin IntelliJ fixture-based tests for PSI symbol/reference behavior are still recommended as a final integration safety net when targeting parity-level confidence across IDE/platform updates.
 

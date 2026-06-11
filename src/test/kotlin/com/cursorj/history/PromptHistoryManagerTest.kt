@@ -1,5 +1,6 @@
 package com.cursorj.history
 
+import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,7 +13,7 @@ class PromptHistoryManagerTest {
     fun `previous and next navigate history and restore draft`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-nav").toFile()
         try {
-            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            val manager = PromptHistoryManager(PromptHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             manager.addPrompt("session:one", "first prompt")
@@ -34,7 +35,7 @@ class PromptHistoryManagerTest {
     fun `addPrompt ignores blank and immediate duplicate entries`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-dedup").toFile()
         try {
-            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            val manager = PromptHistoryManager(PromptHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             assertFalse(manager.addPrompt("session:one", ""))
@@ -55,7 +56,7 @@ class PromptHistoryManagerTest {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-cap").toFile()
         try {
             val manager = PromptHistoryManager(
-                store = PromptHistoryStore(workspace.absolutePath),
+                store = PromptHistoryStore(File(workspace, "store").apply { mkdirs() }),
                 maxEntriesPerSession = 3,
             )
             manager.load()
@@ -75,7 +76,7 @@ class PromptHistoryManagerTest {
     fun `migrateSessionKey moves history and persists merged results`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-migrate").toFile()
         try {
-            val first = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            val first = PromptHistoryManager(PromptHistoryStore(File(workspace, "store").apply { mkdirs() }))
             first.load()
             first.addPrompt("tab:temp", "first")
             first.addPrompt("tab:temp", "second")
@@ -85,7 +86,7 @@ class PromptHistoryManagerTest {
             assertEquals(emptyList(), first.historyFor("tab:temp"))
             assertEquals(listOf("first", "second", "third"), first.historyFor("session:new"))
 
-            val second = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            val second = PromptHistoryManager(PromptHistoryStore(File(workspace, "store").apply { mkdirs() }))
             second.load()
             assertEquals(emptyList(), second.historyFor("tab:temp"))
             assertEquals(listOf("first", "second", "third"), second.historyFor("session:new"))
@@ -98,7 +99,7 @@ class PromptHistoryManagerTest {
     fun `isEmpty returns true before any prompts are added`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-manager-empty").toFile()
         try {
-            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            val manager = PromptHistoryManager(PromptHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
             assertTrue(manager.isEmpty())
         } finally {
@@ -110,7 +111,7 @@ class PromptHistoryManagerTest {
     fun `isEmpty returns false after adding a prompt`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-manager-notempty").toFile()
         try {
-            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            val manager = PromptHistoryManager(PromptHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
             manager.addPrompt("session:one", "hello")
             assertFalse(manager.isEmpty())
@@ -123,7 +124,7 @@ class PromptHistoryManagerTest {
     fun `isEmpty returns true when loaded from missing file`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-manager-no-file").toFile()
         try {
-            val manager = PromptHistoryManager(PromptHistoryStore(workspace.absolutePath))
+            val manager = PromptHistoryManager(PromptHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
             assertTrue(manager.isEmpty())
         } finally {

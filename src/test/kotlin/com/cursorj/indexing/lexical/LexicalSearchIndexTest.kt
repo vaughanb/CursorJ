@@ -71,13 +71,13 @@ class LexicalSearchIndexTest {
                 """.trimIndent(),
             )
 
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val first = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             first.warmupWorkspace()
             store.close()
 
-            val storeReloaded = SQLiteIndexStore(root.absolutePath)
+            val storeReloaded = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             storeReloaded.open()
             val second = LexicalSearchIndex(projectWithBasePath(root.absolutePath), storeReloaded)
             val result = second.searchText("fetchUser", maxResults = 10)
@@ -97,7 +97,7 @@ class LexicalSearchIndexTest {
             val source = File(root, "src/Main.kt")
             source.writeText("fun HelloWorld() = 42")
 
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             index.warmupWorkspace()
@@ -118,7 +118,7 @@ class LexicalSearchIndexTest {
     fun `warmupWorkspace removes stale document entries`() = runBlocking {
         val root = Files.createTempDirectory("cursorj-lexical-warmup").toFile()
         try {
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val stalePath = "${root.absolutePath.replace('\\', '/')}/stale/Old.kt"
             store.upsertDocument(stalePath, "stale-hash", 20, 1L, "kt")
@@ -148,7 +148,7 @@ class LexicalSearchIndexTest {
     fun `upsertFileFromDisk removes missing file from store`() = runBlocking {
         val root = Files.createTempDirectory("cursorj-lexical-upsert-missing").toFile()
         try {
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val existing = File(root, "src/ToDelete.kt")
             existing.parentFile.mkdirs()
@@ -176,7 +176,7 @@ class LexicalSearchIndexTest {
             File(root, "src/Main.kt").writeText("fun scopedNeedle() = 1")
             File(root, "test/MainTest.kt").writeText("fun scopedNeedle() = 2")
 
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             index.warmupWorkspace()
@@ -218,7 +218,7 @@ class LexicalSearchIndexTest {
             repeat(3) { idx ->
                 File(root, "src/File$idx.kt").writeText("fun fn$idx() = $idx")
             }
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             var callbackCount = 0
@@ -234,7 +234,7 @@ class LexicalSearchIndexTest {
     fun `upsertFileFromDisk skips binary and oversized files`() = runBlocking {
         val root = Files.createTempDirectory("cursorj-lexical-skip").toFile()
         try {
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
 
@@ -263,7 +263,7 @@ class LexicalSearchIndexTest {
             repeat(10) { idx ->
                 File(root, "src/File$idx.kt").writeText("fun fn$idx() = $idx")
             }
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val project = projectWithBasePath(root.absolutePath) { projectDisposed }
             val index = LexicalSearchIndex(project, store)
@@ -288,7 +288,7 @@ class LexicalSearchIndexTest {
             File(root, "src/ExcludedDir").mkdirs()
             File(root, "src/ExcludedDir/File.kt").writeText("class ExcludedFile")
 
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
 

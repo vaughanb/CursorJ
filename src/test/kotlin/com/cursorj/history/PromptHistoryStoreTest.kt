@@ -10,11 +10,11 @@ class PromptHistoryStoreTest {
     fun `load returns empty snapshot for malformed json`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-store-bad-json").toFile()
         try {
-            val target = File(workspace, ".cursorj/prompt-history-v1.json")
-            target.parentFile.mkdirs()
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val target = File(storage, PromptHistoryStore.FILE_NAME)
             target.writeText("{ not-json", Charsets.UTF_8)
 
-            val store = PromptHistoryStore(workspace.absolutePath)
+            val store = PromptHistoryStore(storage)
             val loaded = store.load()
             assertEquals(emptyMap(), loaded.sessions)
         } finally {
@@ -26,7 +26,8 @@ class PromptHistoryStoreTest {
     fun `save and load round trip preserves normalized sessions`() {
         val workspace = Files.createTempDirectory("cursorj-prompt-history-store-roundtrip").toFile()
         try {
-            val store = PromptHistoryStore(workspace.absolutePath)
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val store = PromptHistoryStore(storage)
             store.save(
                 PromptHistoryStore.PromptHistorySnapshot(
                     sessions = mapOf(

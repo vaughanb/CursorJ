@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Cursor Skills (plugin UX)**: Recursive discovery of `SKILL.md` across standard project and global skill directories; **Settings > Tools > CursorJ** panel to list/add/edit/remove project skills; inline chat input `/` and `@` completion for skills merged with ACP `available_commands_update`, shown in a non-focus-stealing popup so the user can keep typing to filter (arrow keys navigate, Enter/Tab accept, Esc dismisses); `@` skill picks insert a file-style reference resolved to `SKILL.md` for `ResourceLinkContent`; optional manual integration test documents whether the real agent surfaces skills in ACP available commands.
+- **Interactive agent questions**: CursorJ now handles the Cursor `cursor/ask_question` ACP extension and renders multiple-choice prompts as native chat cards. Plan-mode prose questions also get a conservative fallback parser so lettered/numbered choices can be answered without manually typing the option text.
+
+### Changed
+
+- **Central machine-local storage**: SQLite lexical index, chat history index, chat transcripts, and prompt history now live under `~/.cursorj/projects/<sanitizedName>-<hash8>/` instead of `<workspace>/.cursorj/`. Legacy `<workspace>/.cursorj/` content is migrated once when safe (targets that already exist are not overwritten). Project rules and skills remain under in-repo `.cursor/` as before.
+- **Richer tool-call activity labels**: Chat now shows the file name (and line range when available) for reads, the search pattern/glob for searches, and the URL for web fetches, instead of generic labels like "Reading File..." or "Searching grep...". Detail is sourced from the tool call's `rawInput` arguments with a fallback to the ACP `locations` field.
+
 ## [1.4.0] - 2026-06-05
 
 ### Added

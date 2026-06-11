@@ -1,7 +1,10 @@
 package com.cursorj.acp
 
+import com.cursorj.acp.messages.AskQuestionParams
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.RequestPermissionParams
+import com.cursorj.handlers.AskQuestionHandler
+import com.cursorj.handlers.AskQuestionOutcome
 import com.cursorj.handlers.FileSystemHandler
 import com.cursorj.handlers.IndexSearchHandler
 import com.cursorj.handlers.PermissionHandler
@@ -49,6 +52,7 @@ class AgentConnection(
     private val fileSystemHandler = FileSystemHandler(project)
     private val terminalHandler = TerminalHandler(project)
     private val permissionHandler = PermissionHandler()
+    private val askQuestionHandler = AskQuestionHandler()
     private val indexSearchHandler = workspaceIndexOrchestrator?.let { IndexSearchHandler(it) }
 
     /** Coalesces rapid plan-file touches into a single VFS reload + editor sync. */
@@ -274,6 +278,10 @@ class AgentConnection(
         permissionHandler.setPromptResolver(resolver)
     }
 
+    fun setAskQuestionResolver(resolver: ((AskQuestionParams) -> CompletableFuture<AskQuestionOutcome>)?) {
+        askQuestionHandler.setResolver(resolver)
+    }
+
     private fun attachPlanEditorSync(s: AcpSession) {
         s.onPlanFileTouch = { path ->
             val normalized = path.replace('\\', '/')
@@ -294,6 +302,7 @@ class AgentConnection(
         fileSystemHandler.register(client)
         terminalHandler.register(client)
         permissionHandler.register(client)
+        askQuestionHandler.register(client)
         client.addServerRequestHandler { method, params ->
             indexSearchHandler?.handle(method, params)?.let { return@addServerRequestHandler it }
             when (method) {

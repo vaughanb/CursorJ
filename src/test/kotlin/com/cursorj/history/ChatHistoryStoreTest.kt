@@ -12,7 +12,8 @@ class ChatHistoryStoreTest {
     fun `load returns empty snapshot for missing file`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-store-missing").toFile()
         try {
-            val store = ChatHistoryStore(workspace.absolutePath)
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val store = ChatHistoryStore(storage)
             val loaded = store.load()
             assertEquals(emptyList(), loaded.entries)
         } finally {
@@ -24,11 +25,11 @@ class ChatHistoryStoreTest {
     fun `load returns empty snapshot for malformed json`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-store-bad-json").toFile()
         try {
-            val target = File(workspace, ".cursorj/chat-history-index-v1.json")
-            target.parentFile.mkdirs()
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val target = File(storage, ChatHistoryStore.FILE_NAME)
             target.writeText("{ not-json", Charsets.UTF_8)
 
-            val store = ChatHistoryStore(workspace.absolutePath)
+            val store = ChatHistoryStore(storage)
             val loaded = store.load()
             assertEquals(emptyList(), loaded.entries)
         } finally {
@@ -40,7 +41,8 @@ class ChatHistoryStoreTest {
     fun `save and load round trip preserves entries`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-store-roundtrip").toFile()
         try {
-            val store = ChatHistoryStore(workspace.absolutePath)
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val store = ChatHistoryStore(storage)
             val entries = listOf(
                 ChatHistoryEntry("abc-123", "First Chat", 1000L, 2000L),
                 ChatHistoryEntry("def-456", "Second Chat", 3000L, 4000L),
@@ -63,7 +65,8 @@ class ChatHistoryStoreTest {
     fun `save normalizes entries and strips blank sessionIds`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-store-normalize").toFile()
         try {
-            val store = ChatHistoryStore(workspace.absolutePath)
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val store = ChatHistoryStore(storage)
             val entries = listOf(
                 ChatHistoryEntry("  abc  ", "  Some Title  ", 1000L, 2000L),
                 ChatHistoryEntry("", "Empty Id", 3000L, 4000L),
@@ -84,7 +87,8 @@ class ChatHistoryStoreTest {
     fun `exists returns false when file is missing and true after save`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-store-exists").toFile()
         try {
-            val store = ChatHistoryStore(workspace.absolutePath)
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val store = ChatHistoryStore(storage)
             assertFalse(store.exists())
 
             store.save(ChatHistoryStore.ChatHistorySnapshot(entries = listOf(

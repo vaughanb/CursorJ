@@ -12,6 +12,7 @@ import com.cursorj.indexing.storage.SQLiteIndexStore
 import com.cursorj.indexing.symbol.IntelliJSymbolIndexBridge
 import com.cursorj.indexing.telemetry.IndexTelemetry
 import com.cursorj.settings.CursorJSettings
+import com.cursorj.storage.CentralStorage
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -25,6 +26,7 @@ import java.util.concurrent.atomic.AtomicLong
 class WorkspaceIndexOrchestrator(
     private val project: Project,
     private val settingsProvider: () -> CursorJSettings = { CursorJSettings.instance },
+    indexStorageDir: File? = null,
     lexicalOverride: LexicalSearchIndex? = null,
     symbolOverride: IntelliJSymbolIndexBridge? = null,
     semanticOverride: SemanticChunkIndex? = null,
@@ -61,7 +63,9 @@ class WorkspaceIndexOrchestrator(
     private val settings: CursorJSettings
         get() = settingsProvider()
 
-    private val sqliteStore = project.basePath?.let { SQLiteIndexStore(it) }
+    private val resolvedIndexStorageDir: File? =
+        indexStorageDir ?: CentralStorage().projectDir(project.basePath)
+    private val sqliteStore = resolvedIndexStorageDir?.let { SQLiteIndexStore(it) }
     private val lexical = lexicalOverride ?: LexicalSearchIndex(project, sqliteStore)
     private val symbols = symbolOverride ?: IntelliJSymbolIndexBridge(project)
     private val semantic = semanticOverride ?: SemanticChunkIndex()

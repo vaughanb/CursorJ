@@ -384,6 +384,31 @@ data class PermissionResult(
     val outcome: PermissionOutcome,
 )
 
+/**
+ * Params for the agent's `cursor/ask_question` ACP extension request: the structured channel a
+ * Cursor-aware client uses to render interactive multiple-choice questions.
+ */
+@Serializable
+data class AskQuestionParams(
+    val toolCallId: String? = null,
+    val title: String? = null,
+    val questions: List<AskQuestionItem> = emptyList(),
+)
+
+@Serializable
+data class AskQuestionItem(
+    val id: String,
+    val prompt: String = "",
+    val options: List<AskQuestionOptionItem> = emptyList(),
+    val allowMultiple: Boolean = false,
+)
+
+@Serializable
+data class AskQuestionOptionItem(
+    val id: String,
+    val label: String = "",
+)
+
 @Serializable
 data class ReadTextFileParams(
     val path: String,

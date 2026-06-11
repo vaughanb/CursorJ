@@ -27,11 +27,14 @@ data class StoredLexicalHit(
     val tokenFingerprint: String?,
 )
 
+/**
+ * Persists lexical index rows under [storageDir]/index/index-v1.db.
+ */
 class SQLiteIndexStore(
-    private val workspaceRoot: String,
+    private val storageDir: File,
 ) : AutoCloseable {
     private val log = Logger.getInstance(SQLiteIndexStore::class.java)
-    private val dbFile = File(workspaceRoot, ".cursorj/index/index-v1.db")
+    private val dbFile = File(storageDir, "index/index-v1.db")
     private val readLock = ReentrantLock()
     private val writeLock = ReentrantLock()
     private var readConnection: Connection? = null

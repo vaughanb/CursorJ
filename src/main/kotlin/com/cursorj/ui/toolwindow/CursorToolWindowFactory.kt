@@ -13,6 +13,7 @@ import com.cursorj.history.ChatHistoryStore
 import com.cursorj.history.ChatTranscriptManager
 import com.cursorj.history.ChatTranscriptStore
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
+import com.cursorj.storage.CentralStorage
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.openapi.Disposable
@@ -65,10 +66,11 @@ class CursorJService(
 
     val activeFileProvider = ActiveFileProvider(project)
     val selectionProvider = SelectionProvider(project)
-    val workspaceIndexOrchestrator = WorkspaceIndexOrchestrator(project)
-    val promptHistoryManager = PromptHistoryManager(PromptHistoryStore(project.basePath))
-    val chatTranscriptManager = ChatTranscriptManager(ChatTranscriptStore(project.basePath))
-    val chatHistoryIndexManager = ChatHistoryIndexManager(ChatHistoryStore(project.basePath))
+    private val machineLocalProjectDir = CentralStorage().projectDir(project.basePath)
+    val workspaceIndexOrchestrator = WorkspaceIndexOrchestrator(project, indexStorageDir = machineLocalProjectDir)
+    val promptHistoryManager = PromptHistoryManager(PromptHistoryStore(machineLocalProjectDir))
+    val chatTranscriptManager = ChatTranscriptManager(ChatTranscriptStore(machineLocalProjectDir))
+    val chatHistoryIndexManager = ChatHistoryIndexManager(ChatHistoryStore(machineLocalProjectDir))
 
     lateinit var tabManager: SessionTabManager
         private set

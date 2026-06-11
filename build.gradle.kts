@@ -1,5 +1,6 @@
 import java.io.File
 import org.gradle.api.GradleException
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.testing.Test
 import org.gradle.language.base.plugins.LifecycleBasePlugin
@@ -33,7 +34,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.sqlite.jdbc)
     testImplementation(kotlin("test"))
-    testRuntimeOnly("junit:junit:4.13.2")
+    testImplementation("org.opentest4j:opentest4j:1.3.0")
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.4")
 
     intellijPlatform {
         val platformType = providers.gradleProperty("platformType")
@@ -41,6 +44,7 @@ dependencies {
         create(platformType, platformVersion)
 
         bundledPlugin("org.jetbrains.plugins.terminal")
+        testFramework(TestFrameworkType.Platform)
 
         pluginVerifier()
     }
@@ -95,7 +99,8 @@ intellijPlatform {
                 <li>Multiple concurrent chat sessions with intelligent tab naming</li>
                 <li>Chat history with search and restore; prompt history</li>
                 <li>Unified rules management for global user rules and project rules (<code>.cursor/rules/</code>)</li>
-                <li>Agent, Plan, and Ask modes with native IntelliJ UI</li>
+                <li>Cursor Skills discovery and settings management; inline <code>/</code> and <code>@</code> completion in chat (merged with ACP slash commands) that keeps focus in the input</li>
+                <li>Agent, Plan, and Ask modes with native IntelliJ UI, including multiple-choice cards for agent questions</li>
                 <li>Permission control with per-turn rollback via Local History</li>
             </ul>
             <p>Project home: <a href="$projectUrl">$projectUrl</a></p>
@@ -105,6 +110,8 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
+                <li><strong>Cursor Skills:</strong> Discover <code>SKILL.md</code> skills, manage them in settings, and use inline <code>/</code> and <code>@</code> completion in chat (ACP <code>available_commands_update</code> merged in) that keeps focus in the input so you can keep typing to filter.</li>
+                <li><strong>Interactive agent questions:</strong> Answer structured <code>cursor/ask_question</code> prompts and plan-mode multiple-choice questions using native chat cards.</li>
                 <li><strong>Inline file &amp; image attachments:</strong> Drag-and-drop or paste project files as Cursor-style <code>@file</code> references, or attach images as removable chips sent to the agent.</li>
                 <li><strong>Workspace indexing performance:</strong> SQLite WAL read/write separation, startup throttling, and debounced VFS updates reduce IDE hangs during indexing.</li>
                 <li><strong>Custom index exclusions:</strong> Exclude folders and files from indexing with glob patterns in <strong>Settings &gt; Tools &gt; CursorJ</strong>.</li>

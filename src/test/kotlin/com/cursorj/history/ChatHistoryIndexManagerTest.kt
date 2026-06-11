@@ -1,5 +1,6 @@
 package com.cursorj.history
 
+import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
@@ -19,7 +20,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-record").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             assertTrue(manager.recordSession("abc-123", "First Chat"))
@@ -41,7 +42,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-update").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("abc-123", "First Title")
@@ -63,7 +64,7 @@ class ChatHistoryIndexManagerTest {
     fun `recordSession rejects blank sessionId and title`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-blank").toFile()
         try {
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath))
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             assertFalse(manager.recordSession("", "Title"))
@@ -81,7 +82,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-title").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("abc-123", "Old Title")
@@ -98,7 +99,7 @@ class ChatHistoryIndexManagerTest {
     fun `updateTitle returns false for unknown session`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-title-unknown").toFile()
         try {
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath))
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             assertFalse(manager.updateTitle("nonexistent", "Title"))
@@ -112,7 +113,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-touch").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("abc-123", "Chat")
@@ -131,7 +132,7 @@ class ChatHistoryIndexManagerTest {
     fun `touchActivity returns false for unknown session`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-touch-unknown").toFile()
         try {
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath))
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             assertFalse(manager.touchActivity("nonexistent"))
@@ -144,7 +145,7 @@ class ChatHistoryIndexManagerTest {
     fun `removeSession removes entry`() {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-remove").toFile()
         try {
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath))
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             manager.recordSession("abc-123", "Chat")
@@ -162,7 +163,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-list").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("first", "First")
@@ -184,7 +185,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-search").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("a", "Refactor Database")
@@ -204,7 +205,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-search-blank").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("a", "Alpha")
@@ -223,7 +224,7 @@ class ChatHistoryIndexManagerTest {
         try {
             val (_, clock) = testClock()
             val manager = ChatHistoryIndexManager(
-                store = ChatHistoryStore(workspace.absolutePath),
+                store = ChatHistoryStore(File(workspace, "store").apply { mkdirs() }),
                 maxEntries = 3,
                 clock = clock,
             )
@@ -251,7 +252,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-clearall").toFile()
         try {
             val (_, clock) = testClock()
-            val store = ChatHistoryStore(workspace.absolutePath)
+            val store = ChatHistoryStore(File(workspace, "store").apply { mkdirs() })
             val manager = ChatHistoryIndexManager(store, clock = clock)
             manager.load()
 
@@ -277,7 +278,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-migrate").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("old-session", "Build Todo App")
@@ -300,7 +301,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-remove-other").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("keep-me", "Important Chat")
@@ -324,7 +325,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-same-title").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("session-1", "Original Title")
@@ -342,7 +343,7 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-clear-then-add").toFile()
         try {
             val (_, clock) = testClock()
-            val manager = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val manager = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             manager.load()
 
             manager.recordSession("old", "Old Chat")
@@ -362,12 +363,12 @@ class ChatHistoryIndexManagerTest {
         val workspace = Files.createTempDirectory("cursorj-chat-history-mgr-roundtrip").toFile()
         try {
             val (_, clock) = testClock()
-            val first = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath), clock = clock)
+            val first = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }), clock = clock)
             first.load()
             first.recordSession("abc", "My Chat")
             first.persist()
 
-            val second = ChatHistoryIndexManager(ChatHistoryStore(workspace.absolutePath))
+            val second = ChatHistoryIndexManager(ChatHistoryStore(File(workspace, "store").apply { mkdirs() }))
             second.load()
             val entries = second.listAll()
             assertEquals(1, entries.size)

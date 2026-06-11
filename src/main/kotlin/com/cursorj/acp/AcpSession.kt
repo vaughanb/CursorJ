@@ -561,19 +561,16 @@ class AcpSession(
         val title = obj["title"]?.jsonPrimitive?.contentOrNull?.replace("`", "")?.trim()
         val rawInput = try { obj["rawInput"]?.jsonObject } catch (_: Exception) { null }
 
+        val path = extractToolPath(kind, rawInput) ?: firstLocationPath(obj)
+
         val detail: String? = when (kind) {
-            "edit" -> {
-                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-                    ?.substringAfterLast('/')?.substringAfterLast('\\')
-                    ?: title?.removePrefix("Edit")?.trim()?.takeIf { it.isNotBlank() }
-            }
-            "execute" -> {
-                rawInput?.get("command")?.jsonPrimitive?.contentOrNull
-                    ?: title?.takeIf { it != "Terminal" }
-            }
-            "read" -> {
-                title?.removePrefix("Read")?.trim()?.takeIf { it.isNotBlank() }
-            }
+            "edit", "write" -> fileNameOf(path) ?: stripLeadingVerb(title)
+            "execute" -> stringField(rawInput, "command") ?: title?.takeIf { it != "Terminal" }
+            "read" -> readDetail(path, rawInput) ?: stripLeadingVerb(title)
+            "search" -> searchDetail(rawInput) ?: stripLeadingVerb(title)
+            "delete" -> fileNameOf(path) ?: stripLeadingVerb(title)
+            "move" -> fileNameOf(path) ?: stripLeadingVerb(title)
+            "fetch" -> firstStringField(rawInput, "url", "uri") ?: stripLeadingVerb(title)
             else -> title
         }
 
@@ -587,6 +584,7 @@ class AcpSession(
             "write" -> "Writing"
             "search" -> "Searching"
             "delete" -> "Deleting"
+            "fetch" -> "Fetching"
             else -> null
         }
 
@@ -597,23 +595,119 @@ class AcpSession(
             else -> return null
         }
 
-        val path: String? = when (kind) {
-            "edit", "write", "read", "delete" -> {
-                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("filePath")?.jsonPrimitive?.contentOrNull
-            }
-            "move" -> {
-                rawInput?.get("toPath")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("newPath")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-            }
-            else -> {
-                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("filePath")?.jsonPrimitive?.contentOrNull
+        return ToolActivity(text = text, path = path, kind = kind)
+    }
+
+    /** Resolves the file path a tool call operates on from its raw arguments, trying common ACP/Cursor key names. */
+    private fun extractToolPath(kind: String?, rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        val byKey = when (kind) {
+            "move" -> firstStringField(rawInput, "toPath", "newPath", "destination", "path")
+            else -> firstStringField(rawInput, "path", "filePath", "file_path", "target_file", "targetFile", "file", "absolutePath", "uri")
+        }
+        return byKey ?: pathLikeValue(rawInput)
+    }
+
+    /** Last-resort scan: returns the first raw-argument string value that looks like a file path. */
+    private fun pathLikeValue(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        for ((_, value) in rawInput) {
+            val s = (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: continue
+            if (s.isNotBlank() && (s.contains('/') || s.contains('\\') || FILE_EXTENSION_REGEX.containsMatchIn(s))) {
+                return s
             }
         }
+        return null
+    }
 
-        return ToolActivity(text = text, path = path, kind = kind)
+    /** Falls back to the ACP `locations` array, the canonical place a tool call reports the files it touched. */
+    private fun firstLocationPath(obj: JsonObject): String? {
+        val locations = try { obj["locations"]?.jsonArray } catch (_: Exception) { null } ?: return null
+        for (entry in locations) {
+            val p = try { entry.jsonObject["path"]?.jsonPrimitive?.contentOrNull } catch (_: Exception) { null }
+            if (!p.isNullOrBlank()) return p
+        }
+        return null
+    }
+
+    /** Builds the "Reading" detail: the file name plus a line range when the raw arguments include one. */
+    private fun readDetail(path: String?, rawInput: JsonObject?): String? {
+        val name = fileNameOf(path) ?: return null
+        val range = lineRange(rawInput)
+        return if (range != null) "$name $range" else name
+    }
+
+    /** Builds the "Searching" detail: the search pattern (quoted), optionally scoped to a glob. */
+    private fun searchDetail(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        val pattern = firstStringField(rawInput, "pattern", "query", "regex", "search", "searchTerm", "search_term", "q")
+        if (!pattern.isNullOrBlank()) {
+            val glob = firstStringField(rawInput, "glob", "globPattern", "glob_pattern", "include", "includePattern")
+            return if (!glob.isNullOrBlank()) "\"$pattern\" in $glob" else "\"$pattern\""
+        }
+        return firstStringField(
+            rawInput,
+            "glob", "globPattern", "glob_pattern", "include", "includePattern", "path", "target_directory", "target_directories",
+        ) ?: firstStringValue(rawInput)
+    }
+
+    /** Returns the first non-blank string value among a tool call's raw arguments. */
+    private fun firstStringValue(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        for ((_, value) in rawInput) {
+            val s = (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            if (!s.isNullOrBlank()) return s
+        }
+        return null
+    }
+
+    /** Formats an `(L<start>-<end>)` hint from explicit start/end keys or the Read tool's offset/limit pair. */
+    private fun lineRange(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        val start = intField(rawInput, "startLine", "start_line", "startLineNumber", "start_line_one_indexed")
+        val end = intField(rawInput, "endLine", "end_line", "endLineNumber", "end_line_one_indexed_inclusive")
+        if (start != null && end != null && end >= start) return "(L$start-$end)"
+        val offset = intField(rawInput, "offset")
+        val limit = intField(rawInput, "limit")
+        if (offset != null && offset >= 1 && limit != null && limit > 0) return "(L$offset-${offset + limit - 1})"
+        if (start != null) return "(L$start)"
+        return null
+    }
+
+    private fun fileNameOf(path: String?): String? =
+        path?.substringAfterLast('/')?.substringAfterLast('\\')?.takeIf { it.isNotBlank() }
+
+    /** Strips a leading action word (e.g. "Read", "Edit") from an agent-supplied title so it reads as a detail. */
+    private fun stripLeadingVerb(title: String?): String? {
+        if (title.isNullOrBlank()) return null
+        val trimmed = title.trim()
+        val firstSpace = trimmed.indexOf(' ')
+        if (firstSpace <= 0) return trimmed
+        val firstWord = trimmed.substring(0, firstSpace).lowercase()
+        val verbs = setOf("read", "edit", "write", "search", "grep", "delete", "create", "view", "open", "fetch", "move")
+        return if (firstWord in verbs) {
+            trimmed.substring(firstSpace + 1).trim().takeIf { it.isNotBlank() } ?: trimmed
+        } else {
+            trimmed
+        }
+    }
+
+    private fun stringField(obj: JsonObject?, key: String): String? =
+        obj?.get(key)?.let { try { it.jsonPrimitive.contentOrNull } catch (_: Exception) { null } }?.takeIf { it.isNotBlank() }
+
+    private fun firstStringField(obj: JsonObject?, vararg keys: String): String? {
+        if (obj == null) return null
+        for (key in keys) stringField(obj, key)?.let { return it }
+        return null
+    }
+
+    private fun intField(obj: JsonObject?, vararg keys: String): Int? {
+        if (obj == null) return null
+        for (key in keys) {
+            val value = obj[key]?.let { try { it.jsonPrimitive.intOrNull } catch (_: Exception) { null } }
+            if (value != null) return value
+        }
+        return null
     }
 
     private fun extractUpdateText(updateObj: JsonObject): String? {
@@ -1100,6 +1194,16 @@ class AcpSession(
         onPlanFileTouch = null
         sessionScope.cancel()
         clearTrackedToolCalls()
+        updateListeners.clear()
+        messageListeners.clear()
+        configListeners.clear()
+        activityListeners.clear()
+        toolCallListeners.clear()
+        planListeners.clear()
+        editDiffListeners.clear()
+        availableCommandsListeners.clear()
+        usageListeners.clear()
+        subagentTaskListeners.clear()
     }
 
     private fun failFastThresholdFor(tracked: TrackedToolCall): Long {
@@ -1147,6 +1251,8 @@ class AcpSession(
         private const val TOOL_WATCHDOG_FAIL_FAST_MS = 5L * 60L * 1000L
         private const val GRADLE_FAIL_FAST_MS = 90_000L
         private const val TOOL_WATCHDOG_ERROR_CODE = -32001
+        private val FILE_EXTENSION_REGEX = Regex("""\.[A-Za-z0-9]{1,8}$""")
+
         private const val FIRST_UPDATE_TIMEOUT_MS = 90_000L
         private const val LIVENESS_CHECK_INTERVAL_MS = 5_000L
         private const val MAX_TURN_DURATION_MS = 15L * 60L * 1000L
