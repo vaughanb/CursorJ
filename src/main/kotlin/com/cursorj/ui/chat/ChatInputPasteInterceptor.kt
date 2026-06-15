@@ -73,7 +73,7 @@ object ChatInputPasteInterceptor {
         }
 
         override fun isEnabledForCaret(editor: Editor, caret: Caret, dataContext: DataContext): Boolean {
-            return previousPasteHandler?.isEnabled(editor, dataContext) ?: super.isEnabledForCaret(
+            return previousPasteHandler?.isEnabled(editor, caret, dataContext) ?: super.isEnabledForCaret(
                 editor,
                 caret,
                 dataContext,

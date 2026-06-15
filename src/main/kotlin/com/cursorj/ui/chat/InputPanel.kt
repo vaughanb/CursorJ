@@ -1082,8 +1082,7 @@ class InputPanel {
         textArea.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
                 val validator = fileReferenceValidator ?: return
-                @Suppress("DEPRECATION")
-                val pos = textArea.viewToModel(e.point).coerceAtLeast(0)
+                val pos = textArea.viewToModel2D(e.point).coerceAtLeast(0)
                 val spans = FileReferenceSupport.findValidSpans(textArea.text, validator)
                 val span = FileReferenceSupport.spanContaining(spans, pos) ?: return
                 moveCaret(span.end)
