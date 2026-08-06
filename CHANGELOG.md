@@ -9,6 +9,10 @@ All notable changes to this project are documented in this file.
 - **Edit & resend**: an inline **Edit** affordance on your earlier messages loads the text back into the input; resending branches the conversation from that point by discarding later replies and replaying the prior turns as context into a fresh session (the agent exposes no native `session/fork`). `Esc` or **Cancel edit** abandons the edit. Backed by new `ChatTranscriptManager.buildCarryoverContext(list)` / `resetSession` APIs with unit tests.
 - Documented Cursor ACP limitations in the README (runtime model parameter tiers and Debug mode are not exposed by the agent), verified empirically against `agent acp`.
 
+### Fixed
+
+- **Faster IDE shutdown**: closing the IDE (or a project) no longer hangs ~5 seconds per open CursorJ tab. On teardown, `AgentConnection` now enters a shutdown path that cancels its coroutine scope and marks the connection as shutting down before its child disposables run, so disconnect handlers no longer schedule reconnect attempts during shutdown, and the ACP process is stopped with a short (500 ms) wait instead of the normal 5 s wait. `SessionTabManager` is now a `Disposable` whose coroutine scope is cancelled on dispose. Based on a contribution from @ghackett ([#2](https://github.com/vaughanb/CursorJ/pull/2)).
+
 ## [1.5.1] - 2026-06-16
 
 ### Changed

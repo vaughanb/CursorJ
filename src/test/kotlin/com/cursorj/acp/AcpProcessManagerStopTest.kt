@@ -76,4 +76,50 @@ class AcpProcessManagerStopTest {
             Disposer.dispose(disposable)
         }
     }
+
+    @Test
+    fun `fastStop defaults to false and stop terminates process quickly when enabled`() {
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        assumeTrue(!isWindows) { "This test requires Unix-like environment for script execution" }
+
+        val disposable = Disposer.newDisposable("AcpProcessManagerFastStopTestDisposable")
+        val tempScript = Files.createTempFile("dummy-agent", ".sh").toFile()
+        tempScript.writeText("#!/bin/sh\ncat\n")
+
+        try {
+            val perms = Files.getPosixFilePermissions(tempScript.toPath()).toMutableSet()
+            perms.add(PosixFilePermission.OWNER_EXECUTE)
+            Files.setPosixFilePermissions(tempScript.toPath(), perms)
+        } catch (e: Exception) {
+            tempScript.setExecutable(true)
+        }
+
+        val settings = CursorJSettings.instance
+        val previousPath = settings.agentPath
+        settings.agentPath = tempScript.absolutePath
+
+        try {
+            val manager = AcpProcessManager(disposable)
+            assertFalse(manager.fastStop, "fastStop should default to false")
+
+            assertTrue(manager.start(), "Dummy script should start successfully")
+            assertTrue(manager.isRunning, "Process should be running")
+
+            manager.fastStop = true
+
+            val stopStart = System.currentTimeMillis()
+            manager.stop()
+            val stopDuration = System.currentTimeMillis() - stopStart
+
+            assertTrue(
+                stopDuration < 2000,
+                "AcpProcessManager.stop() with fastStop took too long ($stopDuration ms)",
+            )
+            assertFalse(manager.isRunning, "Process should no longer be running")
+        } finally {
+            settings.agentPath = previousPath
+            tempScript.delete()
+            Disposer.dispose(disposable)
+        }
+    }
 }

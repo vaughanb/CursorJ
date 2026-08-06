@@ -33,9 +33,13 @@ import javax.swing.*
 class SessionTabManager(
     private val service: CursorJService,
     private val toolWindow: ToolWindow,
-) {
+) : Disposable {
     private val log = Logger.getInstance(SessionTabManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun dispose() {
+        scope.cancel()
+    }
 
     internal data class PromptSubmissionResolution(
         val titleToPersist: String,
