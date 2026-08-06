@@ -26,6 +26,7 @@ class CursorJConfigurable : Configurable {
     private var defaultModelField: JBTextField? = null
     private var globalUserRulesListPanel: GlobalUserRulesListPanel? = null
     private var projectRulesListPanel: ProjectRulesListPanel? = null
+    private var skillsListPanel: SkillsListPanel? = null
     private var autoAttachCheckbox: JBCheckBox? = null
     private var projectIndexingCheckbox: JBCheckBox? = null
     private var lexicalPersistenceCheckbox: JBCheckBox? = null
@@ -35,11 +36,13 @@ class CursorJConfigurable : Configurable {
     private var retrievalTimeoutField: JBTextField? = null
     private var indexRetentionDaysField: JBTextField? = null
     private var indexMaxDatabaseMbField: JBTextField? = null
+    private var indexExcludePatternsField: JBTextField? = null
     private var rebuildIndexButton: JButton? = null
     private var permissionModeCombo: JComboBox<String>? = null
     private var approvedToolsArea: JBTextArea? = null
     private var protectExternalWritesCheckbox: JBCheckBox? = null
     private var acpRawLoggingCheckbox: JBCheckBox? = null
+    private var showTokenUsageCheckbox: JBCheckBox? = null
     private var mainPanel: JPanel? = null
 
     override fun getDisplayName(): String = CursorJBundle.message("settings.title")
@@ -70,10 +73,14 @@ class CursorJConfigurable : Configurable {
         val projectRulesDescription = JBLabel(
             CursorJBundle.message("settings.projectRules.description"),
         )
+        val skillsDescription = JBLabel(CursorJBundle.message("settings.skills.description"))
         val activeProject = ProjectManager.getInstance().openProjects.firstOrNull { !it.isDisposed }
         projectRulesListPanel = activeProject?.let { ProjectRulesListPanel(it) }
         val projectRulesContent: JComponent = projectRulesListPanel
             ?: JBLabel(CursorJBundle.message("settings.projectRules.unavailable"))
+        skillsListPanel = activeProject?.let { SkillsListPanel(it) }
+        val skillsContent: JComponent = skillsListPanel
+            ?: JBLabel(CursorJBundle.message("settings.skills.unavailable"))
         autoAttachCheckbox = JBCheckBox(
             CursorJBundle.message("settings.auto.attach"),
         )
@@ -91,6 +98,12 @@ class CursorJConfigurable : Configurable {
         retrievalTimeoutField = JBTextField()
         indexRetentionDaysField = JBTextField()
         indexMaxDatabaseMbField = JBTextField()
+        indexExcludePatternsField = JBTextField().apply {
+            putClientProperty(
+                "JTextField.placeholderText",
+                CursorJBundle.message("settings.indexing.excludePatterns.placeholder"),
+            )
+        }
         rebuildIndexButton = JButton(CursorJBundle.message("settings.indexing.rebuild")).apply {
             addActionListener {
                 val openProjects = ProjectManager.getInstance().openProjects
@@ -113,6 +126,9 @@ class CursorJConfigurable : Configurable {
         )
         acpRawLoggingCheckbox = JBCheckBox(
             CursorJBundle.message("settings.acp.rawLogging"),
+        )
+        showTokenUsageCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.showTokenUsage"),
         )
 
         val approvedToolsScroll = JBScrollPane(approvedToolsArea).apply {
@@ -140,6 +156,9 @@ class CursorJConfigurable : Configurable {
             .addComponent(TitledSeparator(CursorJBundle.message("settings.rules.project.title")), 1)
             .addComponent(projectRulesDescription, 1)
             .addComponent(projectRulesContent, 1)
+            .addComponent(TitledSeparator(CursorJBundle.message("settings.rules.skills.title")), 1)
+            .addComponent(skillsDescription, 1)
+            .addComponent(skillsContent, 1)
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.indexing")), 1)
             .addComponent(autoAttachCheckbox!!, 1)
             .addComponent(projectIndexingCheckbox!!, 1)
@@ -175,6 +194,12 @@ class CursorJConfigurable : Configurable {
                 1,
                 false,
             )
+            .addLabeledComponent(
+                JBLabel(CursorJBundle.message("settings.indexing.excludePatterns")),
+                indexExcludePatternsField!!,
+                1,
+                false,
+            )
             .addComponent(rebuildIndexButton!!, 1)
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.permissions")), 1)
             .addLabeledComponent(
@@ -192,6 +217,7 @@ class CursorJConfigurable : Configurable {
             )
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.advanced")), 1)
             .addComponent(acpRawLoggingCheckbox!!, 1)
+            .addComponent(showTokenUsageCheckbox!!, 1)
             .addComponentFillVertically(JPanel(), 0)
             .panel
 
@@ -212,9 +238,11 @@ class CursorJConfigurable : Configurable {
             readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000) != settings.retrievalTimeoutMs ||
             readIntField(indexRetentionDaysField, settings.indexRetentionDays, 1, 365) != settings.indexRetentionDays ||
             readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096) != settings.indexMaxDatabaseMb ||
+            (indexExcludePatternsField?.text?.trim() ?: "") != settings.indexExcludePatterns ||
             selectedPermissionMode() != settings.permissionMode ||
             protectExternalWritesCheckbox?.isSelected != settings.protectExternalFileWrites ||
             acpRawLoggingCheckbox?.isSelected != settings.enableAcpRawLogging ||
+            showTokenUsageCheckbox?.isSelected != settings.showTokenUsage ||
             readApprovedTools() != settings.getApprovedPermissionKeys()
     }
 
@@ -233,9 +261,11 @@ class CursorJConfigurable : Configurable {
         settings.retrievalTimeoutMs = readIntField(retrievalTimeoutField, settings.retrievalTimeoutMs, 250, 20000)
         settings.indexRetentionDays = readIntField(indexRetentionDaysField, settings.indexRetentionDays, 1, 365)
         settings.indexMaxDatabaseMb = readIntField(indexMaxDatabaseMbField, settings.indexMaxDatabaseMb, 50, 4096)
+        settings.indexExcludePatterns = indexExcludePatternsField?.text?.trim().orEmpty()
         settings.permissionMode = selectedPermissionMode()
         settings.protectExternalFileWrites = protectExternalWritesCheckbox?.isSelected ?: true
         settings.enableAcpRawLogging = acpRawLoggingCheckbox?.isSelected ?: false
+        settings.showTokenUsage = showTokenUsageCheckbox?.isSelected ?: true
         settings.setApprovedPermissionKeys(readApprovedTools())
         val knownModelIds = knownModelIdsFromOpenProjects()
         if (defaultModel.isNotBlank() && knownModelIds.isNotEmpty() && defaultModel !in knownModelIds) {
@@ -260,14 +290,17 @@ class CursorJConfigurable : Configurable {
         retrievalTimeoutField?.text = settings.retrievalTimeoutMs.toString()
         indexRetentionDaysField?.text = settings.indexRetentionDays.toString()
         indexMaxDatabaseMbField?.text = settings.indexMaxDatabaseMb.toString()
+        indexExcludePatternsField?.text = settings.indexExcludePatterns
         permissionModeCombo?.selectedIndex = when (PermissionMode.fromId(settings.permissionMode)) {
             PermissionMode.RUN_EVERYTHING -> 1
             else -> 0
         }
         protectExternalWritesCheckbox?.isSelected = settings.protectExternalFileWrites
         acpRawLoggingCheckbox?.isSelected = settings.enableAcpRawLogging
+        showTokenUsageCheckbox?.isSelected = settings.showTokenUsage
         approvedToolsArea?.text = settings.getApprovedPermissionKeys().sorted().joinToString("\n")
         projectRulesListPanel?.refresh()
+        skillsListPanel?.refresh()
     }
 
     private fun selectedPermissionMode(): String {
@@ -314,6 +347,7 @@ class CursorJConfigurable : Configurable {
         defaultModelField = null
         globalUserRulesListPanel = null
         projectRulesListPanel = null
+        skillsListPanel = null
         autoAttachCheckbox = null
         projectIndexingCheckbox = null
         lexicalPersistenceCheckbox = null
@@ -323,11 +357,13 @@ class CursorJConfigurable : Configurable {
         retrievalTimeoutField = null
         indexRetentionDaysField = null
         indexMaxDatabaseMbField = null
+        indexExcludePatternsField = null
         rebuildIndexButton = null
         permissionModeCombo = null
         approvedToolsArea = null
         protectExternalWritesCheckbox = null
         acpRawLoggingCheckbox = null
+        showTokenUsageCheckbox = null
         mainPanel = null
     }
 }

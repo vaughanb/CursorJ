@@ -2,6 +2,7 @@ package com.cursorj.ui.toolwindow
 
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
+import com.cursorj.acp.MaxModeManager
 import com.cursorj.acp.AcpSession
 import com.cursorj.acp.messages.ContentBlock
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
@@ -324,6 +325,10 @@ class SessionTabManager(
 
         connectEagerly(entry, restoreSessionId)
 
+        chatPanel.onReconnectRequested = {
+            reconnectTab(chatPanel)
+        }
+
         return chatPanel
     }
 
@@ -492,7 +497,33 @@ class SessionTabManager(
         updateStatusBar()
     }
 
-    private fun connectEagerly(entry: TabEntry, restoreSessionId: String? = null) {
+    /**
+     * Reconnects the agent process (e.g. after changing `~/.cursor/cli-config.json` max mode).
+     * Disposes the current [AgentConnection] and runs the same connect flow as a new tab.
+     */
+    fun reconnectTab(chatPanel: ChatPanel) {
+        val entry = tabs.find { it.chatPanel === chatPanel } ?: return
+        scope.launch {
+            try {
+                chatPanel.prepareForAgentReconnect()
+                entry.connection?.let { Disposer.dispose(it) }
+                entry.connection = null
+                entry.session = null
+                connectEagerly(entry, restoreSessionId = null, reloadUiFromTranscriptAfter = true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("reconnectTab failed", e)
+                chatPanel.showError(e.message ?: "Failed to reconnect")
+            }
+        }
+    }
+
+    private fun connectEagerly(
+        entry: TabEntry,
+        restoreSessionId: String? = null,
+        reloadUiFromTranscriptAfter: Boolean = false,
+    ) {
         entry.chatPanel.showStatus("Connecting to Cursor agent...")
 
         scope.launch {
@@ -611,7 +642,9 @@ class SessionTabManager(
                         }
                     } else {
                         createAndBindFreshSession(entry = entry, conn = conn)
-                        entry.chatPanel.showStatus(connectedStatusMessage(conn, "Type a message to start."))
+                        if (!reloadUiFromTranscriptAfter) {
+                            entry.chatPanel.showStatus(connectedStatusMessage(conn, "Type a message to start."))
+                        }
                     }
                 } else {
                     entry.chatPanel.showError(
@@ -623,6 +656,18 @@ class SessionTabManager(
 
                 service.onModelsReady {
                     conn.updateModelInfos(service.availableModelInfos)
+                }
+
+                if (reloadUiFromTranscriptAfter && conn.isConnected) {
+                    entry.chatPanel.reloadConversationFromLocalTranscript {
+                        val suffix =
+                            if (MaxModeManager.isMaxModeEnabled()) {
+                                CursorJBundle.message("chat.maxmode.reconnected.maxOn")
+                            } else {
+                                CursorJBundle.message("chat.maxmode.reconnected.maxOff")
+                            }
+                        entry.chatPanel.showStatus(connectedStatusMessage(conn, suffix))
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -642,6 +687,13 @@ class SessionTabManager(
     fun getActiveSession(): AcpSession? = getActiveTab()?.session
 
     fun getActiveConnection(): AgentConnection? = getActiveTab()?.connection
+
+    /** Syncs every tab's MAX checkbox from a freshly read value (e.g. external `cli-config.json` edit). */
+    internal fun syncAllChatPanelsMaxModeFromDisk(enabled: Boolean) {
+        for (tab in tabs) {
+            tab.chatPanel.applyMaxModeFromDisk(enabled)
+        }
+    }
 
     fun showIndexLifecycle(update: WorkspaceIndexOrchestrator.IndexLifecycleUpdate) {
         val message = when (update.state) {

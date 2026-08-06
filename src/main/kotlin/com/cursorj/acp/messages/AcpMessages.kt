@@ -235,6 +235,14 @@ data class ImageContent(
 ) : ContentBlock
 
 @Serializable
+@SerialName("local_image")
+data class LocalImageContent(
+    val name: String,
+    val mimeType: String,
+    val data: String,
+) : ContentBlock
+
+@Serializable
 @SerialName("resource")
 data class ResourceContent(
     val uri: String,
@@ -250,8 +258,32 @@ data class SessionPromptParams(
 )
 
 @Serializable
+data class TokenUsage(
+    @SerialName("total_tokens") val totalTokens: Long? = null,
+    @SerialName("input_tokens") val inputTokens: Long? = null,
+    @SerialName("output_tokens") val outputTokens: Long? = null,
+    @SerialName("thought_tokens") val thoughtTokens: Long? = null,
+    @SerialName("cached_read_tokens") val cachedReadTokens: Long? = null,
+    @SerialName("cached_write_tokens") val cachedWriteTokens: Long? = null,
+)
+
+@Serializable
+data class UsageCost(
+    val amount: Double,
+    val currency: String,
+)
+
+@Serializable
+data class SessionUsageInfo(
+    val used: Long,
+    val size: Long,
+    val cost: UsageCost? = null,
+)
+
+@Serializable
 data class SessionPromptResult(
     val stopReason: String? = null,
+    val usage: TokenUsage? = null,
 )
 
 @Serializable
@@ -350,6 +382,31 @@ data class PermissionOutcome(
 @Serializable
 data class PermissionResult(
     val outcome: PermissionOutcome,
+)
+
+/**
+ * Params for the agent's `cursor/ask_question` ACP extension request: the structured channel a
+ * Cursor-aware client uses to render interactive multiple-choice questions.
+ */
+@Serializable
+data class AskQuestionParams(
+    val toolCallId: String? = null,
+    val title: String? = null,
+    val questions: List<AskQuestionItem> = emptyList(),
+)
+
+@Serializable
+data class AskQuestionItem(
+    val id: String,
+    val prompt: String = "",
+    val options: List<AskQuestionOptionItem> = emptyList(),
+    val allowMultiple: Boolean = false,
+)
+
+@Serializable
+data class AskQuestionOptionItem(
+    val id: String,
+    val label: String = "",
 )
 
 @Serializable

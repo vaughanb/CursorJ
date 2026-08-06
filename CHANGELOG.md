@@ -46,6 +46,7 @@ All notable changes to this project are documented in this file.
 - Hardened ACP session stop logic.
 - Deferred CursorJ startup indexing warmup until the IDE exits dumb mode to reduce contention with JetBrains indexing.
 - Disabled PSI-driven bulk index invalidations by default to avoid repeated full rebuilds during active editing.
+- Moved **Add to CursorJ Chat** to the bottom of the editor context menu with a separator for clearer placement.
 - Session load requests now include workspace context fields expected by recent agent builds.
 - Simplified chat input controls to focus on stable ACP-backed mode/model behavior.
 - Greatly improved markdown rendering in chat, including richer support for headings, tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks.
@@ -67,7 +68,7 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - Max Mode toggle with CLI-config sync and reconnect handling.
-- Diagnostic integration test for agent model-routing behavior.
+- Diagnostic integration test (canary) for agent model-routing behavior.
 
 ## [1.2.2] - 2026-04-13
 

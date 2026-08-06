@@ -2,6 +2,7 @@ package com.cursorj.ui.components
 
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.ChatMessage
+import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.util.UiThemeBrightness
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.JBColor
@@ -15,7 +16,10 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.*
 
-class MessageRenderer(private var message: ChatMessage) {
+class MessageRenderer(
+    private var message: ChatMessage,
+    private val onFileClick: ((String) -> Unit)? = null
+) {
     private val log = Logger.getInstance(MessageRenderer::class.java)
 
     private val panel = object : JPanel() {
@@ -42,6 +46,17 @@ class MessageRenderer(private var message: ChatMessage) {
         border = JBUI.Borders.empty(4, 8)
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
         minimumSize = Dimension(0, 0)
+        addHyperlinkListener { e ->
+            if (e.eventType == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
+                val urlStr = e.description
+                if (urlStr.startsWith("file://")) {
+                    val path = urlStr.removePrefix("file://")
+                    onFileClick?.invoke(path)
+                } else if (urlStr.startsWith("http://") || urlStr.startsWith("https://")) {
+                    com.intellij.ide.BrowserUtil.browse(urlStr)
+                }
+            }
+        }
     }
 
     private val bubblePanel = object : JPanel(BorderLayout()) {
@@ -67,6 +82,14 @@ class MessageRenderer(private var message: ChatMessage) {
 
     private var collapsed = true
     private var togglePlainText = ""
+
+    private val usageRow = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        isVisible = false
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+
+    private var usageLabelWidget: UsageLabel? = null
 
     private val toggleLabel = JLabel().apply {
         foreground = JBColor(Color(0x5890C8), Color(0x6B9BD2))
@@ -139,6 +162,7 @@ class MessageRenderer(private var message: ChatMessage) {
         bubblePanel.add(contentArea, BorderLayout.CENTER)
         bubblePanel.add(toggleLabel, BorderLayout.SOUTH)
         panel.add(bubblePanel, BorderLayout.CENTER)
+        panel.add(usageRow, BorderLayout.SOUTH)
         applyBubbleColor()
         updateContent()
         updateEditBarVisibility()
@@ -209,6 +233,44 @@ class MessageRenderer(private var message: ChatMessage) {
         } else {
             toggleLabel.isVisible = false
         }
+        syncUsageLabel()
+    }
+
+    private fun syncUsageLabel() {
+        val show = CursorJSettings.instance.showTokenUsage &&
+            message.role == "assistant" &&
+            !message.isStreaming &&
+            message.turnUsage != null
+        if (!show) {
+            usageRow.isVisible = false
+            usageRow.removeAll()
+            usageLabelWidget = null
+            return
+        }
+        val u = message.turnUsage!!
+        if (usageLabelWidget == null) {
+            usageRow.removeAll()
+            val ul = UsageLabel(u)
+            usageLabelWidget = ul
+            usageRow.add(ul.component, BorderLayout.WEST)
+        } else {
+            usageLabelWidget!!.update(u)
+        }
+        usageRow.isVisible = true
+    }
+
+    /** True when this is a non-user bubble showing exactly [content] (used to de-duplicate parsed plan questions). */
+    fun matchesContent(content: String): Boolean =
+        message.role != "user" && message.content == content
+
+    /** True when [incoming] is the same assistant bubble with token usage to merge (ACP turn completion). */
+    fun matchesUsagePatchTarget(incoming: ChatMessage): Boolean {
+        return message.role == "assistant" &&
+            incoming.role == "assistant" &&
+            message.content == incoming.content &&
+            !message.isStreaming &&
+            !incoming.isStreaming &&
+            incoming.turnUsage != null
     }
 
     companion object {

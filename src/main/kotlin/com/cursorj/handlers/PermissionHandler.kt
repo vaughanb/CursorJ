@@ -46,6 +46,11 @@ class PermissionHandler(
 
     internal fun handlePermissionRequest(params: JsonElement): JsonElement {
         val request = PermissionPolicy.withResolvedToolName(json.decodeFromJsonElement<RequestPermissionParams>(params))
+        log.info(
+            "request_permission DETAIL toolName=${request.toolName} toolCallId=${request.toolCall?.toolCallId} " +
+                "tcTitle=${request.toolCall?.title} tcKind=${request.toolCall?.kind} " +
+                "tcContent=${request.toolCall?.content.toString().take(400)} args=${request.arguments.toString().take(400)}",
+        )
         val settings = settingsProvider()
         val mode = PermissionMode.fromId(settings.permissionMode)
         val approvedKeys = settings.getApprovedPermissionKeys()

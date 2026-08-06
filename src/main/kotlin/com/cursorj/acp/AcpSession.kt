@@ -24,6 +24,8 @@ data class ChatMessage(
     val content: String,
     val toolCalls: List<ToolCallUpdate> = emptyList(),
     val isStreaming: Boolean = false,
+    /** Per-turn token usage from [SessionPromptResult.usage] when the agent reports it. */
+    val turnUsage: TokenUsage? = null,
 )
 
 data class ToolActivity(
@@ -129,11 +131,22 @@ class AcpSession(
     private val planListeners = mutableListOf<(List<PlanEntry>) -> Unit>()
     private val editDiffListeners = mutableListOf<(EditDiffContent) -> Unit>()
     private val availableCommandsListeners = mutableListOf<(List<String>) -> Unit>()
+    private val usageListeners = mutableListOf<(SessionUsageInfo) -> Unit>()
+    private val subagentTaskListeners = mutableListOf<(SubagentTaskEvent) -> Unit>()
+
+    private val _subagentTaskHistory = mutableListOf<SubagentTaskEvent>()
+    private val subagentTaskHistoryLock = Any()
 
     @Volatile
     private var pendingFirstUpdate: CompletableDeferred<Unit>? = null
 
     private val _currentAgentText = StringBuilder()
+
+    private var _sessionUsage: SessionUsageInfo? = null
+    val sessionUsage: SessionUsageInfo? get() = _sessionUsage
+
+    private var _lastTurnUsage: TokenUsage? = null
+    val lastTurnUsage: TokenUsage? get() = _lastTurnUsage
 
     fun addUpdateListener(listener: (SessionUpdate) -> Unit) {
         updateListeners.add(listener)
@@ -166,6 +179,17 @@ class AcpSession(
     fun addAvailableCommandsListener(listener: (List<String>) -> Unit) {
         availableCommandsListeners.add(listener)
     }
+
+    fun addUsageListener(listener: (SessionUsageInfo) -> Unit) {
+        usageListeners.add(listener)
+    }
+
+    fun addSubagentTaskListener(listener: (SubagentTaskEvent) -> Unit) {
+        subagentTaskListeners.add(listener)
+    }
+
+    val subagentTaskHistory: List<SubagentTaskEvent>
+        get() = synchronized(subagentTaskHistoryLock) { _subagentTaskHistory.toList() }
 
     fun getConfigOption(category: String): ConfigOption? {
         return _configOptions.firstOrNull { it.category == category }
@@ -294,6 +318,16 @@ class AcpSession(
                         updateAvailableCommands(commands)
                     }
                 }
+                "usage_update" -> {
+                    val used = obj["used"]?.jsonPrimitive?.longOrNull ?: 0L
+                    val size = obj["size"]?.jsonPrimitive?.longOrNull ?: 0L
+                    val cost = obj["cost"]?.takeUnless { it is JsonNull }?.let {
+                        runCatching { json.decodeFromJsonElement<UsageCost>(it) }.getOrNull()
+                    }
+                    val usageInfo = SessionUsageInfo(used = used, size = size, cost = cost)
+                    _sessionUsage = usageInfo
+                    notifyUsageListeners(usageInfo)
+                }
                 else -> {
                     log.info("Unhandled session update type: $updateType, keys: ${obj.keys}")
                 }
@@ -386,6 +420,43 @@ class AcpSession(
         }
     }
 
+    /**
+     * Handles Cursor ACP `cursor/task` (subagent) payloads from notifications or server requests.
+     * @return parsed event for JSON-RPC result fields, or null if the payload could not be parsed.
+     */
+    fun handleCursorTask(params: JsonElement): SubagentTaskEvent? {
+        val obj = params as? JsonObject
+        val event = CursorTaskPayload.parse(params) ?: run {
+            log.warn("cursor/task: parse failed, param keys=${obj?.keys}")
+            return null
+        }
+        val promptRaw = obj?.get("prompt")?.jsonPrimitive?.contentOrNull
+        if (!promptRaw.isNullOrBlank()) {
+            log.info(
+                "cursor/task id=${event.toolCallId} type=${event.subagentTypeLabel} " +
+                    "desc=${event.description.take(120)} prompt=${CursorTaskPayload.promptForLog(promptRaw)}",
+            )
+        } else {
+            log.info(
+                "cursor/task id=${event.toolCallId} type=${event.subagentTypeLabel} " +
+                    "desc=${event.description.take(120)}",
+            )
+        }
+        synchronized(subagentTaskHistoryLock) {
+            val idx = _subagentTaskHistory.indexOfLast { it.toolCallId == event.toolCallId }
+            if (idx >= 0) {
+                _subagentTaskHistory[idx] = event
+            } else {
+                _subagentTaskHistory.add(event)
+            }
+            while (_subagentTaskHistory.size > MAX_SUBAGENT_TASK_HISTORY) {
+                _subagentTaskHistory.removeAt(0)
+            }
+        }
+        notifySubagentTaskListeners(event)
+        return event
+    }
+
     private fun extractEditDiffs(toolCallId: String, obj: JsonObject) {
         val contentArray = obj["content"]?.let {
             if (it is JsonArray) it else null
@@ -469,24 +540,37 @@ class AcpSession(
         _currentAgentText.clear()
     }
 
+    /**
+     * Attaches [usage] to the most recent finalized assistant message (same turn as [SessionPromptResult]).
+     */
+    internal fun applyTurnUsageToLastAssistant(usage: TokenUsage) {
+        _lastTurnUsage = usage
+        for (i in _messages.indices.reversed()) {
+            val msg = _messages[i]
+            if (msg.role == "assistant" && !msg.isStreaming) {
+                val updated = msg.copy(turnUsage = usage)
+                _messages[i] = updated
+                notifyMessageListeners(updated)
+                return
+            }
+        }
+    }
+
     private fun formatToolActivity(obj: JsonObject): ToolActivity? {
         val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
         val title = obj["title"]?.jsonPrimitive?.contentOrNull?.replace("`", "")?.trim()
         val rawInput = try { obj["rawInput"]?.jsonObject } catch (_: Exception) { null }
 
+        val path = extractToolPath(kind, rawInput) ?: firstLocationPath(obj)
+
         val detail: String? = when (kind) {
-            "edit" -> {
-                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-                    ?.substringAfterLast('/')?.substringAfterLast('\\')
-                    ?: title?.removePrefix("Edit")?.trim()?.takeIf { it.isNotBlank() }
-            }
-            "execute" -> {
-                rawInput?.get("command")?.jsonPrimitive?.contentOrNull
-                    ?: title?.takeIf { it != "Terminal" }
-            }
-            "read" -> {
-                title?.removePrefix("Read")?.trim()?.takeIf { it.isNotBlank() }
-            }
+            "edit", "write" -> fileNameOf(path) ?: stripLeadingVerb(title)
+            "execute" -> stringField(rawInput, "command") ?: title?.takeIf { it != "Terminal" }
+            "read" -> readDetail(path, rawInput) ?: stripLeadingVerb(title)
+            "search" -> searchDetail(rawInput) ?: stripLeadingVerb(title)
+            "delete" -> fileNameOf(path) ?: stripLeadingVerb(title)
+            "move" -> fileNameOf(path) ?: stripLeadingVerb(title)
+            "fetch" -> firstStringField(rawInput, "url", "uri") ?: stripLeadingVerb(title)
             else -> title
         }
 
@@ -500,6 +584,7 @@ class AcpSession(
             "write" -> "Writing"
             "search" -> "Searching"
             "delete" -> "Deleting"
+            "fetch" -> "Fetching"
             else -> null
         }
 
@@ -510,23 +595,119 @@ class AcpSession(
             else -> return null
         }
 
-        val path: String? = when (kind) {
-            "edit", "write", "read", "delete" -> {
-                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("filePath")?.jsonPrimitive?.contentOrNull
-            }
-            "move" -> {
-                rawInput?.get("toPath")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("newPath")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-            }
-            else -> {
-                rawInput?.get("path")?.jsonPrimitive?.contentOrNull
-                    ?: rawInput?.get("filePath")?.jsonPrimitive?.contentOrNull
+        return ToolActivity(text = text, path = path, kind = kind)
+    }
+
+    /** Resolves the file path a tool call operates on from its raw arguments, trying common ACP/Cursor key names. */
+    private fun extractToolPath(kind: String?, rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        val byKey = when (kind) {
+            "move" -> firstStringField(rawInput, "toPath", "newPath", "destination", "path")
+            else -> firstStringField(rawInput, "path", "filePath", "file_path", "target_file", "targetFile", "file", "absolutePath", "uri")
+        }
+        return byKey ?: pathLikeValue(rawInput)
+    }
+
+    /** Last-resort scan: returns the first raw-argument string value that looks like a file path. */
+    private fun pathLikeValue(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        for ((_, value) in rawInput) {
+            val s = (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: continue
+            if (s.isNotBlank() && (s.contains('/') || s.contains('\\') || FILE_EXTENSION_REGEX.containsMatchIn(s))) {
+                return s
             }
         }
+        return null
+    }
 
-        return ToolActivity(text = text, path = path, kind = kind)
+    /** Falls back to the ACP `locations` array, the canonical place a tool call reports the files it touched. */
+    private fun firstLocationPath(obj: JsonObject): String? {
+        val locations = try { obj["locations"]?.jsonArray } catch (_: Exception) { null } ?: return null
+        for (entry in locations) {
+            val p = try { entry.jsonObject["path"]?.jsonPrimitive?.contentOrNull } catch (_: Exception) { null }
+            if (!p.isNullOrBlank()) return p
+        }
+        return null
+    }
+
+    /** Builds the "Reading" detail: the file name plus a line range when the raw arguments include one. */
+    private fun readDetail(path: String?, rawInput: JsonObject?): String? {
+        val name = fileNameOf(path) ?: return null
+        val range = lineRange(rawInput)
+        return if (range != null) "$name $range" else name
+    }
+
+    /** Builds the "Searching" detail: the search pattern (quoted), optionally scoped to a glob. */
+    private fun searchDetail(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        val pattern = firstStringField(rawInput, "pattern", "query", "regex", "search", "searchTerm", "search_term", "q")
+        if (!pattern.isNullOrBlank()) {
+            val glob = firstStringField(rawInput, "glob", "globPattern", "glob_pattern", "include", "includePattern")
+            return if (!glob.isNullOrBlank()) "\"$pattern\" in $glob" else "\"$pattern\""
+        }
+        return firstStringField(
+            rawInput,
+            "glob", "globPattern", "glob_pattern", "include", "includePattern", "path", "target_directory", "target_directories",
+        ) ?: firstStringValue(rawInput)
+    }
+
+    /** Returns the first non-blank string value among a tool call's raw arguments. */
+    private fun firstStringValue(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        for ((_, value) in rawInput) {
+            val s = (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            if (!s.isNullOrBlank()) return s
+        }
+        return null
+    }
+
+    /** Formats an `(L<start>-<end>)` hint from explicit start/end keys or the Read tool's offset/limit pair. */
+    private fun lineRange(rawInput: JsonObject?): String? {
+        if (rawInput == null) return null
+        val start = intField(rawInput, "startLine", "start_line", "startLineNumber", "start_line_one_indexed")
+        val end = intField(rawInput, "endLine", "end_line", "endLineNumber", "end_line_one_indexed_inclusive")
+        if (start != null && end != null && end >= start) return "(L$start-$end)"
+        val offset = intField(rawInput, "offset")
+        val limit = intField(rawInput, "limit")
+        if (offset != null && offset >= 1 && limit != null && limit > 0) return "(L$offset-${offset + limit - 1})"
+        if (start != null) return "(L$start)"
+        return null
+    }
+
+    private fun fileNameOf(path: String?): String? =
+        path?.substringAfterLast('/')?.substringAfterLast('\\')?.takeIf { it.isNotBlank() }
+
+    /** Strips a leading action word (e.g. "Read", "Edit") from an agent-supplied title so it reads as a detail. */
+    private fun stripLeadingVerb(title: String?): String? {
+        if (title.isNullOrBlank()) return null
+        val trimmed = title.trim()
+        val firstSpace = trimmed.indexOf(' ')
+        if (firstSpace <= 0) return trimmed
+        val firstWord = trimmed.substring(0, firstSpace).lowercase()
+        val verbs = setOf("read", "edit", "write", "search", "grep", "delete", "create", "view", "open", "fetch", "move")
+        return if (firstWord in verbs) {
+            trimmed.substring(firstSpace + 1).trim().takeIf { it.isNotBlank() } ?: trimmed
+        } else {
+            trimmed
+        }
+    }
+
+    private fun stringField(obj: JsonObject?, key: String): String? =
+        obj?.get(key)?.let { try { it.jsonPrimitive.contentOrNull } catch (_: Exception) { null } }?.takeIf { it.isNotBlank() }
+
+    private fun firstStringField(obj: JsonObject?, vararg keys: String): String? {
+        if (obj == null) return null
+        for (key in keys) stringField(obj, key)?.let { return it }
+        return null
+    }
+
+    private fun intField(obj: JsonObject?, vararg keys: String): Int? {
+        if (obj == null) return null
+        for (key in keys) {
+            val value = obj[key]?.let { try { it.jsonPrimitive.intOrNull } catch (_: Exception) { null } }
+            if (value != null) return value
+        }
+        return null
     }
 
     private fun extractUpdateText(updateObj: JsonObject): String? {
@@ -575,9 +756,17 @@ class AcpSession(
         pendingFirstUpdate = firstUpdateSignal
 
         var interrupted = false
+        var lastPromptResult: SessionPromptResult? = null
         val stuckToolSignal = CompletableDeferred<ToolCallWatchdogSignal>()
         val promptDeferred = sessionScope.async(start = CoroutineStart.LAZY) {
-            client.sessionPrompt(sessionId, content)
+            val mappedContent = content.map { block ->
+                if (block is LocalImageContent) {
+                    ImageContent(data = block.data, mimeType = block.mimeType)
+                } else {
+                    block
+                }
+            }
+            client.sessionPrompt(sessionId, mappedContent)
         }
         val watchdogJob = sessionScope.launch {
             monitorToolCalls(stuckToolSignal)
@@ -616,6 +805,7 @@ class AcpSession(
                 promptDeferred.start()
                 select {
                     promptDeferred.onAwait { result ->
+                        lastPromptResult = result
                         result
                     }
                     stuckToolSignal.onAwait { signal ->
@@ -664,6 +854,7 @@ class AcpSession(
             promptDeferred.cancel()
             isProcessing = false
             finalizeCurrentText()
+            lastPromptResult?.usage?.let { applyTurnUsageToLastAssistant(it) }
             clearTrackedToolCalls()
             rollbackManager.completeTurn(sessionId, turnId, interrupted = interrupted)
         }
@@ -863,12 +1054,32 @@ class AcpSession(
         }
     }
 
+    private fun notifyUsageListeners(info: SessionUsageInfo) {
+        for (listener in usageListeners) {
+            try {
+                listener(info)
+            } catch (e: Exception) {
+                log.warn("Usage listener error", e)
+            }
+        }
+    }
+
     private fun notifyActivityListeners(activity: String) {
         for (listener in activityListeners) {
             try {
                 listener(activity)
             } catch (e: Exception) {
                 log.warn("Activity listener error", e)
+            }
+        }
+    }
+
+    private fun notifySubagentTaskListeners(event: SubagentTaskEvent) {
+        for (listener in subagentTaskListeners) {
+            try {
+                listener(event)
+            } catch (e: Exception) {
+                log.warn("Subagent task listener error", e)
             }
         }
     }
@@ -983,6 +1194,16 @@ class AcpSession(
         onPlanFileTouch = null
         sessionScope.cancel()
         clearTrackedToolCalls()
+        updateListeners.clear()
+        messageListeners.clear()
+        configListeners.clear()
+        activityListeners.clear()
+        toolCallListeners.clear()
+        planListeners.clear()
+        editDiffListeners.clear()
+        availableCommandsListeners.clear()
+        usageListeners.clear()
+        subagentTaskListeners.clear()
     }
 
     private fun failFastThresholdFor(tracked: TrackedToolCall): Long {
@@ -1030,9 +1251,12 @@ class AcpSession(
         private const val TOOL_WATCHDOG_FAIL_FAST_MS = 5L * 60L * 1000L
         private const val GRADLE_FAIL_FAST_MS = 90_000L
         private const val TOOL_WATCHDOG_ERROR_CODE = -32001
+        private val FILE_EXTENSION_REGEX = Regex("""\.[A-Za-z0-9]{1,8}$""")
+
         private const val FIRST_UPDATE_TIMEOUT_MS = 90_000L
         private const val LIVENESS_CHECK_INTERVAL_MS = 5_000L
         private const val MAX_TURN_DURATION_MS = 15L * 60L * 1000L
+        private const val MAX_SUBAGENT_TASK_HISTORY = 20
 
         val debugLogFile: java.io.File? by lazy {
             val home = System.getProperty("user.home") ?: return@lazy null

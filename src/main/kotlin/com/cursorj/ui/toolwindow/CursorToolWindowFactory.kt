@@ -2,6 +2,7 @@ package com.cursorj.ui.toolwindow
 
 import com.cursorj.CursorJBundle
 import com.cursorj.acp.AgentConnection
+import com.cursorj.acp.MaxModeManager
 import com.cursorj.acp.AcpProcessManager
 import com.cursorj.context.ActiveFileProvider
 import com.cursorj.context.SelectionProvider
@@ -12,9 +13,11 @@ import com.cursorj.history.ChatHistoryStore
 import com.cursorj.history.ChatTranscriptManager
 import com.cursorj.history.ChatTranscriptStore
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
+import com.cursorj.storage.CentralStorage
 import com.cursorj.settings.CursorJSettings
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbService
@@ -57,15 +60,17 @@ class CursorJService(
 
     private val log = Logger.getInstance(CursorJService::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var maxModeConfigPollJob: Job? = null
     @Volatile
     private var serviceDisposed = false
 
     val activeFileProvider = ActiveFileProvider(project)
     val selectionProvider = SelectionProvider(project)
-    val workspaceIndexOrchestrator = WorkspaceIndexOrchestrator(project)
-    val promptHistoryManager = PromptHistoryManager(PromptHistoryStore(project.basePath))
-    val chatTranscriptManager = ChatTranscriptManager(ChatTranscriptStore(project.basePath))
-    val chatHistoryIndexManager = ChatHistoryIndexManager(ChatHistoryStore(project.basePath))
+    private val machineLocalProjectDir = CentralStorage().projectDir(project.basePath)
+    val workspaceIndexOrchestrator = WorkspaceIndexOrchestrator(project, indexStorageDir = machineLocalProjectDir)
+    val promptHistoryManager = PromptHistoryManager(PromptHistoryStore(machineLocalProjectDir))
+    val chatTranscriptManager = ChatTranscriptManager(ChatTranscriptStore(machineLocalProjectDir))
+    val chatHistoryIndexManager = ChatHistoryIndexManager(ChatHistoryStore(machineLocalProjectDir))
 
     lateinit var tabManager: SessionTabManager
         private set
@@ -110,6 +115,38 @@ class CursorJService(
             workspaceIndexOrchestrator.start()
         }
         fetchModelsAsync()
+        startCliConfigMaxModePolling()
+    }
+
+    /**
+     * Polls `~/.cursor/cli-config.json` about every 10s so MAX mode stays in sync when the file is edited
+     * outside CursorJ (other tools, manual edit). The first sample establishes a baseline without broadcasting;
+     * later changes update all chat tabs via [SessionTabManager.syncAllChatPanelsMaxModeFromDisk].
+     */
+    private fun startCliConfigMaxModePolling() {
+        maxModeConfigPollJob?.cancel()
+        maxModeConfigPollJob = scope.launch {
+            var lastKnown: Boolean? = null
+            while (isActive) {
+                delay(10_000)
+                if (serviceDisposed || project.isDisposed) break
+                val enabled = withContext(Dispatchers.IO) {
+                    MaxModeManager.isMaxModeEnabled()
+                }
+                if (lastKnown == null) {
+                    lastKnown = enabled
+                    continue
+                }
+                if (lastKnown == enabled) continue
+                lastKnown = enabled
+                ApplicationManager.getApplication().invokeLater {
+                    if (serviceDisposed || project.isDisposed) return@invokeLater
+                    if (::tabManager.isInitialized) {
+                        tabManager.syncAllChatPanelsMaxModeFromDisk(enabled)
+                    }
+                }
+            }
+        }
     }
 
     private fun clearStaleSessionsIfDataMissing() {
@@ -236,6 +273,8 @@ class CursorJService(
 
     override fun dispose() {
         serviceDisposed = true
+        maxModeConfigPollJob?.cancel()
+        maxModeConfigPollJob = null
         promptHistoryManager.persist()
         chatTranscriptManager.persist()
         chatHistoryIndexManager.persist()

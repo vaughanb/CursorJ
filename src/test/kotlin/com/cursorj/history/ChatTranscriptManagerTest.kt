@@ -1,6 +1,7 @@
 package com.cursorj.history
 
 import com.cursorj.acp.ChatMessage
+import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,7 +13,7 @@ class ChatTranscriptManagerTest {
     fun `addMessage ignores streaming and deduplicates sequential messages`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-add").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath), maxEntriesPerSession = 5)
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }), maxEntriesPerSession = 5)
             manager.load()
 
             assertFalse(manager.addMessage("session:one", ChatMessage("assistant", "stream", isStreaming = true)))
@@ -36,7 +37,7 @@ class ChatTranscriptManagerTest {
     fun `migrateSessionKey moves transcript and keeps order`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-migrate").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             manager.addMessage("tab:temp", ChatMessage("user", "one"))
@@ -62,7 +63,7 @@ class ChatTranscriptManagerTest {
     fun `buildCarryoverContext includes recent transcript entries`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-carryover").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             manager.addMessage("session:one", ChatMessage("user", "first question"))
@@ -82,7 +83,7 @@ class ChatTranscriptManagerTest {
     fun `buildCarryoverContext from explicit list preserves order and content`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-carryover-list").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             val context = manager.buildCarryoverContext(
@@ -105,7 +106,7 @@ class ChatTranscriptManagerTest {
     fun `buildCarryoverContext from empty list returns null`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-carryover-empty").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
             assertEquals(null, manager.buildCarryoverContext(emptyList()))
         } finally {
@@ -117,7 +118,7 @@ class ChatTranscriptManagerTest {
     fun `resetSession replaces prefix and clears when empty`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-reset").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
 
             manager.addMessage("session:one", ChatMessage("user", "one"))
@@ -144,7 +145,7 @@ class ChatTranscriptManagerTest {
     fun `isEmpty returns true before any messages are added`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-empty").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
             assertTrue(manager.isEmpty())
         } finally {
@@ -156,7 +157,7 @@ class ChatTranscriptManagerTest {
     fun `isEmpty returns false after adding a message`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-notempty").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
             manager.addMessage("session:one", ChatMessage("user", "hello"))
             assertFalse(manager.isEmpty())
@@ -169,7 +170,7 @@ class ChatTranscriptManagerTest {
     fun `isEmpty returns true when loaded from missing file`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-no-file").toFile()
         try {
-            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            val manager = ChatTranscriptManager(ChatTranscriptStore(File(workspace, "store").apply { mkdirs() }))
             manager.load()
             assertTrue(manager.isEmpty())
         } finally {

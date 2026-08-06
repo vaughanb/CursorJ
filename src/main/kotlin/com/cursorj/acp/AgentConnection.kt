@@ -1,7 +1,10 @@
 package com.cursorj.acp
 
+import com.cursorj.acp.messages.AskQuestionParams
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.RequestPermissionParams
+import com.cursorj.handlers.AskQuestionHandler
+import com.cursorj.handlers.AskQuestionOutcome
 import com.cursorj.handlers.FileSystemHandler
 import com.cursorj.handlers.IndexSearchHandler
 import com.cursorj.handlers.PermissionHandler
@@ -15,9 +18,12 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.util.Alarm
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import java.util.concurrent.CompletableFuture
 import javax.swing.SwingUtilities
 
@@ -46,6 +52,7 @@ class AgentConnection(
     private val fileSystemHandler = FileSystemHandler(project)
     private val terminalHandler = TerminalHandler(project)
     private val permissionHandler = PermissionHandler()
+    private val askQuestionHandler = AskQuestionHandler()
     private val indexSearchHandler = workspaceIndexOrchestrator?.let { IndexSearchHandler(it) }
 
     /** Coalesces rapid plan-file touches into a single VFS reload + editor sync. */
@@ -74,6 +81,14 @@ class AgentConnection(
                 }
             }
         }
+    }
+
+    private val cursorTaskNotificationHandler: NotificationHandler = fun(method, params) {
+        if (method != "cursor/task" && method != "_cursor/task") return
+        val visible = session ?: return
+        val sid = extractSessionId(params)
+        if (sid != null && sid != visible.sessionId) return
+        visible.handleCursorTask(params)
     }
 
     init {
@@ -112,6 +127,7 @@ class AgentConnection(
                 else log.info("Ignoring stale readLoop disconnect (gen $gen, current $connectionGeneration)")
             }
             client.addNotificationHandler(visibleSessionUpdateHandler)
+            client.addNotificationHandler(cursorTaskNotificationHandler)
 
             log.info("Sending ACP initialize...")
             client.initialize()
@@ -262,6 +278,10 @@ class AgentConnection(
         permissionHandler.setPromptResolver(resolver)
     }
 
+    fun setAskQuestionResolver(resolver: ((AskQuestionParams) -> CompletableFuture<AskQuestionOutcome>)?) {
+        askQuestionHandler.setResolver(resolver)
+    }
+
     private fun attachPlanEditorSync(s: AcpSession) {
         s.onPlanFileTouch = { path ->
             val normalized = path.replace('\\', '/')
@@ -282,6 +302,7 @@ class AgentConnection(
         fileSystemHandler.register(client)
         terminalHandler.register(client)
         permissionHandler.register(client)
+        askQuestionHandler.register(client)
         client.addServerRequestHandler { method, params ->
             indexSearchHandler?.handle(method, params)?.let { return@addServerRequestHandler it }
             when (method) {
@@ -294,6 +315,17 @@ class AgentConnection(
                 "_cursor/update_todos" -> {
                     session?.handleUpdateTodos(params)
                     JsonObject(emptyMap())
+                }
+                "cursor/task", "_cursor/task" -> {
+                    val visible = session
+                    val event = if (visible != null) {
+                        val sid = extractSessionId(params)
+                        if (sid != null && sid != visible.sessionId) null
+                        else visible.handleCursorTask(params)
+                    } else {
+                        null
+                    }
+                    buildCursorTaskRpcOutcome(event)
                 }
                 "editor/apply_edit" -> {
                     log.info("Stub response for unimplemented method: $method")
@@ -358,6 +390,7 @@ class AgentConnection(
                     else log.info("Ignoring stale reconnect disconnect (gen $reconnectGen, current $connectionGeneration)")
                 }
                 client.addNotificationHandler(visibleSessionUpdateHandler)
+                client.addNotificationHandler(cursorTaskNotificationHandler)
 
                 client.initialize()
                 client.authenticate()
@@ -427,6 +460,15 @@ class AgentConnection(
             ?.trim()
             ?.takeIf { it.isNotBlank() }
     }
+
+    private fun buildCursorTaskRpcOutcome(event: SubagentTaskEvent?): JsonObject =
+        buildJsonObject {
+            putJsonObject("outcome") {
+                put("outcome", "completed")
+                event?.agentId?.trim()?.takeIf { it.isNotEmpty() }?.let { put("agentId", it) }
+                event?.durationMs?.let { put("durationMs", it) }
+            }
+        }
 
     private fun extractSessionId(params: kotlinx.serialization.json.JsonElement): String? {
         val obj = params as? JsonObject ?: return null

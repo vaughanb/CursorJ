@@ -1,5 +1,6 @@
 package com.cursorj.indexing.storage
 
+import java.io.File
 import java.nio.file.Files
 import java.sql.DriverManager
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -19,7 +20,7 @@ class SQLiteIndexStoreTest {
     fun `operations fail before open`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-not-open").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             assertFailsWith<IllegalStateException> {
                 store.documentCount()
             }
@@ -32,7 +33,7 @@ class SQLiteIndexStoreTest {
     fun `store migrates and persists lexical rows across reopen`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-store").toFile()
         try {
-            val first = SQLiteIndexStore(workspace.absolutePath)
+            val first = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             first.open()
             first.upsertDocument(
                 path = "${workspace.absolutePath.replace('\\', '/')}/src/Main.kt",
@@ -58,7 +59,7 @@ class SQLiteIndexStoreTest {
             assertEquals(1, first.documentCount())
             first.close()
 
-            val second = SQLiteIndexStore(workspace.absolutePath)
+            val second = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             second.open()
             val results = second.searchLexical(
                 query = "greet",
@@ -78,7 +79,7 @@ class SQLiteIndexStoreTest {
     fun `search supports pathPrefix and case sensitivity`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-prefix").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             val srcPath = "${workspace.absolutePath.replace('\\', '/')}/src/Main.kt"
             val testPath = "${workspace.absolutePath.replace('\\', '/')}/test/MainTest.kt"
@@ -116,7 +117,7 @@ class SQLiteIndexStoreTest {
     fun `removePath and clearAll remove documents and hits`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-remove").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             val path = "${workspace.absolutePath.replace('\\', '/')}/src/Temp.kt"
             store.upsertDocument(path, "hash", 10, 1L, "kt")
@@ -153,7 +154,7 @@ class SQLiteIndexStoreTest {
     fun `prune removes stale rows by indexed time`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-prune").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             val path = "${workspace.absolutePath.replace('\\', '/')}/Old.kt"
             store.upsertDocument(path, "hash", 10, 1L, "kt")
@@ -175,7 +176,7 @@ class SQLiteIndexStoreTest {
     fun `open creates db file and close updates isOpen`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-open").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             assertFalse(store.existsOnDisk())
             assertFalse(store.isOpen())
             store.open()
@@ -194,11 +195,11 @@ class SQLiteIndexStoreTest {
     fun `open applies schema migration version`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-schema").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             store.close()
 
-            val dbPath = workspace.resolve(".cursorj/index/index-v1.db").absolutePath.replace('\\', '/')
+            val dbPath = workspace.resolve(".cursorj-sqlite-store/index/index-v1.db").absolutePath.replace('\\', '/')
             DriverManager.getConnection("jdbc:sqlite:$dbPath").use { conn ->
                 conn.prepareStatement("SELECT value FROM index_meta WHERE key='schema_version'").use { ps ->
                     ps.executeQuery().use { rs ->
@@ -216,7 +217,7 @@ class SQLiteIndexStoreTest {
     fun `blank query returns no lexical hits`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-blank").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             assertTrue(store.searchLexical("   ", null, 10, caseSensitive = false).isEmpty())
             store.close()
@@ -229,7 +230,7 @@ class SQLiteIndexStoreTest {
     fun `path normalization supports backslash and forward slash lookups`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-pathnorm").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             val backslashPath = "${workspace.absolutePath}\\src\\Path.kt"
             store.upsertDocument(backslashPath, "hash", 10, 1L, "kt")
@@ -252,7 +253,7 @@ class SQLiteIndexStoreTest {
     fun `searchLexical respects maxResults and ordering by score`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-order").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             val path = "${workspace.absolutePath.replace('\\', '/')}/src/Order.kt"
             store.upsertDocument(path, "hash", 10, 1L, "kt")
@@ -279,7 +280,7 @@ class SQLiteIndexStoreTest {
     fun `allDocuments returns stored metadata for warmup planning`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-docs").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             val one = "${workspace.absolutePath.replace('\\', '/')}/src/One.kt"
             val two = "${workspace.absolutePath.replace('\\', '/')}/src/Two.kt"
@@ -300,7 +301,7 @@ class SQLiteIndexStoreTest {
     fun `concurrent writes do not fail with transaction state errors`() {
         val workspace = Files.createTempDirectory("cursorj-sqlite-concurrent").toFile()
         try {
-            val store = SQLiteIndexStore(workspace.absolutePath)
+            val store = SQLiteIndexStore(File(workspace, ".cursorj-sqlite-store").also { it.mkdirs() })
             store.open()
             val normalizedRoot = workspace.absolutePath.replace('\\', '/')
             val targetPath = "$normalizedRoot/src/Race.kt"

@@ -435,14 +435,64 @@ class WorkspaceIndexOrchestratorTest {
         }
     }
 
-    private fun projectWithBasePath(basePath: String?): Project {
+    @Test
+    fun `reconcile does not proceed if project is disposed`() = runBlocking {
+        var projectDisposed = false
+        val settings = CursorJSettings().apply {
+            enableLexicalPersistence = true
+            enableSemanticIndexing = false
+        }
+        val project = projectWithBasePath(null) { projectDisposed }
+        val fakeLexical = FakeLexicalSearchIndex(project)
+        val orchestrator = WorkspaceIndexOrchestrator(
+            project = project,
+            settingsProvider = { settings },
+            lexicalOverride = fakeLexical,
+        )
+        val lifecycle = mutableListOf<WorkspaceIndexOrchestrator.IndexLifecycleState>()
+        orchestrator.addLifecycleListener { lifecycle.add(it.state) }
+
+        projectDisposed = true
+        orchestrator.runReconcileForTest("manual")
+        orchestrator.dispose()
+
+        assertTrue(lifecycle.isEmpty())
+        assertEquals(0, fakeLexical.warmupCalls)
+    }
+
+    @Test
+    fun `incremental upsert does not proceed if project is disposed`() = runBlocking {
+        var projectDisposed = false
+        val settings = CursorJSettings().apply {
+            enableLexicalPersistence = true
+            enableSemanticIndexing = false
+        }
+        val project = projectWithBasePath(null) { projectDisposed }
+        val fakeLexical = FakeLexicalSearchIndex(project)
+        val orchestrator = WorkspaceIndexOrchestrator(
+            project = project,
+            settingsProvider = { settings },
+            lexicalOverride = fakeLexical,
+        )
+        val lifecycle = mutableListOf<WorkspaceIndexOrchestrator.IndexLifecycleState>()
+        orchestrator.addLifecycleListener { lifecycle.add(it.state) }
+
+        projectDisposed = true
+        orchestrator.runIncrementalUpsertForTest("C:/tmp/Foo.kt")
+        orchestrator.dispose()
+
+        assertTrue(lifecycle.isEmpty())
+        assertTrue(fakeLexical.upsertPaths.isEmpty())
+    }
+
+    private fun projectWithBasePath(basePath: String?, isDisposedProvider: () -> Boolean = { false }): Project {
         return Proxy.newProxyInstance(
             Project::class.java.classLoader,
             arrayOf(Project::class.java),
         ) { _, method, _ ->
             when (method.name) {
                 "getBasePath" -> basePath
-                "isDisposed" -> false
+                "isDisposed" -> isDisposedProvider()
                 "isDefault" -> false
                 "getName" -> "test-project"
                 "getLocationHash" -> "test-hash"

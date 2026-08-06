@@ -1,5 +1,6 @@
 import java.io.File
 import org.gradle.api.GradleException
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.testing.Test
 import org.gradle.language.base.plugins.LifecycleBasePlugin
@@ -33,7 +34,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.sqlite.jdbc)
     testImplementation(kotlin("test"))
-    testRuntimeOnly("junit:junit:4.13.2")
+    testImplementation("org.opentest4j:opentest4j:1.3.0")
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.4")
 
     intellijPlatform {
         val platformType = providers.gradleProperty("platformType")
@@ -41,6 +44,7 @@ dependencies {
         create(platformType, platformVersion)
 
         bundledPlugin("org.jetbrains.plugins.terminal")
+        testFramework(TestFrameworkType.Platform)
 
         pluginVerifier()
     }
@@ -62,6 +66,11 @@ dependencies {
 }
 
 intellijPlatform {
+    // Avoid :instrumentCode (Ant/Javac2): Apache Ant requires JAVA_HOME/Packages for Microsoft JDKs,
+    // which that distribution does not ship — see https://github.com/microsoft/openjdk/issues/339.
+    // This project has no UI Designer .form files; UI is Kotlin-only.
+    instrumentCode = false
+
     pluginConfiguration {
         id = "com.cursorj"
         name = providers.gradleProperty("pluginName")
@@ -85,11 +94,13 @@ intellijPlatform {
                 <li>Full agentic coding with file editing, terminal commands, and codebase understanding</li>
                 <li>Project indexing with lexical search, symbol lookup, and optional semantic reranking</li>
                 <li>Reliable SQLite-backed lexical persistence with safe concurrent index updates</li>
-                <li>Active file and selection context injection with drag-and-drop file references</li>
+                <li>Inline <code>@file</code> references and image attachments via drag-and-drop or paste</li>
+                <li>Active file and selection context injection</li>
                 <li>Multiple concurrent chat sessions with intelligent tab naming</li>
                 <li>Chat history with search and restore; prompt history</li>
                 <li>Unified rules management for global user rules and project rules (<code>.cursor/rules/</code>)</li>
-                <li>Agent, Plan, and Ask modes with native IntelliJ UI</li>
+                <li>Cursor Skills discovery and settings management; inline <code>/</code> and <code>@</code> completion in chat (merged with ACP slash commands) that keeps focus in the input</li>
+                <li>Agent, Plan, and Ask modes with native IntelliJ UI, including multiple-choice cards for agent questions</li>
                 <li>Permission control with per-turn rollback via Local History</li>
             </ul>
             <p>Project home: <a href="$projectUrl">$projectUrl</a></p>
@@ -99,11 +110,10 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li>Model switching now uses ACP-spec <code>session/set_config_option</code> with post-switch verification, structured diagnostic logging, and a model-name context hint injected into the next prompt</li>
-                <li>Status bar and connected detail now reflect the ACP-confirmed active model rather than optimistic UI state</li>
-                <li>Added manual-only real-CLI integration test suite (gated by <code>CURSORJ_INTEGRATION=1</code>, hard-blocked on CI) covering ACP process lifecycle, connection/auth, session creation, model switching, terminal/filesystem handlers, and index search</li>
-                <li>Expanded unit tests for config-option merge behavior, per-session isolation, model display-name mapping, and reconnect status handling</li>
-                <li>Improved symbol index bridge with safer PSI access patterns</li>
+                <li><strong>Cursor Skills:</strong> Discover <code>SKILL.md</code> skills, manage them in settings, and use inline <code>/</code> and <code>@</code> completion in chat (ACP <code>available_commands_update</code> merged in) that keeps focus in the input so you can keep typing to filter.</li>
+                <li><strong>Interactive agent questions:</strong> Answer structured <code>cursor/ask_question</code> prompts and plan-mode multiple-choice questions using native chat cards.</li>
+                <li><strong>Central machine-local storage:</strong> SQLite indexes, chat history, transcripts, and prompt history now live under <code>~/.cursorj/projects/&lt;project&gt;-&lt;hash&gt;/</code>, with safe one-time migration from legacy workspace <code>.cursorj</code> folders.</li>
+                <li><strong>Richer tool-call activity labels:</strong> Chat now shows file names and line ranges for reads, search patterns/globs for searches, and URLs for web fetches instead of generic tool activity text.</li>
             </ul>
         """.trimIndent()
     }

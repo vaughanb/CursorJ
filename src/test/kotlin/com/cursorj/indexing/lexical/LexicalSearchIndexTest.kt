@@ -1,6 +1,7 @@
 package com.cursorj.indexing.lexical
 
 import com.cursorj.indexing.storage.SQLiteIndexStore
+import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -70,13 +71,13 @@ class LexicalSearchIndexTest {
                 """.trimIndent(),
             )
 
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val first = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             first.warmupWorkspace()
             store.close()
 
-            val storeReloaded = SQLiteIndexStore(root.absolutePath)
+            val storeReloaded = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             storeReloaded.open()
             val second = LexicalSearchIndex(projectWithBasePath(root.absolutePath), storeReloaded)
             val result = second.searchText("fetchUser", maxResults = 10)
@@ -96,7 +97,7 @@ class LexicalSearchIndexTest {
             val source = File(root, "src/Main.kt")
             source.writeText("fun HelloWorld() = 42")
 
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             index.warmupWorkspace()
@@ -117,7 +118,7 @@ class LexicalSearchIndexTest {
     fun `warmupWorkspace removes stale document entries`() = runBlocking {
         val root = Files.createTempDirectory("cursorj-lexical-warmup").toFile()
         try {
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val stalePath = "${root.absolutePath.replace('\\', '/')}/stale/Old.kt"
             store.upsertDocument(stalePath, "stale-hash", 20, 1L, "kt")
@@ -147,7 +148,7 @@ class LexicalSearchIndexTest {
     fun `upsertFileFromDisk removes missing file from store`() = runBlocking {
         val root = Files.createTempDirectory("cursorj-lexical-upsert-missing").toFile()
         try {
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val existing = File(root, "src/ToDelete.kt")
             existing.parentFile.mkdirs()
@@ -175,7 +176,7 @@ class LexicalSearchIndexTest {
             File(root, "src/Main.kt").writeText("fun scopedNeedle() = 1")
             File(root, "test/MainTest.kt").writeText("fun scopedNeedle() = 2")
 
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             index.warmupWorkspace()
@@ -217,7 +218,7 @@ class LexicalSearchIndexTest {
             repeat(3) { idx ->
                 File(root, "src/File$idx.kt").writeText("fun fn$idx() = $idx")
             }
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
             var callbackCount = 0
@@ -233,7 +234,7 @@ class LexicalSearchIndexTest {
     fun `upsertFileFromDisk skips binary and oversized files`() = runBlocking {
         val root = Files.createTempDirectory("cursorj-lexical-skip").toFile()
         try {
-            val store = SQLiteIndexStore(root.absolutePath)
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
             store.open()
             val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
 
@@ -253,14 +254,70 @@ class LexicalSearchIndexTest {
         }
     }
 
-    private fun projectWithBasePath(basePath: String?): Project {
+    @Test
+    fun `warmupWorkspace aborts immediately if project is disposed`() = runBlocking {
+        val root = Files.createTempDirectory("cursorj-lexical-disposed").toFile()
+        try {
+            var projectDisposed = false
+            File(root, "src").mkdirs()
+            repeat(10) { idx ->
+                File(root, "src/File$idx.kt").writeText("fun fn$idx() = $idx")
+            }
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
+            store.open()
+            val project = projectWithBasePath(root.absolutePath) { projectDisposed }
+            val index = LexicalSearchIndex(project, store)
+
+            projectDisposed = true
+            val warmup = index.warmupWorkspace()
+            assertEquals(0, warmup.indexedFiles)
+            assertEquals(0, warmup.skippedFiles)
+            store.close()
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `warmupWorkspace respects user exclude patterns`() = runBlocking {
+        val root = Files.createTempDirectory("cursorj-lexical-exclude").toFile()
+        try {
+            File(root, "src").mkdirs()
+            File(root, "src/Included.kt").writeText("fun included() = 1")
+            File(root, "src/Excluded.log").writeText("error logs here")
+            File(root, "src/ExcludedDir").mkdirs()
+            File(root, "src/ExcludedDir/File.kt").writeText("class ExcludedFile")
+
+            val store = SQLiteIndexStore(File(root, ".cursorj-lexical-sqlite").also { it.mkdirs() })
+            store.open()
+            val index = LexicalSearchIndex(projectWithBasePath(root.absolutePath), store)
+
+            val settings = CursorJSettings.instance
+            val prevExclude = settings.indexExcludePatterns
+            settings.indexExcludePatterns = "*.log, **/ExcludedDir/**"
+
+            try {
+                val warmup = index.warmupWorkspace()
+                assertEquals(1, warmup.indexedFiles)
+                assertTrue(warmup.skippedFiles >= 2)
+            } finally {
+                settings.indexExcludePatterns = prevExclude
+                store.close()
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+
+    private fun projectWithBasePath(basePath: String?, isDisposedProvider: () -> Boolean = { false }): Project {
         return Proxy.newProxyInstance(
             Project::class.java.classLoader,
             arrayOf(Project::class.java),
         ) { _, method, _ ->
             when (method.name) {
                 "getBasePath" -> basePath
-                "isDisposed" -> false
+                "isDisposed" -> isDisposedProvider()
                 "isDefault" -> false
                 "getName" -> "test-project"
                 "getLocationHash" -> "test-hash"

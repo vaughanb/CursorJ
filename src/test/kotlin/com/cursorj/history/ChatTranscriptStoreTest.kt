@@ -10,11 +10,11 @@ class ChatTranscriptStoreTest {
     fun `load returns empty snapshot for malformed json`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-store-bad-json").toFile()
         try {
-            val target = File(workspace, ".cursorj/chat-transcripts-v1.json")
-            target.parentFile.mkdirs()
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val target = File(storage, ChatTranscriptStore.FILE_NAME)
             target.writeText("{ not-json", Charsets.UTF_8)
 
-            val store = ChatTranscriptStore(workspace.absolutePath)
+            val store = ChatTranscriptStore(storage)
             val loaded = store.load()
             assertEquals(emptyMap(), loaded.sessions)
         } finally {
@@ -26,7 +26,8 @@ class ChatTranscriptStoreTest {
     fun `save and load round trip preserves normalized messages`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-store-roundtrip").toFile()
         try {
-            val store = ChatTranscriptStore(workspace.absolutePath)
+            val storage = File(workspace, "store").apply { mkdirs() }
+            val store = ChatTranscriptStore(storage)
             store.save(
                 ChatTranscriptStore.ChatTranscriptSnapshot(
                     sessions = mapOf(

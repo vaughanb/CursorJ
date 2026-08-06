@@ -9,7 +9,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 
-class ChatTranscriptStore(workspacePath: String?) {
+/**
+ * Loads and saves chat transcript JSON under [storageDir] when non-null.
+ */
+class ChatTranscriptStore(storageDir: File?) {
     @Serializable
     data class TranscriptMessage(
         val role: String,
@@ -28,7 +31,7 @@ class ChatTranscriptStore(workspacePath: String?) {
         isLenient = true
     }
 
-    private val transcriptFile: File? = workspacePath?.let { File(it, RELATIVE_PATH) }
+    private val transcriptFile: File? = storageDir?.let { File(it, FILE_NAME) }
 
     fun load(): ChatTranscriptSnapshot {
         val file = transcriptFile ?: return ChatTranscriptSnapshot()
@@ -96,6 +99,6 @@ class ChatTranscriptStore(workspacePath: String?) {
 
     companion object {
         const val VERSION = 1
-        const val RELATIVE_PATH = ".cursorj/chat-transcripts-v1.json"
+        const val FILE_NAME = "chat-transcripts-v1.json"
     }
 }

@@ -12,6 +12,7 @@ import com.cursorj.indexing.storage.SQLiteIndexStore
 import com.cursorj.indexing.symbol.IntelliJSymbolIndexBridge
 import com.cursorj.indexing.telemetry.IndexTelemetry
 import com.cursorj.settings.CursorJSettings
+import com.cursorj.storage.CentralStorage
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -25,6 +26,7 @@ import java.util.concurrent.atomic.AtomicLong
 class WorkspaceIndexOrchestrator(
     private val project: Project,
     private val settingsProvider: () -> CursorJSettings = { CursorJSettings.instance },
+    indexStorageDir: File? = null,
     lexicalOverride: LexicalSearchIndex? = null,
     symbolOverride: IntelliJSymbolIndexBridge? = null,
     semanticOverride: SemanticChunkIndex? = null,
@@ -61,7 +63,9 @@ class WorkspaceIndexOrchestrator(
     private val settings: CursorJSettings
         get() = settingsProvider()
 
-    private val sqliteStore = project.basePath?.let { SQLiteIndexStore(it) }
+    private val resolvedIndexStorageDir: File? =
+        indexStorageDir ?: CentralStorage().projectDir(project.basePath)
+    private val sqliteStore = resolvedIndexStorageDir?.let { SQLiteIndexStore(it) }
     private val lexical = lexicalOverride ?: LexicalSearchIndex(project, sqliteStore)
     private val symbols = symbolOverride ?: IntelliJSymbolIndexBridge(project)
     private val semantic = semanticOverride ?: SemanticChunkIndex()
@@ -276,13 +280,17 @@ class WorkspaceIndexOrchestrator(
     }
 
     private fun onFileChanged(path: String) {
+        val normalized = path.replace('\\', '/')
+        if (IndexExcludeMatcher.isPathExcluded(normalized, settings.indexExcludePatterns)) return
         telemetry.recordReindex("file-changed")
-        enqueueTask(ReindexTask.Upsert(path.replace('\\', '/'), "file-changed"))
+        enqueueTask(ReindexTask.Upsert(normalized, "file-changed"))
     }
 
     private fun onFileRemoved(path: String) {
+        val normalized = path.replace('\\', '/')
+        if (IndexExcludeMatcher.isPathExcluded(normalized, settings.indexExcludePatterns)) return
         telemetry.recordReindex("file-removed")
-        enqueueTask(ReindexTask.Remove(path.replace('\\', '/'), "file-removed"))
+        enqueueTask(ReindexTask.Remove(normalized, "file-removed"))
         semantic.remove(path)
     }
 
@@ -292,9 +300,66 @@ class WorkspaceIndexOrchestrator(
     }
 
     private suspend fun processReindexTasks() {
-        for (task in reindexQueue) {
-            val depth = queueDepth.decrementAndGet().coerceAtLeast(0)
-            telemetry.recordQueueDepth(depth)
+        while (scope.isActive) {
+            val firstTask = try {
+                reindexQueue.receive()
+            } catch (e: Exception) {
+                break
+            }
+            yield()
+
+            val tasks = mutableListOf(firstTask)
+            val startTime = System.currentTimeMillis()
+            val debounceTimeout = 500L
+            val maxWindow = 2000L
+
+            while (System.currentTimeMillis() - startTime < maxWindow) {
+                val nextTask = withTimeoutOrNull(debounceTimeout) {
+                    try {
+                        reindexQueue.receive()
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                if (nextTask == null) {
+                    break
+                }
+                tasks.add(nextTask)
+            }
+
+            val remainingDepth = queueDepth.addAndGet(-tasks.size.toLong()).coerceAtLeast(0)
+            telemetry.recordQueueDepth(remainingDepth)
+
+            processBatchedTasks(tasks)
+        }
+    }
+
+    private suspend fun processBatchedTasks(tasks: List<ReindexTask>) {
+        if (tasks.isEmpty()) return
+
+        val reconcileTask = tasks.firstOrNull { it is ReindexTask.Reconcile }
+        if (reconcileTask != null) {
+            processTask(reconcileTask)
+            return
+        }
+        val warmupTask = tasks.firstOrNull { it is ReindexTask.StartupWarmup }
+        if (warmupTask != null) {
+            processTask(warmupTask)
+            return
+        }
+
+        val pathMap = linkedMapOf<String, ReindexTask>()
+        for (task in tasks) {
+            when (task) {
+                is ReindexTask.Upsert -> pathMap[task.path] = task
+                is ReindexTask.Remove -> pathMap[task.path] = task
+                else -> {}
+            }
+        }
+
+        for ((_, task) in pathMap) {
+            if (!scope.isActive) break
+            yield()
             processTask(task)
         }
     }
@@ -359,6 +424,7 @@ class WorkspaceIndexOrchestrator(
     }
 
     private suspend fun runIncrementalUpsert(path: String) {
+        if (!scope.isActive || project.isDisposed) return
         emitLifecycle(
             IndexLifecycleUpdate(
                 state = IndexLifecycleState.INCREMENTAL_BUILD,
@@ -368,6 +434,7 @@ class WorkspaceIndexOrchestrator(
         runCatching { lexical.upsertFileFromDisk(path) }
             .onFailure { log.debug("Failed to upsert lexical index for $path: ${it.message}") }
 
+        if (!scope.isActive || project.isDisposed) return
         if (settings.enableSemanticIndexing) {
             val ioFile = File(path)
             if (ioFile.isFile && ioFile.length() <= 512L * 1024L) {
@@ -375,6 +442,7 @@ class WorkspaceIndexOrchestrator(
                     .onFailure { log.debug("Semantic index upsert failed for $path: ${it.message}") }
             }
         }
+        if (!scope.isActive || project.isDisposed) return
         emitLifecycle(
             IndexLifecycleUpdate(
                 state = IndexLifecycleState.READY,
@@ -384,12 +452,14 @@ class WorkspaceIndexOrchestrator(
     }
 
     private suspend fun runIncrementalRemove(path: String) {
+        if (!scope.isActive || project.isDisposed) return
         runCatching { lexical.removeFile(path) }
             .onFailure { log.debug("Failed removing lexical index for $path: ${it.message}") }
         semantic.remove(path)
     }
 
     private suspend fun runReconcile(reason: String) {
+        if (!scope.isActive || project.isDisposed) return
         emitLifecycle(
             IndexLifecycleUpdate(
                 state = IndexLifecycleState.STALE_REBUILDING,
@@ -399,9 +469,11 @@ class WorkspaceIndexOrchestrator(
         if (settings.enableSemanticIndexing) {
             semantic.clear()
         }
+        if (!scope.isActive || project.isDisposed) return
         runCatching { lexical.warmupWorkspace() }
             .onFailure { log.warn("Index reconcile failed for reason=$reason", it) }
         applyStoreLimits()
+        if (!scope.isActive || project.isDisposed) return
         emitLifecycle(
             IndexLifecycleUpdate(
                 state = IndexLifecycleState.READY,
@@ -426,6 +498,7 @@ class WorkspaceIndexOrchestrator(
     }
 
     private fun emitLifecycle(update: IndexLifecycleUpdate) {
+        if (project.isDisposed) return
         if (currentState == update.state && update.state == IndexLifecycleState.READY) return
         currentState = update.state
         for (listener in lifecycleListeners) {
@@ -438,12 +511,14 @@ class WorkspaceIndexOrchestrator(
     }
 
     private fun applyStoreLimits() {
+        if (project.isDisposed) return
         if (!settings.enableLexicalPersistence) return
         val store = sqliteStore ?: return
         val retentionCutoff = System.currentTimeMillis() - (settings.indexRetentionDays.toLong() * 24L * 60L * 60L * 1000L)
         runCatching { store.pruneByIndexedAt(retentionCutoff) }
             .onFailure { log.debug("Failed applying retention cutoff", it) }
 
+        if (project.isDisposed) return
         val maxSizeBytes = settings.indexMaxDatabaseMb.toLong() * 1024L * 1024L
         val dbFile = File(store.databasePath())
         if (dbFile.isFile && dbFile.length() > maxSizeBytes) {

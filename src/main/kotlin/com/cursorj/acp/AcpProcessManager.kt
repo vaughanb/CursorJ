@@ -93,10 +93,10 @@ class AcpProcessManager(private val parentDisposable: Disposable) : Disposable {
     fun stop() {
         process?.let { proc ->
             try {
-                writer?.close()
-                reader?.close()
                 proc.destroyForcibly()
                 proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                runCatching { writer?.close() }
+                runCatching { reader?.close() }
                 log.info("Cursor agent ACP process stopped")
             } catch (e: Exception) {
                 log.warn("Error stopping agent process", e)

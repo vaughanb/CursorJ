@@ -9,7 +9,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 
-class PromptHistoryStore(workspacePath: String?) {
+/**
+ * Loads and saves prompt history JSON under [storageDir] when non-null.
+ */
+class PromptHistoryStore(storageDir: File?) {
     @Serializable
     data class PromptHistorySnapshot(
         val version: Int = VERSION,
@@ -22,7 +25,7 @@ class PromptHistoryStore(workspacePath: String?) {
         isLenient = true
     }
 
-    private val historyFile: File? = workspacePath?.let { File(it, RELATIVE_PATH) }
+    private val historyFile: File? = storageDir?.let { File(it, FILE_NAME) }
 
     fun load(): PromptHistorySnapshot {
         val file = historyFile ?: return PromptHistorySnapshot()
@@ -88,6 +91,6 @@ class PromptHistoryStore(workspacePath: String?) {
 
     companion object {
         const val VERSION = 1
-        const val RELATIVE_PATH = ".cursorj/prompt-history-v1.json"
+        const val FILE_NAME = "prompt-history-v1.json"
     }
 }

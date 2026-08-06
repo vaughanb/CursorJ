@@ -4,9 +4,14 @@ import com.cursorj.CursorJBundle
 import com.cursorj.acp.ConfigOptionUiSupport
 import com.cursorj.acp.SessionMode
 import com.cursorj.acp.messages.ConfigOption
+import com.cursorj.settings.SkillDefinition
 import com.intellij.icons.AllIcons
-import com.intellij.ui.components.JBCheckBox
+import com.intellij.openapi.ui.popup.JBPopup
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
+import com.intellij.ui.awt.RelativePoint
+import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.*
@@ -14,11 +19,23 @@ import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
 import javax.swing.DefaultListCellRenderer
+import javax.swing.event.CaretEvent
+import javax.swing.event.CaretListener
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.text.AbstractDocument
+import javax.swing.text.AttributeSet
+import javax.swing.text.BadLocationException
+import javax.swing.text.Document
+import javax.swing.text.DocumentFilter
+import javax.swing.text.Highlighter
+import javax.swing.text.Position
+import javax.swing.text.Utilities
 import javax.swing.text.View
 
 class InputPanel {
@@ -127,6 +144,13 @@ class InputPanel {
         isVisible = false
     }
 
+    private val maxModeToggle = JBCheckBox(CursorJBundle.message("chat.maxmode.label")).apply {
+        font = font.deriveFont(font.size2D - 1)
+        isOpaque = false
+        toolTipText = CursorJBundle.message("chat.maxmode.tooltip")
+        isVisible = true
+    }
+
     private val configControlsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
         isOpaque = false
     }
@@ -147,16 +171,24 @@ class InputPanel {
     private var isProcessing = false
     private var lastKnownRootWidth = -1
 
-    private val fileChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+    private val westControlsPanel = JPanel(BorderLayout()).apply {
         isOpaque = false
     }
-    private val selectionChipPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+
+    private val fileChipsPanel = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 4)).apply {
+        isOpaque = false
+    }
+    private val imageChipsPanel = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 4)).apply {
+        isOpaque = false
+    }
+    private val selectionChipPanel = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 4)).apply {
         isOpaque = false
     }
     private val chipsStack = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
         add(fileChipsPanel)
+        add(imageChipsPanel)
         add(selectionChipPanel)
     }
     private val fileChipsWrapper = JPanel(BorderLayout()).apply {
@@ -205,10 +237,70 @@ class InputPanel {
     var onQueueMessage: ((String) -> Unit)? = null
     var onRollback: (() -> Unit)? = null
     var onSelectionChipRemoved: ((String) -> Unit)? = null
+    var onImageChipRemoved: ((String) -> Unit)? = null
     var onModeChanged: ((SessionMode) -> Unit)? = null
     var onConfigOptionChanged: ((configId: String, value: String) -> Unit)? = null
+    /** Invoked when the user toggles MAX mode (after [setMaxMode] sync, not during). */
+    var onMaxModeToggled: ((Boolean) -> Unit)? = null
     var onHistoryPrev: ((String) -> String?)? = null
     var onHistoryNext: ((String) -> String?)? = null
+    var fileReferenceValidator: ((String) -> Boolean)? = null
+        set(value) {
+            field = value
+            updateHighlights()
+        }
+
+    /** Formats a skill as an `@...` reference string inserted into the prompt (typically maps to SKILL.md). */
+    var skillAtReferenceFormatter: ((SkillDefinition) -> String)? = null
+
+    /** Invoked after a skill is inserted as an `@` file reference (completion or Skills menu). */
+    var onSkillReferenceInserted: ((SkillDefinition) -> Unit)? = null
+
+    /**
+     * Supplies the current discovered skills, queried when a completion session opens so newly
+     * created skills appear without rebinding the chat session. Should be cheap/cached if possible.
+     */
+    var skillCompletionProvider: (() -> List<SkillDefinition>)? = null
+
+    private var slashCommandIds: List<String> = emptyList()
+    private var skillDefinitions: List<SkillDefinition> = emptyList()
+    private var activeCompletionPopup: JBPopup? = null
+    private val completionListModel = DefaultListModel<CompletionItem>()
+    private val completionList = JBList(completionListModel).apply {
+        selectionMode = ListSelectionModel.SINGLE_SELECTION
+        isFocusable = false
+        cellRenderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?, value: Any?, index: Int,
+                isSelected: Boolean, cellHasFocus: Boolean,
+            ): Component {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                text = (value as? CompletionItem)?.label ?: value?.toString().orEmpty()
+                border = JBUI.Borders.empty(2, 8)
+                return this
+            }
+        }
+        addMouseMotionListener(object : MouseAdapter() {
+            override fun mouseMoved(e: MouseEvent) {
+                val idx = locationToIndex(e.point)
+                if (idx >= 0) selectedIndex = idx
+            }
+        })
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val idx = locationToIndex(e.point)
+                if (idx >= 0) {
+                    selectedIndex = idx
+                    acceptSelectedCompletion()
+                }
+            }
+        })
+    }
+    private val chipBgColor = JBColor(Color(0xE0F0FF), Color(0x2A405A))
+    private val chipBorderColor = JBColor(Color(0xB0D4FF), Color(0x3A5A7A))
+    private val pillPainter = PillHighlightPainter(chipBgColor, chipBorderColor)
+    private val activeHighlightTags = mutableListOf<Any>()
+    private var adjustingReferenceEdit = false
 
     val component: JComponent get() = rootPanel
     val dropTargetComponent: JComponent get() = textArea
@@ -232,7 +324,8 @@ class InputPanel {
                 add(cancelButton)
             }
 
-            add(configControlsRow, BorderLayout.WEST)
+            westControlsPanel.add(configControlsRow, BorderLayout.CENTER)
+            add(westControlsPanel, BorderLayout.WEST)
             add(rightControls, BorderLayout.EAST)
         }
 
@@ -250,8 +343,37 @@ class InputPanel {
         rootPanel.add(topActionsPanel, BorderLayout.NORTH)
         rootPanel.add(container, BorderLayout.CENTER)
 
+        installReferenceEditGuard()
+
         textArea.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
+                if (isCompletionPopupVisible()) {
+                    when (e.keyCode) {
+                        KeyEvent.VK_DOWN -> { moveCompletionSelection(1); e.consume(); return }
+                        KeyEvent.VK_UP -> { moveCompletionSelection(-1); e.consume(); return }
+                        KeyEvent.VK_TAB -> { acceptSelectedCompletion(); e.consume(); return }
+                        KeyEvent.VK_ENTER -> {
+                            if (!e.isShiftDown) { acceptSelectedCompletion(); e.consume(); return }
+                        }
+                        KeyEvent.VK_ESCAPE -> { dismissCompletionPopup(); e.consume(); return }
+                    }
+                }
+                if (e.keyCode == KeyEvent.VK_ESCAPE) {
+                    dismissCompletionPopup()
+                    return
+                }
+                if (e.keyCode == KeyEvent.VK_BACK_SPACE) {
+                    if (handleBackspaceOrDelete(isDelete = false)) {
+                        e.consume()
+                        return
+                    }
+                } else if (e.keyCode == KeyEvent.VK_DELETE) {
+                    if (handleBackspaceOrDelete(isDelete = true)) {
+                        e.consume()
+                        return
+                    }
+                }
+
                 if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
                     e.consume()
                     doSend()
@@ -287,9 +409,21 @@ class InputPanel {
         })
 
         textArea.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = adjustTextAreaHeight()
-            override fun removeUpdate(e: DocumentEvent) = adjustTextAreaHeight()
-            override fun changedUpdate(e: DocumentEvent) = adjustTextAreaHeight()
+            override fun insertUpdate(e: DocumentEvent) {
+                adjustTextAreaHeight()
+                scheduleUpdateHighlights()
+                scheduleCompletionPopup()
+            }
+            override fun removeUpdate(e: DocumentEvent) {
+                adjustTextAreaHeight()
+                scheduleUpdateHighlights()
+                scheduleCompletionPopup()
+            }
+            override fun changedUpdate(e: DocumentEvent) {
+                adjustTextAreaHeight()
+                scheduleUpdateHighlights()
+                scheduleCompletionPopup()
+            }
         })
 
         rootPanel.addComponentListener(object : ComponentAdapter() {
@@ -301,6 +435,17 @@ class InputPanel {
                 if (width != lastKnownRootWidth) {
                     lastKnownRootWidth = width
                     adjustTextAreaHeight()
+                    if (fileChipsWrapper.isVisible) {
+                        updateChipPanelLayout()
+                    }
+                }
+            }
+        })
+
+        fileChipsWrapper.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) {
+                if (fileChipsWrapper.isVisible) {
+                    updateChipPanelLayout()
                 }
             }
         })
@@ -330,9 +475,23 @@ class InputPanel {
             }
         }
 
+        maxModeToggle.addActionListener {
+            if (updatingMaxMode || updatingConfigWidgets) return@addActionListener
+            onMaxModeToggled?.invoke(maxModeToggle.isSelected)
+        }
     }
 
     private var updatingMode = false
+    private var updatingMaxMode = false
+
+    /**
+     * Updates the MAX checkbox without firing [onMaxModeToggled].
+     */
+    fun setMaxMode(enabled: Boolean) {
+        updatingMaxMode = true
+        maxModeToggle.isSelected = enabled
+        updatingMaxMode = false
+    }
 
     fun setMode(mode: SessionMode) {
         updatingMode = true
@@ -367,6 +526,10 @@ class InputPanel {
         configControlsRow.add(modeCombo)
 
         val row = ConfigOptionUiSupport.optionsForInputBar(options)
+        val hasModelInBar = row.any { ConfigOptionUiSupport.isModelSelector(it) && it.options.isNotEmpty() }
+        if (!hasModelInBar) {
+            configControlsRow.add(maxModeToggle)
+        }
         var modelShown = false
         for (opt in row) {
             when {
@@ -390,6 +553,7 @@ class InputPanel {
                     modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 220), 26)
                     configControlsRow.add(modelCombo)
                     modelCombo.isVisible = true
+                    configControlsRow.add(maxModeToggle)
                     modelShown = true
                     updatingModelCombo = false
                 }
@@ -480,6 +644,17 @@ class InputPanel {
         textArea.text = text
         textArea.caretPosition = textArea.document.length
         adjustTextAreaHeight()
+        updateHighlights()
+    }
+
+    fun insertText(text: String, index: Int = -1) {
+        val doc = textArea.document
+        val insertPos = if (index in 0..doc.length) index else textArea.caretPosition.coerceIn(0, doc.length)
+        textArea.insert(text, insertPos)
+        textArea.caretPosition = (insertPos + text.length).coerceAtLeast(0)
+        textArea.requestFocusInWindow()
+        adjustTextAreaHeight()
+        updateHighlights()
     }
 
     fun setRollbackEnabled(enabled: Boolean) {
@@ -492,7 +667,7 @@ class InputPanel {
     }
 
     fun addFileChip(name: String) {
-        val chip = createChip(name, removable = true) {
+        val chip = createChip(name, icon = null, removable = true) {
             fileChipsPanel.remove(it)
             updateFileChipsVisibility()
         }
@@ -501,7 +676,7 @@ class InputPanel {
     }
 
     fun addSelectionChip(id: String, label: String) {
-        val chip = createChip(label, removable = true) {
+        val chip = createChip(label, icon = null, removable = true) {
             val chipId = it.name ?: return@createChip
             selectionChipPanel.remove(it)
             updateFileChipsVisibility()
@@ -509,6 +684,18 @@ class InputPanel {
         }
         chip.name = id
         selectionChipPanel.add(chip)
+        updateFileChipsVisibility()
+    }
+
+    fun addImageChip(id: String, name: String) {
+        val chip = createChip(name, icon = AllIcons.FileTypes.Image, removable = true) {
+            val chipId = it.name ?: return@createChip
+            imageChipsPanel.remove(it)
+            updateFileChipsVisibility()
+            onImageChipRemoved?.invoke(chipId)
+        }
+        chip.name = id
+        imageChipsPanel.add(chip)
         updateFileChipsVisibility()
     }
 
@@ -522,8 +709,14 @@ class InputPanel {
         updateFileChipsVisibility()
     }
 
+    fun clearImageChips() {
+        imageChipsPanel.removeAll()
+        updateFileChipsVisibility()
+    }
+
     private fun createChip(
         text: String,
+        icon: Icon?,
         removable: Boolean,
         onRemove: ((JPanel) -> Unit)?,
     ): JPanel {
@@ -533,6 +726,10 @@ class InputPanel {
                 JBUI.Borders.empty(1, 4),
             )
             isOpaque = false
+        }
+        if (icon != null) {
+            val iconLabel = JLabel(icon)
+            chip.add(iconLabel)
         }
         val label = JLabel(text).apply {
             font = font.deriveFont(font.size2D - 1)
@@ -555,18 +752,219 @@ class InputPanel {
     }
 
     private fun updateFileChipsVisibility() {
-        fileChipsWrapper.isVisible = fileChipsPanel.componentCount > 0 || selectionChipPanel.componentCount > 0
+        val hasFileChips = fileChipsPanel.componentCount > 0
+        val hasImageChips = imageChipsPanel.componentCount > 0
+        val hasSelectionChips = selectionChipPanel.componentCount > 0
+        fileChipsPanel.isVisible = hasFileChips
+        imageChipsPanel.isVisible = hasImageChips
+        selectionChipPanel.isVisible = hasSelectionChips
+        fileChipsWrapper.isVisible = hasFileChips || hasImageChips || hasSelectionChips
+        updateChipPanelLayout()
+    }
+
+    private fun updateChipPanelLayout() {
         fileChipsPanel.revalidate()
-        fileChipsPanel.repaint()
+        imageChipsPanel.revalidate()
         selectionChipPanel.revalidate()
-        selectionChipPanel.repaint()
+        chipsStack.revalidate()
         fileChipsWrapper.revalidate()
-        fileChipsWrapper.repaint()
         rootPanel.revalidate()
         rootPanel.repaint()
+        SwingUtilities.invokeLater {
+            if (!fileChipsWrapper.isVisible) return@invokeLater
+            fileChipsWrapper.revalidate()
+            rootPanel.revalidate()
+            rootPanel.repaint()
+        }
+    }
+
+    /**
+     * Updates slash commands from the agent (ACP `available_commands_update`) merged with UI refresh.
+     */
+    fun setSlashCommands(commands: List<String>) {
+        slashCommandIds = commands.map { it.trim().removePrefix("/") }.filter { it.isNotBlank() }.distinct()
+    }
+
+    /** Updates discovered skills used for `/name` and `@name` completion. */
+    fun setSkillDefinitions(skills: List<SkillDefinition>) {
+        skillDefinitions = skills
+    }
+
+    private fun scheduleCompletionPopup() {
+        SwingUtilities.invokeLater { updateCompletionPopupAtCaret() }
+    }
+
+    private fun isCompletionPopupVisible(): Boolean = activeCompletionPopup?.isVisible == true
+
+    private fun dismissCompletionPopup() {
+        activeCompletionPopup?.cancel()
+        activeCompletionPopup = null
+    }
+
+    private fun moveCompletionSelection(delta: Int) {
+        val size = completionListModel.size()
+        if (size == 0) return
+        val current = completionList.selectedIndex.let { if (it < 0) 0 else it }
+        val next = ((current + delta) % size + size) % size
+        completionList.selectedIndex = next
+        completionList.ensureIndexIsVisible(next)
+    }
+
+    private fun acceptSelectedCompletion() {
+        val item = completionList.selectedValue
+            ?: completionListModel.takeIf { it.size() > 0 }?.getElementAt(0)
+            ?: return
+        item.apply()
+    }
+
+    /** A single entry in the `/` or `@` completion popup. */
+    private data class CompletionItem(val label: String, val apply: () -> Unit)
+
+    private data class CompletionParse(val tokenStart: Int, val rawToken: String, val isSlash: Boolean)
+
+    private fun parseCompletionAtCaret(caret: Int): CompletionParse? {
+        val text = textArea.text
+        if (caret < 0 || caret > text.length) return null
+        val lineStart = runCatching {
+            val root = textArea.document.defaultRootElement
+            val line = root.getElementIndex(caret)
+            root.getElement(line).startOffset
+        }.getOrNull() ?: 0
+        val linePrefix = text.substring(lineStart, caret)
+        if (linePrefix.startsWith("/") && !linePrefix.contains(' ') && !linePrefix.contains('\n')) {
+            return CompletionParse(lineStart, linePrefix, isSlash = true)
+        }
+        val upto = text.substring(0, caret)
+        val at = upto.lastIndexOf('@')
+        if (at < 0) return null
+        if (at > 0) {
+            val prev = upto[at - 1]
+            if (!prev.isWhitespace() && prev != '(' && prev != '[') return null
+        }
+        val token = upto.substring(at, caret)
+        if (!token.startsWith("@")) return null
+        if (token.contains('\n')) return null
+        val body = token.drop(1)
+        if (body.isNotEmpty() && !body.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '.' }) {
+            return null
+        }
+        return CompletionParse(at, token, isSlash = false)
+    }
+
+    private fun updateCompletionPopupAtCaret() {
+        if (!textArea.isShowing) return
+        val caret = textArea.caretPosition
+        val parsed = parseCompletionAtCaret(caret) ?: run {
+            dismissCompletionPopup()
+            return
+        }
+        if (!isCompletionPopupVisible()) {
+            skillCompletionProvider?.let { provider ->
+                runCatching { provider() }.getOrNull()?.let { skillDefinitions = it }
+            }
+        }
+        val needle = when {
+            parsed.isSlash -> parsed.rawToken.removePrefix("/").lowercase()
+            else -> parsed.rawToken.removePrefix("@").lowercase()
+        }
+        val items = mutableListOf<CompletionItem>()
+        if (parsed.isSlash) {
+            val skillNames = skillDefinitions.mapTo(mutableSetOf()) { it.name.lowercase() }
+            for (id in slashCommandIds) {
+                if (id.lowercase() in skillNames) continue
+                if (id.lowercase().startsWith(needle)) {
+                    items += CompletionItem("/$id") {
+                        replaceRange(parsed.tokenStart, caret, "/$id ")
+                    }
+                }
+            }
+            for (s in skillDefinitions) {
+                if (s.name.lowercase().startsWith(needle)) {
+                    val desc = s.description.trim().take(80)
+                    val label = if (desc.isNotEmpty()) "/${s.name} — $desc" else "/${s.name}"
+                    items += CompletionItem(label) {
+                        replaceRange(parsed.tokenStart, caret, "/${s.name} ")
+                    }
+                }
+            }
+        } else {
+            val fmt = skillAtReferenceFormatter ?: run {
+                dismissCompletionPopup()
+                return
+            }
+            for (s in skillDefinitions) {
+                if (s.name.lowercase().startsWith(needle)) {
+                    val desc = s.description.trim().take(80)
+                    val label = if (desc.isNotEmpty()) "@${s.name} — $desc" else "@${s.name}"
+                    items += CompletionItem(label) {
+                        val ref = fmt(s)
+                        replaceRange(parsed.tokenStart, caret, ref + " ")
+                        onSkillReferenceInserted?.invoke(s)
+                    }
+                }
+            }
+        }
+        if (items.isEmpty()) {
+            dismissCompletionPopup()
+            return
+        }
+        showOrUpdateCompletionPopup(items.take(20))
+    }
+
+    private fun replaceRange(start: Int, end: Int, replacement: String) {
+        val docLen = textArea.document.length
+        val s = start.coerceIn(0, docLen)
+        val e = end.coerceIn(0, docLen)
+        textArea.replaceRange(replacement, s, e)
+        textArea.caretPosition = (s + replacement.length).coerceAtMost(textArea.document.length)
+        dismissCompletionPopup()
+        textArea.requestFocusInWindow()
+    }
+
+    /**
+     * Shows (or refreshes, in place) a non-focusable completion list below the caret so the user can
+     * keep typing in the input to filter, mirroring Cursor's inline `/` and `@` completion.
+     */
+    private fun showOrUpdateCompletionPopup(items: List<CompletionItem>) {
+        completionListModel.clear()
+        items.forEach { completionListModel.addElement(it) }
+        completionList.selectedIndex = 0
+
+        if (isCompletionPopupVisible()) {
+            completionList.revalidate()
+            completionList.repaint()
+            return
+        }
+
+        val visibleRows = items.size.coerceIn(1, 8)
+        completionList.visibleRowCount = visibleRows
+        val scroll = JScrollPane(completionList).apply {
+            border = BorderFactory.createEmptyBorder()
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        }
+
+        val popup = JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(scroll, completionList)
+            .setRequestFocus(false)
+            .setFocusable(false)
+            .setCancelOnClickOutside(true)
+            .setCancelOnWindowDeactivation(true)
+            .setResizable(false)
+            .setMinSize(Dimension(260, 0))
+            .createPopup()
+        activeCompletionPopup = popup
+
+        runCatching {
+            val caretPos = textArea.caretPosition.coerceIn(0, textArea.document.length)
+            val rect = textArea.modelToView2D(caretPos)?.bounds ?: Rectangle(0, 0, 0, 0)
+            popup.show(RelativePoint(textArea, Point(rect.x, rect.y + rect.height)))
+        }.onFailure {
+            dismissCompletionPopup()
+        }
     }
 
     private fun doSend() {
+        dismissCompletionPopup()
         val text = getInputText().trim()
         if (text.isNotEmpty()) {
             setInputText("")
@@ -629,6 +1027,253 @@ class InputPanel {
             scrollPane.preferredSize = Dimension(scrollPane.preferredSize.width, targetHeight)
             rootPanel.revalidate()
             rootPanel.repaint()
+        }
+    }
+
+    private fun handleBackspaceOrDelete(isDelete: Boolean): Boolean {
+        val validator = fileReferenceValidator ?: return false
+        val text = textArea.text
+        val caret = textArea.caretPosition.coerceIn(0, text.length)
+        if (!isDelete && caret <= 0) return false
+        if (isDelete && caret >= text.length) return false
+
+        for (span in FileReferenceSupport.findValidSpans(text, validator)) {
+            val inRange = if (isDelete) {
+                caret in span.start until span.end
+            } else {
+                caret in (span.start + 1)..span.end
+            }
+            if (inRange) {
+                textArea.replaceRange("", span.start, span.end)
+                textArea.caretPosition = span.start
+                adjustTextAreaHeight()
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun installReferenceEditGuard() {
+        val document = textArea.document as? AbstractDocument ?: return
+
+        document.documentFilter = object : DocumentFilter() {
+            override fun insertString(fb: FilterBypass, offset: Int, string: String?, attr: AttributeSet?) {
+                val insert = string ?: return
+                guardedInsert(fb, offset, insert, attr, replaceLength = 0)
+            }
+
+            override fun replace(fb: FilterBypass, offset: Int, length: Int, text: String?, attrs: AttributeSet?) {
+                val insert = text ?: return
+                guardedInsert(fb, offset, insert, attrs, replaceLength = length)
+            }
+
+            private fun guardedInsert(
+                fb: FilterBypass,
+                offset: Int,
+                insert: String,
+                attr: AttributeSet?,
+                replaceLength: Int,
+            ) {
+                val validator = fileReferenceValidator
+                if (validator == null) {
+                    if (replaceLength > 0) {
+                        super.replace(fb, offset, replaceLength, insert, attr)
+                    } else {
+                        super.insertString(fb, offset, insert, attr)
+                    }
+                    return
+                }
+
+                val docText = fb.document.getText(0, fb.document.length)
+                val spans = FileReferenceSupport.findValidSpans(docText, validator)
+                val containing = FileReferenceSupport.spanContaining(spans, offset)
+                val (insertOffset, insertText) = when {
+                    containing != null -> containing.end to leadingSpaceIfNeeded(fb.document, containing.end, insert)
+                    else -> {
+                        val refEnding = spans.firstOrNull { it.end == offset }
+                        if (refEnding != null) {
+                            offset to leadingSpaceIfNeeded(fb.document, offset, insert)
+                        } else {
+                            offset to insert
+                        }
+                    }
+                }
+
+                if (replaceLength > 0) {
+                    super.replace(fb, insertOffset, replaceLength, insertText, attr)
+                } else {
+                    super.insertString(fb, insertOffset, insertText, attr)
+                }
+                if (insertOffset != offset) {
+                    moveCaretLater(insertOffset + insertText.length)
+                }
+            }
+
+            override fun remove(fb: FilterBypass, offset: Int, length: Int) {
+                if (length <= 0) return
+                val validator = fileReferenceValidator
+                if (validator == null) {
+                    super.remove(fb, offset, length)
+                    return
+                }
+
+                val text = fb.document.getText(0, fb.document.length)
+                val spans = FileReferenceSupport.findValidSpans(text, validator)
+                val removeEnd = offset + length
+                val affected = spans.filter { span -> span.start < removeEnd && span.end > offset }
+                if (affected.isEmpty()) {
+                    super.remove(fb, offset, length)
+                    return
+                }
+
+                val expandedStart = minOf(offset, affected.minOf { it.start })
+                val expandedEnd = maxOf(removeEnd, affected.maxOf { it.end })
+                super.remove(fb, expandedStart, expandedEnd - expandedStart)
+                moveCaretLater(expandedStart)
+            }
+        }
+
+        textArea.addCaretListener(CaretListener { e ->
+            if (adjustingReferenceEdit) return@CaretListener
+            if (e.dot != e.mark) return@CaretListener
+            val validator = fileReferenceValidator ?: return@CaretListener
+            val spans = FileReferenceSupport.findValidSpans(textArea.text, validator)
+            val span = FileReferenceSupport.spanContaining(spans, e.dot) ?: return@CaretListener
+            moveCaret(span.end)
+        })
+
+        textArea.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) {
+                val validator = fileReferenceValidator ?: return
+                val pos = textArea.viewToModel2D(e.point).coerceAtLeast(0)
+                val spans = FileReferenceSupport.findValidSpans(textArea.text, validator)
+                val span = FileReferenceSupport.spanContaining(spans, pos) ?: return
+                moveCaret(span.end)
+            }
+        })
+    }
+
+    private fun leadingSpaceIfNeeded(document: Document, offset: Int, insert: String): String {
+        if (insert.isEmpty() || insert.first().isWhitespace()) return insert
+        if (offset <= 0) return insert
+        return if (document.getText(offset - 1, 1) == " ") insert else " $insert"
+    }
+
+    private fun moveCaret(position: Int) {
+        adjustingReferenceEdit = true
+        try {
+            textArea.caretPosition = position.coerceIn(0, textArea.document.length)
+        } finally {
+            adjustingReferenceEdit = false
+        }
+    }
+
+    private fun moveCaretLater(position: Int) {
+        SwingUtilities.invokeLater { moveCaret(position) }
+    }
+
+    private fun scheduleUpdateHighlights() {
+        SwingUtilities.invokeLater { updateHighlights() }
+    }
+
+    private fun updateHighlights() {
+        val highlighter = textArea.highlighter ?: return
+        val text = textArea.text
+
+        for (tag in activeHighlightTags) {
+            highlighter.removeHighlight(tag)
+        }
+        activeHighlightTags.clear()
+
+        val validator = fileReferenceValidator ?: return
+
+        for (span in FileReferenceSupport.findValidSpans(text, validator)) {
+            val tag = highlighter.addHighlight(span.start, span.end, pillPainter)
+            if (tag != null) {
+                activeHighlightTags.add(tag)
+            }
+        }
+        textArea.repaint()
+    }
+
+    class PillHighlightPainter(
+        private val bgColor: Color,
+        private val borderColor: Color,
+    ) : Highlighter.HighlightPainter {
+        override fun paint(g: Graphics, p0: Int, p1: Int, bounds: Shape, c: javax.swing.text.JTextComponent) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            try {
+                for (rect in highlightRects(c, p0, p1)) {
+                    paintPill(g2, rect)
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        private fun paintPill(g2: Graphics2D, rect: Rectangle) {
+            val padX = 2
+            val padY = 1
+            val x = rect.x - padX
+            val y = rect.y + padY
+            val w = rect.width + padX * 2
+            val h = rect.height - padY * 2
+            if (w <= 0 || h <= 0) return
+
+            g2.color = bgColor
+            g2.fillRoundRect(x, y, w, h, 6, 6)
+
+            g2.color = borderColor
+            g2.stroke = BasicStroke(1f)
+            g2.drawRoundRect(x, y, w, h - 1, 6, 6)
+        }
+
+        private fun highlightRects(c: javax.swing.text.JTextComponent, start: Int, end: Int): List<Rectangle> {
+            if (start >= end) return emptyList()
+            val ui = c.ui ?: return emptyList()
+
+            val rects = mutableListOf<Rectangle>()
+            var segmentStart = start
+            while (segmentStart < end) {
+                val segmentEnd = segmentEndOffset(c, segmentStart).coerceIn(segmentStart + 1, end)
+                val startRect = ui.modelToView2D(c, segmentStart, Position.Bias.Forward)?.bounds ?: break
+                val endRect = ui.modelToView2D(c, segmentEnd, Position.Bias.Backward)?.bounds ?: break
+
+                val x = startRect.x.toInt()
+                val y = startRect.y.toInt()
+                val height = startRect.height.toInt()
+                val width = (endRect.x + endRect.width - startRect.x).toInt()
+
+                if (width > 0 && height > 0) {
+                    rects.add(Rectangle(x, y, width, height))
+                }
+                segmentStart = segmentEnd
+            }
+            return rects
+        }
+
+        /**
+         * Returns the exclusive end offset of the visual row containing [offset], accounting for
+         * soft line wrapping so a wrapped reference is painted as one pill per visible row instead
+         * of a single malformed rectangle. Falls back to the logical line end when the row end
+         * cannot be resolved.
+         */
+        private fun segmentEndOffset(c: javax.swing.text.JTextComponent, offset: Int): Int {
+            val logicalEnd = lineEndOffset(c, offset)
+            val rowEnd = try {
+                Utilities.getRowEnd(c, offset)
+            } catch (_: BadLocationException) {
+                -1
+            }
+            if (rowEnd < 0) return logicalEnd
+            return (rowEnd + 1).coerceAtMost(logicalEnd)
+        }
+
+        private fun lineEndOffset(c: javax.swing.text.JTextComponent, offset: Int): Int {
+            val root = c.document.defaultRootElement
+            val line = root.getElementIndex(offset)
+            return root.getElement(line).endOffset
         }
     }
 

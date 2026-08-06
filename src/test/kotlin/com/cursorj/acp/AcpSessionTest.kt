@@ -3,7 +3,9 @@ package com.cursorj.acp
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ConfigOptionValue
 import com.cursorj.acp.messages.PlanEntry
+import com.cursorj.acp.messages.SessionUsageInfo
 import com.cursorj.acp.messages.TodoItem
+import com.cursorj.acp.messages.TokenUsage
 import com.cursorj.rollback.LocalHistoryGateway
 import com.cursorj.rollback.TurnRollbackManager
 import com.intellij.history.ByteContent
@@ -17,6 +19,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -27,6 +30,39 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AcpSessionTest {
+    @Test
+    fun `usage update stores session usage and notifies listeners`() = withSession { session ->
+        val seen = mutableListOf<SessionUsageInfo>()
+        session.addUsageListener { seen.add(it) }
+        session.handleSessionUpdate(
+            buildJsonObject {
+                put("sessionUpdate", "usage_update")
+                put("used", JsonPrimitive(53000))
+                put("size", JsonPrimitive(200000))
+                putJsonObject("cost") {
+                    put("amount", 0.045)
+                    put("currency", "USD")
+                }
+            },
+        )
+        assertEquals(1, seen.size)
+        assertEquals(53000L, seen[0].used)
+        assertEquals(200000L, seen[0].size)
+        assertEquals(0.045, seen[0].cost?.amount)
+        assertEquals("USD", seen[0].cost?.currency)
+        assertEquals(seen[0], session.sessionUsage)
+    }
+
+    @Test
+    fun `applyTurnUsage attaches to last assistant message`() = withSession { session ->
+        session.handleSessionUpdate(update("agent_message_chunk", contentText = "Hi"))
+        session.handleSessionUpdate(update("agent_message_end", contentText = ""))
+        val usage = TokenUsage(inputTokens = 10L, outputTokens = 5L)
+        session.applyTurnUsageToLastAssistant(usage)
+        assertEquals(usage, session.messages.last().turnUsage)
+        assertEquals(usage, session.lastTurnUsage)
+    }
+
     @Test
     fun `maps known mode values and defaults unknown values to agent`() {
         assertEquals(SessionMode.AGENT, SessionMode.fromValue("agent"))
@@ -103,6 +139,141 @@ class AcpSessionTest {
         assertEquals(2, toolActivities.size)
         assertEquals("call-1", toolActivities[0].first)
         assertEquals("/tmp/src/main.kt", toolActivities[0].second.path)
+    }
+
+    @Test
+    fun `read tool activity shows file name and line range from raw input`() = withSession { session ->
+        val toolActivities = mutableListOf<Pair<String, ToolActivity>>()
+        session.addToolCallListener { id, activity -> toolActivities.add(id to activity) }
+
+        session.handleSessionUpdate(
+            update(
+                "tool_call",
+                extra = buildJsonObject {
+                    put("toolCallId", "read-1")
+                    put("kind", "read")
+                    put("title", "Read File")
+                    put(
+                        "rawInput",
+                        buildJsonObject {
+                            put("path", "/repo/src/com/cursorj/AcpSession.kt")
+                            put("offset", 100)
+                            put("limit", 50)
+                        },
+                    )
+                },
+            ),
+        )
+
+        assertEquals(1, toolActivities.size)
+        assertEquals("Reading AcpSession.kt (L100-149)...", toolActivities[0].second.text)
+        assertEquals("/repo/src/com/cursorj/AcpSession.kt", toolActivities[0].second.path)
+    }
+
+    @Test
+    fun `read tool activity falls back to acp locations when raw input lacks a path`() = withSession { session ->
+        val toolActivities = mutableListOf<Pair<String, ToolActivity>>()
+        session.addToolCallListener { id, activity -> toolActivities.add(id to activity) }
+
+        session.handleSessionUpdate(
+            update(
+                "tool_call",
+                extra = buildJsonObject {
+                    put("toolCallId", "read-2")
+                    put("kind", "read")
+                    put("title", "Read File")
+                    put(
+                        "locations",
+                        buildJsonArray {
+                            add(buildJsonObject { put("path", "/repo/handlers/Server.go") })
+                        },
+                    )
+                },
+            ),
+        )
+
+        assertEquals(1, toolActivities.size)
+        assertEquals("Reading Server.go...", toolActivities[0].second.text)
+        assertEquals("/repo/handlers/Server.go", toolActivities[0].second.path)
+    }
+
+    @Test
+    fun `search tool activity shows the pattern and glob`() = withSession { session ->
+        val toolActivities = mutableListOf<Pair<String, ToolActivity>>()
+        session.addToolCallListener { id, activity -> toolActivities.add(id to activity) }
+
+        session.handleSessionUpdate(
+            update(
+                "tool_call",
+                extra = buildJsonObject {
+                    put("toolCallId", "grep-1")
+                    put("kind", "search")
+                    put("title", "grep")
+                    put(
+                        "rawInput",
+                        buildJsonObject {
+                            put("pattern", "TODO")
+                            put("glob", "*.kt")
+                        },
+                    )
+                },
+            ),
+        )
+
+        assertEquals(1, toolActivities.size)
+        assertEquals("Searching \"TODO\" in *.kt...", toolActivities[0].second.text)
+    }
+
+    @Test
+    fun `search tool activity shows glob pattern when no text pattern is present`() = withSession { session ->
+        val toolActivities = mutableListOf<Pair<String, ToolActivity>>()
+        session.addToolCallListener { id, activity -> toolActivities.add(id to activity) }
+
+        session.handleSessionUpdate(
+            update(
+                "tool_call",
+                extra = buildJsonObject {
+                    put("toolCallId", "glob-1")
+                    put("kind", "search")
+                    put("title", "glob")
+                    put(
+                        "rawInput",
+                        buildJsonObject {
+                            put("glob_pattern", "**/*.go")
+                        },
+                    )
+                },
+            ),
+        )
+
+        assertEquals(1, toolActivities.size)
+        assertEquals("Searching **/*.go...", toolActivities[0].second.text)
+    }
+
+    @Test
+    fun `fetch tool activity shows the url`() = withSession { session ->
+        val toolActivities = mutableListOf<Pair<String, ToolActivity>>()
+        session.addToolCallListener { id, activity -> toolActivities.add(id to activity) }
+
+        session.handleSessionUpdate(
+            update(
+                "tool_call",
+                extra = buildJsonObject {
+                    put("toolCallId", "fetch-1")
+                    put("kind", "fetch")
+                    put("title", "Fetch")
+                    put(
+                        "rawInput",
+                        buildJsonObject {
+                            put("url", "https://example.com/docs")
+                        },
+                    )
+                },
+            ),
+        )
+
+        assertEquals(1, toolActivities.size)
+        assertEquals("Fetching https://example.com/docs...", toolActivities[0].second.text)
     }
 
     @Test

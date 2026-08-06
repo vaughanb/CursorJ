@@ -9,7 +9,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 
-class ChatHistoryStore(workspacePath: String?) {
+/**
+ * Loads and saves chat session index JSON under [storageDir] when non-null.
+ */
+class ChatHistoryStore(storageDir: File?) {
     @Serializable
     data class ChatHistorySnapshot(
         val version: Int = VERSION,
@@ -22,7 +25,7 @@ class ChatHistoryStore(workspacePath: String?) {
         isLenient = true
     }
 
-    private val historyFile: File? = workspacePath?.let { File(it, RELATIVE_PATH) }
+    private val historyFile: File? = storageDir?.let { File(it, FILE_NAME) }
 
     fun load(): ChatHistorySnapshot {
         val file = historyFile ?: return ChatHistorySnapshot()
@@ -89,6 +92,6 @@ class ChatHistoryStore(workspacePath: String?) {
 
     companion object {
         const val VERSION = 1
-        const val RELATIVE_PATH = ".cursorj/chat-history-index-v1.json"
+        const val FILE_NAME = "chat-history-index-v1.json"
     }
 }
