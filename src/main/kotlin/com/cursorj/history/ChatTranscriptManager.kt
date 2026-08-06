@@ -60,6 +60,28 @@ class ChatTranscriptManager(
         return true
     }
 
+    /**
+     * Replaces a session transcript with [messages], allowing an empty result to clear it entirely.
+     *
+     * Unlike [replaceSession], which is a no-op when the normalized list is empty, this removes the
+     * session's transcript when [messages] normalizes to nothing. Used by edit-and-resend, where
+     * editing the very first message must reset the session to a clean slate.
+     */
+    @Synchronized
+    fun resetSession(sessionKey: String, messages: List<ChatMessage>) {
+        val key = sessionKey.trim()
+        if (key.isBlank()) return
+        val normalized = messages
+            .mapNotNull { normalize(it) }
+            .takeLast(normalizedEntryCap)
+        if (normalized.isEmpty()) {
+            transcriptBySession.remove(key)
+        } else {
+            transcriptBySession[key] = normalized.toMutableList()
+        }
+        store.save(buildSnapshot())
+    }
+
     @Synchronized
     fun migrateSessionKey(fromSessionKey: String, toSessionKey: String): Boolean {
         val from = fromSessionKey.trim()
@@ -100,9 +122,21 @@ class ChatTranscriptManager(
     @Synchronized
     fun buildCarryoverContext(sessionKey: String, maxMessages: Int = 16, maxChars: Int = 12_000): String? {
         val transcript = transcriptBySession[sessionKey.trim()].orEmpty()
-        if (transcript.isEmpty()) return null
+            .map { ChatMessage(role = it.role, content = it.content) }
+        return buildCarryoverContext(transcript, maxMessages, maxChars)
+    }
 
-        val selected = transcript
+    /**
+     * Builds a carryover-context prompt fragment from an explicit ordered [messages] list.
+     *
+     * Used by edit-and-resend to replay the conversation prefix that precedes the edited message
+     * into a fresh session. Returns `null` when there is nothing meaningful to carry over.
+     */
+    fun buildCarryoverContext(messages: List<ChatMessage>, maxMessages: Int = 16, maxChars: Int = 12_000): String? {
+        val normalized = messages.mapNotNull { normalize(it) }
+        if (normalized.isEmpty()) return null
+
+        val selected = normalized
             .takeLast(maxMessages.coerceIn(2, 100))
             .filter { it.content.isNotBlank() }
         if (selected.isEmpty()) return null

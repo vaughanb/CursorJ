@@ -11,6 +11,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Selection Context**: Add selected text to chat via `Ctrl+Shift+J` or **Add to CursorJ Chat** at the bottom of the editor context menu (with a divider)
 - **Drag-and-Drop**: Drop files onto the chat panel to add them as context
 - **Multiple Chat Sessions**: Open multiple concurrent chat tabs, each with independent sessions
+- **Edit & Resend**: Edit any earlier message you sent and resend it to branch the conversation from that point (later replies are discarded and the prior context is replayed into a fresh session)
 - **Native IntelliJ UI**: Consistent look and feel with syntax-highlighted code blocks and diff rendering
 - **Enhanced Markdown Rendering**: Improved support for tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks
 - **Project Indexing**: Local-first retrieval for lexical search, symbol lookup, references, and optional semantic reranking
@@ -61,6 +62,15 @@ agent login
 | `Ctrl+Shift+J` | Send selection to CursorJ |
 | `Enter`        | Send prompt               |
 | `Shift+Enter`  | New line in input         |
+| `Esc`          | Cancel an in-progress edit |
+
+### Edit & Resend
+
+Click **Edit** on an earlier message you sent to load it back into the input. Adjust the
+text and press Enter to resend: the conversation branches from that message — everything after it
+is discarded and the prior turns are replayed as context into a fresh agent session (the agent
+provides no native `session/fork`). Press `Esc` or **Cancel edit** to abandon the edit without
+changing the conversation.
 
 
 ## Architecture
@@ -73,6 +83,16 @@ The plugin declares client capabilities for:
 - **Search**: `fs/find_text_in_files` for lexical project search
 - **Editor indexing**: `editor/get_open_files`, `editor/find_symbol`, `editor/list_file_symbols`, `editor/find_references`
 - **Terminal**: Execute shell commands
+
+## Known Limitations (Cursor ACP)
+
+Some capabilities are constrained by what Cursor's agent exposes over the Agent Client Protocol. The following were verified empirically against the Cursor CLI agent (`agent acp`) and are **agent/protocol limitations, not plugin bugs**:
+
+- **Model parameter tiers cannot be switched at runtime.** The agent returns each model with a single, fixed parameter set baked into an opaque value (e.g. `composer-2.5[fast=true]`, `claude-opus-4-6[thinking=true,context=200k,effort=high]`). It accepts only the exact values it offers and rejects any hand-constructed alternative (e.g. `composer-2.5[fast=false]` or `…effort=medium`) with `Invalid model value`. Consequently, toggles such as **Composer Normal/Fast** or **Claude Opus Medium/High effort** are not selectable through ACP. Advertising the client `_meta.parameterizedModelPicker` capability makes this worse (the agent then omits parameters entirely), so CursorJ does not opt in.
+- **No Debug mode.** The agent advertises exactly three session modes — `agent`, `plan`, and `ask` — and rejects any other mode id (e.g. `debug`) with `Invalid mode ID: … Valid modes: agent, plan, ask`. CursorJ therefore exposes only Agent/Plan/Ask.
+- **No native conversation forking.** The agent does not advertise the ACP `session/fork` capability. Editing an earlier message and resending is therefore implemented by starting a fresh session and replaying the prior conversation as context, rather than a server-side branch.
+
+To re-verify against a newer agent build, enable **ACP raw JSON debug logging** in settings and inspect the `session/new` response (the `modes` block and the `model` config option) along with any `session/set_config_option` / `session/set_mode` errors.
 
 ## Project Indexing
 

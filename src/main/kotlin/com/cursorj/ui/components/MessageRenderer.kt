@@ -1,5 +1,6 @@
 package com.cursorj.ui.components
 
+import com.cursorj.CursorJBundle
 import com.cursorj.acp.ChatMessage
 import com.cursorj.ui.util.UiThemeBrightness
 import com.intellij.openapi.diagnostic.Logger
@@ -95,12 +96,52 @@ class MessageRenderer(private var message: ChatMessage) {
 
     val component: JComponent get() = panel
 
+    /** The message currently rendered by this bubble. */
+    val chatMessage: ChatMessage get() = message
+
+    /**
+     * Invoked when the user clicks the inline "Edit" affordance on a finalized user message.
+     * Only user messages expose the affordance; assigning a handler makes it visible.
+     */
+    var onEdit: (() -> Unit)? = null
+        set(value) {
+            field = value
+            updateEditBarVisibility()
+        }
+
+    private val editActionLabel = JLabel(CursorJBundle.message("chat.message.edit")).apply {
+        foreground = JBColor(Color(0x5890C8), Color(0x6B9BD2))
+        font = font.deriveFont(font.size2D - 2)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        toolTipText = CursorJBundle.message("chat.message.edit.tooltip")
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                onEdit?.invoke()
+            }
+            override fun mouseEntered(e: MouseEvent) {
+                text = "<html><u>${CursorJBundle.message("chat.message.edit")}</u></html>"
+            }
+            override fun mouseExited(e: MouseEvent) {
+                text = CursorJBundle.message("chat.message.edit")
+            }
+        })
+    }
+
+    private val editBar = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0)).apply {
+        isOpaque = false
+        border = JBUI.Borders.empty(2, 8, 0, 8)
+        add(editActionLabel)
+        isVisible = false
+    }
+
     init {
+        bubblePanel.add(editBar, BorderLayout.NORTH)
         bubblePanel.add(contentArea, BorderLayout.CENTER)
         bubblePanel.add(toggleLabel, BorderLayout.SOUTH)
         panel.add(bubblePanel, BorderLayout.CENTER)
         applyBubbleColor()
         updateContent()
+        updateEditBarVisibility()
     }
 
     fun update(newMessage: ChatMessage) {
@@ -111,12 +152,17 @@ class MessageRenderer(private var message: ChatMessage) {
             applyBubbleColor()
         }
         updateContent()
+        updateEditBarVisibility()
     }
 
     /** Re-apply bubble colors and re-render markdown HTML (e.g. after IDE theme or editor scheme change). */
     fun refreshTheme() {
         applyBubbleColor()
         updateContent()
+    }
+
+    private fun updateEditBarVisibility() {
+        editBar.isVisible = message.role == "user" && !message.isStreaming && onEdit != null
     }
 
     private fun applyBubbleColor() {

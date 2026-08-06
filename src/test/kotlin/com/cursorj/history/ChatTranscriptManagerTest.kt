@@ -79,6 +79,68 @@ class ChatTranscriptManagerTest {
     }
 
     @Test
+    fun `buildCarryoverContext from explicit list preserves order and content`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-carryover-list").toFile()
+        try {
+            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            manager.load()
+
+            val context = manager.buildCarryoverContext(
+                listOf(
+                    ChatMessage("user", "prefix question"),
+                    ChatMessage("assistant", "prefix answer"),
+                    ChatMessage("assistant", "", isStreaming = true),
+                ),
+            )
+
+            assertTrue(context != null && "prefix question" in context)
+            assertTrue("prefix answer" in context!!)
+            assertTrue(context.indexOf("prefix question") < context.indexOf("prefix answer"))
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `buildCarryoverContext from empty list returns null`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-carryover-empty").toFile()
+        try {
+            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            manager.load()
+            assertEquals(null, manager.buildCarryoverContext(emptyList()))
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resetSession replaces prefix and clears when empty`() {
+        val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-reset").toFile()
+        try {
+            val manager = ChatTranscriptManager(ChatTranscriptStore(workspace.absolutePath))
+            manager.load()
+
+            manager.addMessage("session:one", ChatMessage("user", "one"))
+            manager.addMessage("session:one", ChatMessage("assistant", "two"))
+            manager.addMessage("session:one", ChatMessage("user", "three"))
+
+            manager.resetSession(
+                "session:one",
+                listOf(ChatMessage("user", "one"), ChatMessage("assistant", "two")),
+            )
+            assertEquals(
+                listOf(ChatMessage("user", "one"), ChatMessage("assistant", "two")),
+                manager.transcriptFor("session:one"),
+            )
+
+            manager.resetSession("session:one", emptyList())
+            assertEquals(emptyList(), manager.transcriptFor("session:one"))
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `isEmpty returns true before any messages are added`() {
         val workspace = Files.createTempDirectory("cursorj-chat-transcript-manager-empty").toFile()
         try {

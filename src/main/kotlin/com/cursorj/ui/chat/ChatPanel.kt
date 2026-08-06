@@ -160,6 +160,8 @@ class ChatPanel(
         messageListPanel.onDiffFileClick = { path, line, addedLines ->
             openFileInEditorWithHighlights(path, line, addedLines)
         }
+        messageListPanel.onEditUserMessage = { content -> beginEdit(content) }
+        inputPanel.onCancelEdit = { cancelEdit() }
     }
 
     fun updateConfigOptions(options: List<ConfigOption>) {
@@ -376,9 +378,67 @@ class ChatPanel(
         if (text.isBlank()) return
         service.promptHistoryManager.addPrompt(historySessionKey, text)
         service.promptHistoryManager.clearNavigation(historySessionKey)
+        if (inputPanel.isEditing()) {
+            val preceding = messageListPanel.precedingMessagesForPendingEdit()
+            messageListPanel.commitPendingEditTruncation()
+            inputPanel.exitEditMode()
+            resendEditedMessage(preceding, text)
+            return
+        }
         if (session == null) {
             onFirstPrompt?.invoke(text)
         } else {
+            sendPrompt(text)
+        }
+    }
+
+    /**
+     * Loads an earlier user message back into the input for editing. Resending will branch the
+     * conversation from that point by starting a fresh session (the agent exposes no `session/fork`).
+     */
+    private fun beginEdit(content: String) {
+        if (session?.isProcessing == true) {
+            messageListPanel.clearPendingEdit()
+            showStatus("Can't edit a message while the agent is working. Cancel first.")
+            return
+        }
+        SwingUtilities.invokeLater {
+            inputPanel.enterEditMode(content)
+        }
+    }
+
+    private fun cancelEdit() {
+        messageListPanel.clearPendingEdit()
+        SwingUtilities.invokeLater { inputPanel.exitEditMode() }
+    }
+
+    /**
+     * Resends an edited message as the tail of a fresh session. The conversation prefix that
+     * preceded the edited message is replayed as carryover context, discarding everything that
+     * came after it (later assistant replies, tool calls, diffs).
+     */
+    private fun resendEditedMessage(precedingMessages: List<ChatMessage>, text: String) {
+        scope.launch {
+            val conn = connection
+            if (conn == null || !conn.isConnected) {
+                showError("Not connected. Please wait for the connection to complete.")
+                return@launch
+            }
+            try {
+                val carryover = service.chatTranscriptManager.buildCarryoverContext(precedingMessages)
+                service.chatTranscriptManager.resetSession(historySessionKey, precedingMessages)
+                val newSession = conn.createSession()
+                session = newSession
+                bindSession(newSession)
+                onSessionReplaced?.invoke(newSession)
+                firstPromptCarryoverContext = carryover
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("Failed to prepare edited resend", e)
+                showError("Failed to resend edited message: ${e.message}")
+                return@launch
+            }
             sendPrompt(text)
         }
     }

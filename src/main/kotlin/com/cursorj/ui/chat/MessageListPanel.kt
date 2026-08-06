@@ -34,8 +34,72 @@ class MessageListPanel {
     private var streamingRenderer: MessageRenderer? = null
     private var progressIndicator: ProgressIndicatorPanel? = null
     private var scrollToBottomQueued = false
+    private var pendingEditTarget: MessageRenderer? = null
+
+    /**
+     * Invoked when the user clicks "Edit" on one of their earlier messages. The argument is that
+     * message's current text. Truncation of the conversation is deferred until the edit is either
+     * committed via [commitPendingEditTruncation] or discarded via [clearPendingEdit].
+     */
+    var onEditUserMessage: ((String) -> Unit)? = null
 
     val component: JComponent get() = panel
+
+    private fun wireEditAffordance(renderer: MessageRenderer) {
+        if (renderer.chatMessage.role == "user") {
+            renderer.onEdit = { requestEdit(renderer) }
+        }
+    }
+
+    private fun requestEdit(target: MessageRenderer) {
+        if (!messageComponents.contains(target)) return
+        pendingEditTarget = target
+        onEditUserMessage?.invoke(target.chatMessage.content)
+    }
+
+    /**
+     * Returns the non-blank messages that precede the message currently pending edit, in order.
+     * These are replayed as context when resending the edited message in a fresh session.
+     */
+    fun precedingMessagesForPendingEdit(): List<ChatMessage> {
+        val target = pendingEditTarget ?: return emptyList()
+        val idx = messageComponents.indexOf(target)
+        if (idx <= 0) return emptyList()
+        return messageComponents.subList(0, idx)
+            .map { it.chatMessage }
+            .filter { it.content.isNotBlank() }
+    }
+
+    /** Removes the pending-edit message and everything visually after it, then clears the pending edit. */
+    fun commitPendingEditTruncation() {
+        val target = pendingEditTarget ?: return
+        truncateFrom(target)
+        pendingEditTarget = null
+    }
+
+    /** Abandons a pending edit without altering the conversation. */
+    fun clearPendingEdit() {
+        pendingEditTarget = null
+    }
+
+    private fun truncateFrom(target: MessageRenderer) {
+        val comps = innerPanel.components.toList()
+        val startIdx = comps.indexOf(target.component)
+        if (startIdx < 0) return
+        for (i in comps.indices.reversed()) {
+            if (i >= startIdx) innerPanel.remove(comps[i])
+        }
+        val remaining = innerPanel.components.toHashSet()
+        messageComponents.retainAll { it.component in remaining }
+        diffPanels.retainAll { it.component in remaining }
+        toolCallLabels.entries.removeIf { it.value.panel !in remaining }
+        permissionCards.entries.removeIf { it.value !in remaining }
+        if (streamingRenderer?.component !in remaining) streamingRenderer = null
+        hideProgress()
+        hideBuildButton()
+        innerPanel.revalidate()
+        innerPanel.repaint()
+    }
 
     fun updateOrAddMessage(message: ChatMessage) {
         clearStatusMessages()
@@ -62,6 +126,7 @@ class MessageListPanel {
                 streamingRenderer = null
             } else {
                 val renderer = MessageRenderer(message)
+                wireEditAffordance(renderer)
                 innerPanel.add(renderer.component)
                 messageComponents.add(renderer)
                 fullLayoutPassNeeded = true
@@ -89,9 +154,11 @@ class MessageListPanel {
         messageComponents.clear()
         diffPanels.clear()
 
+        pendingEditTarget = null
         for (message in messages) {
             if (message.content.isBlank()) continue
             val renderer = MessageRenderer(message.copy(isStreaming = false))
+            wireEditAffordance(renderer)
             innerPanel.add(renderer.component)
             messageComponents.add(renderer)
         }

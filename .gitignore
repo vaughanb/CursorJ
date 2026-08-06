@@ -34,3 +34,6 @@ out/
 .DS_Store
 Thumbs.db
 run.bat
+
+# Temporary ACP investigation / repro scripts (not part of the plugin)
+tmp-cursor-repro/

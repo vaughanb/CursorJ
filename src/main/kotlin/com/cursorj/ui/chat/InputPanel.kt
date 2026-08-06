@@ -166,8 +166,42 @@ class InputPanel {
         add(chipsStack, BorderLayout.CENTER)
     }
 
+    private var editing = false
+
+    private val editBannerLabel = JLabel(CursorJBundle.message("chat.edit.banner")).apply {
+        font = font.deriveFont(font.size2D - 1)
+        foreground = JBColor(Color(0x7C530E), Color(0xD0A86A))
+    }
+
+    private val editCancelLabel = JLabel(CursorJBundle.message("chat.edit.cancel")).apply {
+        font = font.deriveFont(font.size2D - 1)
+        foreground = JBColor(Color(0x5890C8), Color(0x6B9BD2))
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        border = JBUI.Borders.emptyLeft(8)
+        addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                onCancelEdit?.invoke()
+            }
+            override fun mouseEntered(e: java.awt.event.MouseEvent) {
+                text = "<html><u>${CursorJBundle.message("chat.edit.cancel")}</u></html>"
+            }
+            override fun mouseExited(e: java.awt.event.MouseEvent) {
+                text = CursorJBundle.message("chat.edit.cancel")
+            }
+        })
+    }
+
+    private val editBanner = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        border = JBUI.Borders.empty(4, 12, 2, 12)
+        isVisible = false
+        add(editBannerLabel, BorderLayout.CENTER)
+        add(editCancelLabel, BorderLayout.EAST)
+    }
+
     var onSend: ((String) -> Unit)? = null
     var onCancel: (() -> Unit)? = null
+    var onCancelEdit: (() -> Unit)? = null
     var onQueueMessage: ((String) -> Unit)? = null
     var onRollback: (() -> Unit)? = null
     var onSelectionChipRemoved: ((String) -> Unit)? = null
@@ -208,6 +242,7 @@ class InputPanel {
             add(scrollPane, BorderLayout.CENTER)
         }
 
+        container.add(editBanner, BorderLayout.NORTH)
         container.add(editorArea, BorderLayout.CENTER)
         container.add(bottomBar, BorderLayout.SOUTH)
 
@@ -220,6 +255,12 @@ class InputPanel {
                 if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
                     e.consume()
                     doSend()
+                    return
+                }
+
+                if (e.keyCode == KeyEvent.VK_ESCAPE && editing) {
+                    e.consume()
+                    onCancelEdit?.invoke()
                     return
                 }
 
@@ -409,6 +450,28 @@ class InputPanel {
         if (!processing) {
             textArea.requestFocusInWindow()
         }
+    }
+
+    /** True while the input holds an earlier message being edited for resend. */
+    fun isEditing(): Boolean = editing
+
+    /** Prefills the input with [text] and shows the edit banner. */
+    fun enterEditMode(text: String) {
+        editing = true
+        editBanner.isVisible = true
+        setInputText(text)
+        rootPanel.revalidate()
+        rootPanel.repaint()
+        textArea.requestFocusInWindow()
+    }
+
+    /** Hides the edit banner and clears the input, leaving normal composing state. */
+    fun exitEditMode() {
+        editing = false
+        editBanner.isVisible = false
+        setInputText("")
+        rootPanel.revalidate()
+        rootPanel.repaint()
     }
 
     fun getInputText(): String = textArea.text

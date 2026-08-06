@@ -2,45 +2,202 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.6.0] - Unreleased
 
 ### Added
 
-- Manual-only real-CLI integration test suite (`src/integrationTest/`) gated by `CURSORJ_INTEGRATION=1` and hard-blocked on CI. Covers ACP process lifecycle, connection/auth handshake, session creation, model switching, terminal/filesystem handler dispatch, index search, per-session isolation, reconnect recovery, and a canary test for agent model-routing behavior.
-- Post-switch verification: after model switch, plugin compares ACP-confirmed model against requested model and logs structured diagnostics.
+- **Edit & resend**: an inline **Edit** affordance on your earlier messages loads the text back into the input; resending branches the conversation from that point by discarding later replies and replaying the prior turns as context into a fresh session (the agent exposes no native `session/fork`). `Esc` or **Cancel edit** abandons the edit. Backed by new `ChatTranscriptManager.buildCarryoverContext(list)` / `resetSession` APIs with unit tests.
+- Documented Cursor ACP limitations in the README (runtime model parameter tiers and Debug mode are not exposed by the agent), verified empirically against `agent acp`.
+
+## [1.5.1] - 2026-06-16
+
+### Changed
+
+- Replaced deprecated IntelliJ Platform APIs.
+
+## [1.5.0] - 2026-06-11
+
+### Added
+
+- **Cursor Skills (plugin UX)**: Recursive discovery of `SKILL.md` across standard project and global skill directories; **Settings > Tools > CursorJ** panel to list/add/edit/remove project skills; inline chat input `/` and `@` completion for skills merged with ACP `available_commands_update`, shown in a non-focus-stealing popup so the user can keep typing to filter (arrow keys navigate, Enter/Tab accept, Esc dismisses); `@` skill picks insert a file-style reference resolved to `SKILL.md` for `ResourceLinkContent`; optional manual integration test documents whether the real agent surfaces skills in ACP available commands.
+- **Interactive agent questions**: CursorJ now handles the Cursor `cursor/ask_question` ACP extension and renders multiple-choice prompts as native chat cards. Plan-mode prose questions also get a conservative fallback parser so lettered/numbered choices can be answered without manually typing the option text.
+
+### Changed
+
+- **Central machine-local storage**: SQLite lexical index, chat history index, chat transcripts, and prompt history now live under `~/.cursorj/projects/<sanitizedName>-<hash8>/` instead of `<workspace>/.cursorj/`. Legacy `<workspace>/.cursorj/` content is migrated once when safe (targets that already exist are not overwritten). Project rules and skills remain under in-repo `.cursor/` as before.
+- **Richer tool-call activity labels**: Chat now shows the file name (and line range when available) for reads, the search pattern/glob for searches, and the URL for web fetches, instead of generic labels like "Reading File..." or "Searching grep...". Detail is sourced from the tool call's `rawInput` arguments with a fallback to the ACP `locations` field.
+
+## [1.4.0] - 2026-06-05
+
+### Added
+
+- **Custom Index Exclusions (`indexExcludePatterns`)**: Exclude specific files and directories from project indexing using glob patterns (e.g., `*.log`, `**/dist/**`), customizable in the settings panel.
+- **Subagent tasks (`cursor/task`)**: Handle Cursor ACP subagent notifications and server requests; show a collapsible **Background tasks** list in chat (type, description, running vs completed duration) with tooltips for prompt summary, model, and agent id. JSON-RPC responses return `outcome: completed` so the agent does not block. Unit tests cover `CursorTaskPayload` parsing.
+- Token and cost usage display in chat when the Cursor agent reports ACP usage: per-assistant-message token breakdown from `session/prompt` results, a session context/cost bar from `usage_update` notifications, and a **Settings > Tools > CursorJ** toggle to show or hide usage UI.
+- **Inline `@file` references in chat input**: Drag-and-drop project files into the prompt as Cursor-style inline references with pill highlighting; on send, references become markdown file links and are attached as `ResourceLinkContent` blocks for the agent.
+- **Image attachments in chat input**: Paste or drop image files (including clipboard images and Linux screenshot file paths) as removable chips above the input; images are sent to the agent via ACP `ImageContent`.
+- Clickable `file://` links in user chat messages open the referenced file in the editor.
+
+### Changed
+
+- **Concurrent SQLite Indexing (WAL)**: Separated SQLite reads and writes to separate connections and locks, allowing concurrent WAL reading/writing to prevent database lock contention.
+- **Index Throttling & Yielding**: Workspace indexing warmup scans now yield and delay every 25 files to prevent CPU/disk IO saturation.
+- **VFS Event Debouncing & Batching**: Coalesce and debounce incoming file-system change tasks (500ms quiet window, 2s max) to batch updates and avoid performance bottlenecks.
+- Hardened ACP session stop logic.
+- Deferred CursorJ startup indexing warmup until the IDE exits dumb mode to reduce contention with JetBrains indexing.
+- Disabled PSI-driven bulk index invalidations by default to avoid repeated full rebuilds during active editing.
+- Session load requests now include workspace context fields expected by recent agent builds.
+- Simplified chat input controls to focus on stable ACP-backed mode/model behavior.
+- Greatly improved markdown rendering in chat, including richer support for headings, tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks.
+- Improved symbol index bridge with safer PSI access patterns.
+- Non-image drag-and-drop in chat inserts inline `@path` references at the drop caret instead of separate attachment chips above the input.
+
+### Fixed
+
+- Restored chat message wrapping in narrow chat panels (including long lines and code blocks).
+- Reduced flicker during streaming/typing updates by minimizing full-list relayout and scroll churn.
+- Prevented model picker states that could imply unsupported model transitions.
+- File reference detection in chat input matches paths with extensions (e.g. `@main.go`, `@src/App.kt`).
+- Multiple image attachment chips wrap to additional rows instead of clipping in a single-line chip area.
+- Image paste on Linux (file-path clipboard data) attaches images instead of inserting raw paths into the prompt.
+- Fixed IDE `BadLocationException` when pasting images by intercepting paste at the IntelliJ editor-action layer.
+
+## [1.3.0] - 2026-04-16
+
+### Added
+
+- Max Mode toggle with CLI-config sync and reconnect handling.
+- Diagnostic integration test for agent model-routing behavior.
+
+## [1.2.2] - 2026-04-13
+
+### Added
+
+- Manual-only real-CLI integration test suite (`src/integrationTest/`) gated by `CURSORJ_INTEGRATION=1` and hard-blocked on CI. Covers ACP process lifecycle, connection/auth handshake, session creation, model switching, terminal/filesystem handler dispatch, index search, per-session isolation, and reconnect recovery.
+- Post-switch verification: after a model switch, the plugin compares the ACP-confirmed model against the requested model and logs structured diagnostics.
 - Model-name context hint injected into the next prompt after a model switch so the agent can accurately self-report the active model.
-- Unit tests for config-option merge behavior (partial model option list preservation), per-session config isolation, model display-name mapping priority, and `connectedStatusDetail` sourcing from ACP-confirmed state.
-- Concurrency stress test coverage for SQLite-backed indexing writes.
 - ACP model metadata parsing from `session/new` to keep model state in sync with the active session.
-- Unit tests covering agent plan path detection, session handling of plan edit diffs and "Plan saved" tool text, and filesystem notifications for plan writes under `.cursor/plans`.
-- Unit tests for chat markdown palette selection (`MarkdownRenderer`) and editor inserted-line highlight fallbacks (`EditorInsertedDiffHighlight`).
+- Unit tests for config-option merge behavior (partial model option list preservation), per-session config isolation, model display-name mapping priority, and `connectedStatusDetail` sourcing from ACP-confirmed state.
 
 ### Changed
 
 - Model switching now uses in-place `session/set_config_option` per ACP spec; no longer creates a new session on every model change.
-- Status bar and `connectedStatusDetail` now prefer ACP-confirmed session model (`configOptions.currentValue`) over stale local `selectedModel`.
+- Status bar and `connectedStatusDetail` now prefer the ACP-confirmed session model (`configOptions.currentValue`) over stale local `selectedModel`.
 - Structured model-switch diagnostic logging in `AcpSession` and `ChatPanel` with session/model correlation fields.
-- Consolidated global and project rules management into one settings page under **Settings > Tools > CursorJ**.
-- Deferred CursorJ startup indexing warmup until the IDE exits dumb mode to reduce contention with JetBrains indexing.
-- Disabled PSI-driven bulk index invalidations by default to avoid repeated full rebuilds during active editing.
-- Moved **Add to CursorJ Chat** to the bottom of the editor context menu with a separator for clearer placement.
-- Renamed the chat action button from **Rollback** to **Undo All** to align with Cursor wording.
-- Session load requests now include workspace context fields expected by recent agent builds.
-- Simplified chat input controls to focus on stable ACP-backed mode/model behavior.
-- Greatly improved markdown rendering in chat, including richer support for headings, tables, nested blockquotes, task lists, strikethrough, autolinks, emoji aliases, and indented code blocks.
+
+## [1.2.1] - 2026-04-09
+
+### Changed
+
+- Removed plugin IDE version restrictions for broader JetBrains IDE compatibility.
+
+## [1.2.0] - 2026-04-01
+
+### Added
+
+- Plan mode enhancements: agent plan file tracking, **Build** after plan edits, and editor sync.
+- Unit tests covering agent plan path detection, session handling of plan edit diffs and "Plan saved" tool text, filesystem notifications for plan writes under `.cursor/plans`, chat markdown palette selection (`MarkdownRenderer`), and editor inserted-line highlight fallbacks (`EditorInsertedDiffHighlight`).
+
+### Changed
+
 - Chat embedded HTML (messages and collapsible diffs) picks text colors from the bubble surface and refreshes when the LaF or editor color scheme changes.
-- Improved symbol index bridge with safer PSI access patterns.
 
 ### Fixed
 
-- SQLite index-store write operations are now serialized to avoid transaction-state errors during concurrent updates.
-- Restored chat message wrapping in narrow chat panels (including long lines and code blocks).
-- Reduced flicker during streaming/typing updates by minimizing full-list relayout and scroll churn.
-- Prevented model picker states that could imply unsupported model transitions.
 - Plan mode: **Build** did not reappear after the agent updated an existing plan by editing the on-disk file under `.cursor/plans` (e.g. edit diffs without a second `create_plan`); plan UI state now tracks those updates.
 - Plan mode: an open plan document could stay stale while the agent wrote changes to disk; the IDE refreshes the virtual file and reloads open editors when the tracked plan path is touched.
 - Plan mode: improved recognition of the agent's plan file (`cursor/create_plan` / `_cursor/create_plan`, "Plan saved to ..." in tool updates, and markdown paths under `.cursor/plans`) for **View Plan** and related behavior.
-- "Added line" highlights when opening a file from chat no longer follow UI theme alone when the editor uses a different color scheme (unreadable contrast in mixed light/dark setups).
+- "Added line" highlights when opening a file from chat no longer follow the UI theme alone when the editor uses a different color scheme (unreadable contrast in mixed light/dark setups).
+
+## [1.1.2] - 2026-03-25
+
+### Changed
+
+- Moved the plugin status indicator to below the chat input.
+
+### Fixed
+
+- Large prompt handling.
+
+## [1.1.1] - 2026-03-24
+
+### Changed
+
+- Improved indexing performance.
+
+### Fixed
+
+- Tab rename / history sync, with added regression coverage.
+
+## [1.1.0] - 2026-03-23
+
+### Added
+
+- MAX mode toggle via the `--max-mode` CLI flag.
+
+### Changed
+
+- Aligned ACP model handling and refreshed release documentation.
+
+### Fixed
+
+- Model selection and chat history save/restore bugs.
+
+## [1.0.1] - 2026-03-21
+
+### Fixed
+
+- Improved MAX model detection and added a MAX badge to the model dropdown.
+
+## [1.0.0] - 2026-03-20
+
+### Changed
+
+- Switched to the default JetBrains Marketplace channel for stable releases.
+
+## [0.9.1] - 2026-03-18
+
+### Changed
+
+- Renamed the chat action button from **Rollback** to **Undo All** to align with Cursor wording.
+- Improved chat rendering and action UX.
+
+## [0.9.0] - 2026-03-18
+
+### Added
+
+- Concurrency stress test coverage for SQLite-backed indexing writes.
+
+### Changed
+
+- Improved plugin performance during indexing.
+- Consolidated global and project rules management into one settings page under **Settings > Tools > CursorJ**.
+- Improved ACP config handling for MAX-tier model switching.
+
+### Fixed
+
+- SQLite index write concurrency: index-store write operations are serialized to avoid transaction-state errors during concurrent updates.
+- Restored the missing `settings.section.globalRules` bundle key.
+
+## [0.8.1] - 2026-03-13
+
+### Fixed
+
+- Font and sizing issues in chat.
+
+## [0.8.0] - 2026-03-13
+
+### Added
+
+- Input message queue: queue follow-up prompts while the agent is working.
+
+### Changed
+
+- Improved shell command support and updated documentation.
+
+### Fixed
+
+- Shell command execution bugs.
 
 ## [0.7.0] - 2026-03-12
 
