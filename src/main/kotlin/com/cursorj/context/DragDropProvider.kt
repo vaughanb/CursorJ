@@ -11,6 +11,8 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.util.Base64
 import javax.imageio.ImageIO
 import javax.swing.JComponent
@@ -225,10 +227,26 @@ class DragDropProvider(
             if (candidate.isBlank()) return null
 
             if (candidate.startsWith("file:", ignoreCase = true)) {
-                candidate = runCatching { File(URI(candidate)).path }.getOrNull() ?: return null
+                candidate = fileUriToPath(candidate) ?: return null
             }
 
             return candidate
+        }
+
+        /**
+         * Resolves a `file:` URI to a local path. Prefers the strict [URI] parser (which handles
+         * well-formed URIs, including POSIX paths), but falls back to manual parsing for Windows
+         * paths whose backslashes and drive-letter "authority" are illegal in a strict URI.
+         */
+        private fun fileUriToPath(raw: String): String? {
+            runCatching {
+                val path = File(URI(raw)).path
+                if (path.isNotBlank()) return path
+            }
+
+            var rest = raw.substring("file:".length).trimStart('/')
+            rest = runCatching { URLDecoder.decode(rest, StandardCharsets.UTF_8) }.getOrDefault(rest)
+            return rest.ifBlank { null }
         }
     }
 

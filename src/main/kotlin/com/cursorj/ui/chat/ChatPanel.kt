@@ -7,10 +7,11 @@ import com.cursorj.acp.AcpSession
 import com.cursorj.acp.ConfigOptionUiSupport
 import com.cursorj.acp.MaxModeManager
 import com.cursorj.acp.ChatMessage
-import com.cursorj.acp.SessionMode
+import com.cursorj.acp.ChatMode
 import com.cursorj.acp.SubagentTaskEvent
 import com.cursorj.acp.ToolActivity
 import com.cursorj.acp.messages.*
+import com.cursorj.debug.DebugLogServer
 import com.cursorj.handlers.AskQuestionOutcome
 import com.cursorj.rollback.RollbackStatus
 import com.cursorj.context.DragDropProvider
@@ -89,7 +90,7 @@ class ChatPanel(
     private val chatThemeRefreshScheduled = AtomicBoolean(false)
     private val pendingPermissionResponses = ConcurrentHashMap<String, CompletableFuture<String>>()
     private val pendingAskQuestionResponses = ConcurrentHashMap<String, CompletableFuture<AskQuestionOutcome>>()
-    private var desiredMode: SessionMode = SessionMode.AGENT
+    private var desiredMode: ChatMode = ChatMode.AGENT
     private var lastPlanQuestionSignature: String? = null
     private val attachedFiles = mutableListOf<ResourceLinkContent>()
     private val attachedImages = mutableListOf<Pair<String, LocalImageContent>>()
@@ -101,15 +102,19 @@ class ChatPanel(
     private lateinit var dragDropProvider: DragDropProvider
     private lateinit var chatInputTextArea: JComponent
     private var cachedSkillFilePaths: Set<String> = emptySet()
+    /** Log endpoint from the most recent Debug-mode turn (for View logs / action bar). */
+    private var lastDebugEndpoint: DebugLogServer.DebugEndpoint? = null
 
     private val agentProgressColor = JBColor(Color(0x6B9BD2), Color(0x6B9BD2))
     private val planProgressColor = JBColor(Color(0xD4A017), Color(0xD4A017))
     private val askProgressColor = JBColor(Color(0x4CAF50), Color(0x6BC46D))
+    private val debugProgressColor = JBColor(Color(0xE06C75), Color(0xE06C75))
 
     private fun modeProgressColor(): Color = when (desiredMode) {
-        SessionMode.PLAN -> planProgressColor
-        SessionMode.ASK -> askProgressColor
-        SessionMode.AGENT -> agentProgressColor
+        ChatMode.PLAN -> planProgressColor
+        ChatMode.ASK -> askProgressColor
+        ChatMode.DEBUG -> debugProgressColor
+        ChatMode.AGENT -> agentProgressColor
     }
 
     var onFirstPrompt: ((String) -> Unit)? = null
@@ -392,9 +397,9 @@ class ChatPanel(
                     bindSession(s)
                     onSessionReplaced?.invoke(s)
                 }
-                if (s.mode != desiredMode) {
+                if (s.mode != desiredMode.sessionMode) {
                     try {
-                        s.setMode(desiredMode)
+                        s.setMode(desiredMode.sessionMode)
                     } catch (e: Exception) {
                         log.warn("Failed to set mode before prompt", e)
                     }
@@ -423,13 +428,24 @@ class ChatPanel(
                     attachedImages.clear()
                     inputPanel.clearImageChips()
                     clearQueuedSelectionContext()
-                    if (desiredMode == SessionMode.PLAN &&
+                    if (desiredMode == ChatMode.PLAN &&
                         (session?.planCreated == true || !session?.agentWrittenPlanPath.isNullOrBlank())
                     ) {
+                        messageListPanel.hideDebugActions()
                         messageListPanel.showBuildButton(
                             onBuild = { handleBuild() },
                             onViewPlan = { handleViewPlan() },
                         )
+                    } else if (desiredMode == ChatMode.DEBUG) {
+                        messageListPanel.hideBuildButton()
+                        messageListPanel.showDebugActions(
+                            onReproduced = { handleDebugReproduced() },
+                            onCleanup = { handleDebugCleanup() },
+                            onViewLogs = { handleDebugViewLogs() },
+                        )
+                    } else {
+                        messageListPanel.hideBuildButton()
+                        messageListPanel.hideDebugActions()
                     }
                     drainNextQueuedMessage()
                 }
@@ -461,8 +477,8 @@ class ChatPanel(
             session = newSession
             bindSession(newSession)
 
-            if (newSession.mode != desiredMode) {
-                try { newSession.setMode(desiredMode) } catch (_: Exception) {}
+            if (newSession.mode != desiredMode.sessionMode) {
+                try { newSession.setMode(desiredMode.sessionMode) } catch (_: Exception) {}
             }
 
             onSessionReplaced?.invoke(newSession)
@@ -692,8 +708,8 @@ class ChatPanel(
 
     private fun handleBuild() {
         messageListPanel.hideBuildButton()
-        desiredMode = SessionMode.AGENT
-        inputPanel.setMode(SessionMode.AGENT)
+        desiredMode = ChatMode.AGENT
+        inputPanel.setMode(ChatMode.AGENT)
         sendPrompt("Implement the plan above.")
     }
 
@@ -752,13 +768,43 @@ class ChatPanel(
             ?.absolutePath
     }
 
-    private fun handleModeChange(mode: SessionMode) {
+    private fun handleModeChange(mode: ChatMode) {
         desiredMode = mode
         scope.launch {
             try {
-                session?.setMode(mode)
+                session?.setMode(mode.sessionMode)
             } catch (e: Exception) {
                 log.warn("Failed to change mode", e)
+            }
+        }
+    }
+
+    private fun handleDebugReproduced() {
+        messageListPanel.hideDebugActions()
+        sendPrompt(CursorJBundle.message("chat.debug.reproduced.prompt"))
+    }
+
+    private fun handleDebugCleanup() {
+        messageListPanel.hideDebugActions()
+        sendPrompt(CursorJBundle.message("chat.debug.cleanup.prompt"))
+    }
+
+    private fun handleDebugViewLogs() {
+        val path = lastDebugEndpoint?.logFilePath
+            ?: session?.sessionId?.let { service.debugLogServer.logFilePathFor(it) }
+        if (path.isNullOrBlank()) {
+            SwingUtilities.invokeLater {
+                showStatus(CursorJBundle.message("chat.debug.viewLogs.missing"))
+            }
+            return
+        }
+        val normalizedPath = path.replace('\\', '/')
+        ApplicationManager.getApplication().invokeLater {
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
+            if (vf != null) {
+                FileEditorManager.getInstance(service.project).openFile(vf, true)
+            } else {
+                showStatus(CursorJBundle.message("chat.debug.viewLogs.missing"))
             }
         }
     }
@@ -836,7 +882,7 @@ class ChatPanel(
      * next prompt. Must be called on the EDT.
      */
     private fun maybeRenderPlanQuestions(message: ChatMessage) {
-        if (desiredMode != SessionMode.PLAN) return
+        if (desiredMode != ChatMode.PLAN) return
         if (message.role == "user") return
         val content = message.content
         if (content.isBlank()) return
@@ -979,9 +1025,13 @@ class ChatPanel(
         if (!carryoverContext.isNullOrBlank()) {
             visibleBlocks.add(TextContent("Context from a previous chat:\n\n$carryoverContext\n\nCurrent prompt:"))
         }
-        if (desiredMode == SessionMode.PLAN) {
-            visibleBlocks.add(TextContent(text = CursorJBundle.message("chat.plan.promptPrefix")))
+        val debugEndpoint = if (desiredMode == ChatMode.DEBUG) {
+            val sessionId = session?.sessionId ?: "pending"
+            service.debugLogServer.beginTurn(sessionId).also { lastDebugEndpoint = it }
+        } else {
+            null
         }
+        visibleBlocks.addAll(ModePromptSupport.modePrefixBlocks(desiredMode, debugEndpoint))
         visibleBlocks.add(TextContent(text = text))
 
         if (CursorJSettings.instance.autoAttachActiveFile) {
@@ -1018,13 +1068,12 @@ class ChatPanel(
             )
         }
 
-        val displayUserText = when {
-            !carryoverContext.isNullOrBlank() -> text
-            desiredMode == SessionMode.PLAN -> text
-            else -> visibleBlocks
-                .filterIsInstance<TextContent>()
-                .joinToString(" ") { it.text }
-        }
+        val displayUserText = ModePromptSupport.displayUserText(
+            mode = desiredMode,
+            userText = text,
+            carryoverContext = carryoverContext,
+            visibleTextBlocks = visibleBlocks.filterIsInstance<TextContent>(),
+        )
 
         return PromptPayload(
             contentBlocks = hiddenRuleBlocks + visibleBlocks,

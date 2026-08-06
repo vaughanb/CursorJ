@@ -2,7 +2,6 @@ import java.io.File
 import org.gradle.api.GradleException
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.api.tasks.SourceSetContainer
-import org.gradle.api.tasks.testing.Test
 import org.gradle.language.base.plugins.LifecycleBasePlugin
 
 plugins {
@@ -63,6 +62,16 @@ configurations[integrationTestSourceSet.runtimeOnlyConfigurationName].extendsFro
 
 dependencies {
     add(integrationTestSourceSet.implementationConfigurationName, kotlin("test"))
+
+    // Put the IntelliJ Platform test-framework on the integrationTest runtime classpath so JUnit
+    // discovery can resolve com.intellij.* types referenced by integration tests. Without this the
+    // whole suite aborts during discovery (NoClassDefFoundError: com.intellij.openapi.Disposable).
+    intellijPlatform {
+        testFramework(
+            TestFrameworkType.Platform,
+            configurationName = integrationTestSourceSet.implementationConfigurationName,
+        )
+    }
 }
 
 intellijPlatform {
@@ -135,18 +144,19 @@ intellijPlatform {
     }
 }
 
-tasks {
-    test {
-        useJUnitPlatform()
-    }
-
-    val integrationTest by registering(Test::class) {
+// Manual-only real-agent integration tests run through the plugin's `testIde` support so they get
+// the full IntelliJ Platform bootstrap (sandbox, PathClassLoader, JUnit5 session listener) that a
+// plain Gradle `Test` task cannot provide. The registration name becomes the `integrationTest` task.
+val integrationTest by intellijPlatformTesting.testIde.registering {
+    task {
         group = LifecycleBasePlugin.VERIFICATION_GROUP
         description = "Runs manual-only real agent CLI integration tests."
+        // Append (don't replace) so the testIde-provided platform bootstrap classpath — which defines
+        // com.intellij.util.lang.PathClassLoader used as the JVM system class loader — is preserved.
         testClassesDirs = integrationTestSourceSet.output.classesDirs
-        classpath = integrationTestSourceSet.runtimeClasspath
+        classpath += integrationTestSourceSet.output + integrationTestSourceSet.runtimeClasspath
         useJUnitPlatform()
-        shouldRunAfter(test)
+        shouldRunAfter("test")
 
         val integrationOptIn = providers.environmentVariable("CURSORJ_INTEGRATION")
         onlyIf {
@@ -161,6 +171,12 @@ tasks {
                 throw GradleException("`integrationTest` is manual-only and must never run on CI.")
             }
         }
+    }
+}
+
+tasks {
+    test {
+        useJUnitPlatform()
     }
 
     runIde {

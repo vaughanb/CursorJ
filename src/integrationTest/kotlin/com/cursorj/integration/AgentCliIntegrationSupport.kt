@@ -76,6 +76,21 @@ object AgentCliIntegrationSupport {
         }
     }
 
+    /**
+     * Temporarily sets tool permission mode (e.g. `run-everything`) so real-agent prompts that
+     * need filesystem/terminal tools can complete without a UI permission dialog.
+     */
+    suspend fun <T> withPermissionModeSuspending(mode: String, block: suspend () -> T): T {
+        val settings = CursorJSettings.instance
+        val previous = settings.permissionMode
+        settings.permissionMode = mode
+        return try {
+            block()
+        } finally {
+            settings.permissionMode = previous
+        }
+    }
+
     fun newDisposable(name: String): Disposable {
         return Disposer.newDisposable(name)
     }

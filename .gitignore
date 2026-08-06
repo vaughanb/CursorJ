@@ -37,3 +37,6 @@ run.bat
 
 # Temporary ACP investigation / repro scripts (not part of the plugin)
 tmp-cursor-repro/
+
+# CursorJ debug-mode runtime logs (written under the open project)
+.cursorj/debug/

@@ -1,8 +1,8 @@
 package com.cursorj.ui.chat
 
 import com.cursorj.CursorJBundle
+import com.cursorj.acp.ChatMode
 import com.cursorj.acp.ConfigOptionUiSupport
-import com.cursorj.acp.SessionMode
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.settings.SkillDefinition
 import com.intellij.icons.AllIcons
@@ -109,18 +109,21 @@ class InputPanel {
 
     private val planLabel = CursorJBundle.message("chat.mode.plan")
     private val askLabel = CursorJBundle.message("chat.mode.ask")
+    private val debugLabel = CursorJBundle.message("chat.mode.debug")
     private val defaultFg = UIManager.getColor("ComboBox.foreground") ?: JBColor.foreground()
 
     private val planColor = JBColor(Color(0xD4A017), Color(0xD4A017))
     private val askColor = JBColor(Color(0x4CAF50), Color(0x6BC46D))
+    private val debugColor = JBColor(Color(0xE06C75), Color(0xE06C75))
 
     private val modeCombo = JComboBox(arrayOf(
         CursorJBundle.message("chat.mode.agent"),
         planLabel,
         askLabel,
+        debugLabel,
     )).apply {
         minimumSize = Dimension(90, 26)
-        preferredSize = Dimension(90, 26)
+        preferredSize = Dimension(100, 26)
         prototypeDisplayValue = CursorJBundle.message("chat.mode.agent") + "  "
         font = font.deriveFont(font.size2D - 1)
         renderer = object : DefaultListCellRenderer() {
@@ -238,7 +241,7 @@ class InputPanel {
     var onRollback: (() -> Unit)? = null
     var onSelectionChipRemoved: ((String) -> Unit)? = null
     var onImageChipRemoved: ((String) -> Unit)? = null
-    var onModeChanged: ((SessionMode) -> Unit)? = null
+    var onModeChanged: ((ChatMode) -> Unit)? = null
     var onConfigOptionChanged: ((configId: String, value: String) -> Unit)? = null
     /** Invoked when the user toggles MAX mode (after [setMaxMode] sync, not during). */
     var onMaxModeToggled: ((Boolean) -> Unit)? = null
@@ -457,11 +460,7 @@ class InputPanel {
         modeCombo.addActionListener {
             updateModeColor()
             if (updatingMode) return@addActionListener
-            val mode = when (modeCombo.selectedIndex) {
-                1 -> SessionMode.PLAN
-                2 -> SessionMode.ASK
-                else -> SessionMode.AGENT
-            }
+            val mode = ChatMode.fromComboIndex(modeCombo.selectedIndex)
             onModeChanged?.invoke(mode)
         }
 
@@ -493,20 +492,20 @@ class InputPanel {
         updatingMaxMode = false
     }
 
-    fun setMode(mode: SessionMode) {
+    fun setMode(mode: ChatMode) {
         updatingMode = true
-        modeCombo.selectedIndex = when (mode) {
-            SessionMode.PLAN -> 1
-            SessionMode.ASK -> 2
-            SessionMode.AGENT -> 0
-        }
+        modeCombo.selectedIndex = mode.toComboIndex()
         updateModeColor()
         updatingMode = false
     }
 
+    /** Currently selected chat mode in the dropdown. */
+    fun selectedMode(): ChatMode = ChatMode.fromComboIndex(modeCombo.selectedIndex)
+
     private fun modeColorFor(value: Any?): Color = when (value) {
         planLabel -> planColor
         askLabel -> askColor
+        debugLabel -> debugColor
         else -> defaultFg
     }
 

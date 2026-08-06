@@ -19,6 +19,44 @@ enum class SessionMode(val value: String) {
     }
 }
 
+/**
+ * UI-level chat mode. Maps onto ACP [SessionMode] for the wire protocol.
+ *
+ * ACP exposes only agent/plan/ask. [DEBUG] is a CursorJ simulation that keeps the session in
+ * [SessionMode.AGENT] while injecting a debug workflow prompt and runtime-evidence capture.
+ */
+enum class ChatMode(val sessionMode: SessionMode) {
+    AGENT(SessionMode.AGENT),
+    PLAN(SessionMode.PLAN),
+    ASK(SessionMode.ASK),
+    DEBUG(SessionMode.AGENT);
+
+    companion object {
+        /** Maps a wire [SessionMode] to the matching UI mode (never [DEBUG], which is UI-only). */
+        fun fromSessionMode(mode: SessionMode): ChatMode = when (mode) {
+            SessionMode.PLAN -> PLAN
+            SessionMode.ASK -> ASK
+            SessionMode.AGENT -> AGENT
+        }
+
+        /** Mode dropdown index → [ChatMode] (0=Agent, 1=Plan, 2=Ask, 3=Debug). */
+        fun fromComboIndex(index: Int): ChatMode = when (index) {
+            1 -> PLAN
+            2 -> ASK
+            3 -> DEBUG
+            else -> AGENT
+        }
+    }
+
+    /** Dropdown index for this mode. */
+    fun toComboIndex(): Int = when (this) {
+        PLAN -> 1
+        ASK -> 2
+        DEBUG -> 3
+        AGENT -> 0
+    }
+}
+
 data class ChatMessage(
     val role: String,
     val content: String,

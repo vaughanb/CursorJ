@@ -64,6 +64,16 @@ class AcpSessionTest {
     }
 
     @Test
+    fun `Debug maps to agent while other UI modes keep their wire modes`() {
+        assertEquals(SessionMode.AGENT, ChatMode.DEBUG.sessionMode)
+        assertEquals(SessionMode.PLAN, ChatMode.PLAN.sessionMode)
+        assertEquals(SessionMode.ASK, ChatMode.ASK.sessionMode)
+        assertEquals(ChatMode.AGENT, ChatMode.fromSessionMode(SessionMode.AGENT))
+        assertEquals(ChatMode.PLAN, ChatMode.fromSessionMode(SessionMode.PLAN))
+        assertEquals(ChatMode.ASK, ChatMode.fromSessionMode(SessionMode.ASK))
+    }
+
+    @Test
     fun `maps known mode values and defaults unknown values to agent`() {
         assertEquals(SessionMode.AGENT, SessionMode.fromValue("agent"))
         assertEquals(SessionMode.PLAN, SessionMode.fromValue("plan"))

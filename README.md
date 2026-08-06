@@ -19,7 +19,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Rules**: Global user rules (injected into every prompt) and project rules (`.cursor/rules/`)
 - **Cursor Skills**: Discovers `SKILL.md` under `.cursor/skills/`, `.agents/skills/`, `.claude/skills/`, `.codex/skills/` (and `~/` equivalents); manage scaffolds in **Settings > Tools > CursorJ**; type `/` in chat for an inline command/skill completion list (merged with ACP slash commands) and `@` for skill file references; the popup keeps focus in the input so you can keep typing to filter, and `@` inserts a path reference so the agent receives `ResourceLinkContent` for the skill file
 - **Model Selection**: Choose from ACP-provided model options directly in the dropdown for reliable per-session switching
-- **Mode Switching**: Switch between Agent, Plan, and Ask modes (Plan mode includes Build and View Plan, plus native multiple-choice cards for agent questions)
+- **Mode Switching**: Switch between Agent, Plan, Ask, and Debug modes (Plan mode includes Build and View Plan, plus native multiple-choice cards for agent questions; Debug mode simulates Cursor's Debug workflow with runtime-evidence capture)
 - **Undo All (Rollback Last Turn)**: Revert files to the state before the most recent agent turn using Local History
 - **Chat History**: Searchable chat history grouped by time; restore previous chats; clear history
 - **Status Bar**: Connection and indexing status (Connected, Processing, Indexing, Index ready, etc.)
@@ -75,6 +75,22 @@ is discarded and the prior turns are replayed as context into a fresh agent sess
 provides no native `session/fork`). Press `Esc` or **Cancel edit** to abandon the edit without
 changing the conversation.
 
+### Debug mode
+
+Select **Debug** in the mode dropdown when you need to find a root cause with runtime evidence
+rather than guessing at a fix. Because ACP does not expose a native `debug` session mode, CursorJ
+keeps the agent session in `agent` and simulates Cursor's Debug workflow locally:
+
+1. A hidden Debug prompt instructs the agent to hypothesize, add temporary instrumentation, ask you
+   to reproduce, analyze logs, apply a targeted fix, then clean up.
+2. Each Debug turn provisions a session log file under `<project>/.cursorj/debug/` and (when
+   possible) a localhost-only HTTP endpoint (`127.0.0.1`) so instrumented code can append structured
+   lines even from browser/remote runtimes.
+3. After a Debug turn, chat offers **I reproduced it**, **Clean up**, and **View logs** actions.
+
+This is functionally equivalent to Cursor's IDE Debug mode for typical repros; it is not the same
+server-side mode Cursor uses in its own agent panel.
+
 
 ## Architecture
 
@@ -94,7 +110,7 @@ Cursor extension methods from the agent (for example `cursor/task` for subagents
 Some capabilities are constrained by what Cursor's agent exposes over the Agent Client Protocol. The following were verified empirically against the Cursor CLI agent (`agent acp`) and are **agent/protocol limitations, not plugin bugs**:
 
 - **Model parameter tiers cannot be switched at runtime.** The agent returns each model with a single, fixed parameter set baked into an opaque value (e.g. `composer-2.5[fast=true]`, `claude-opus-4-6[thinking=true,context=200k,effort=high]`). It accepts only the exact values it offers and rejects any hand-constructed alternative (e.g. `composer-2.5[fast=false]` or `…effort=medium`) with `Invalid model value`. Consequently, toggles such as **Composer Normal/Fast** or **Claude Opus Medium/High effort** are not selectable through ACP. Advertising the client `_meta.parameterizedModelPicker` capability makes this worse (the agent then omits parameters entirely), so CursorJ does not opt in.
-- **No Debug mode.** The agent advertises exactly three session modes — `agent`, `plan`, and `ask` — and rejects any other mode id (e.g. `debug`) with `Invalid mode ID: … Valid modes: agent, plan, ask`. CursorJ therefore exposes only Agent/Plan/Ask.
+- **No native Debug session mode.** The agent advertises exactly three session modes — `agent`, `plan`, and `ask` — and rejects any other mode id (e.g. `debug`) with `Invalid mode ID: … Valid modes: agent, plan, ask`. CursorJ therefore keeps the ACP session in `agent` for Debug, and simulates Cursor's Debug workflow locally (see [Debug mode](#debug-mode) below).
 - **No native conversation forking.** The agent does not advertise the ACP `session/fork` capability. Editing an earlier message and resending is therefore implemented by starting a fresh session and replaying the prior conversation as context, rather than a server-side branch.
 
 To re-verify against a newer agent build, enable **ACP raw JSON debug logging** in settings and inspect the `session/new` response (the `modes` block and the `model` config option) along with any `session/set_config_option` / `session/set_mode` errors.
@@ -157,6 +173,7 @@ Manual integration guardrails:
 - `integrationTest` is **manual-only** and intentionally excluded from `test`/`check`/`build`.
 - CI is hard-blocked from running `integrationTest` even if it is requested.
 - If `CURSORJ_INTEGRATION` is not set to `1`, the integration task is skipped.
+- The task runs through the IntelliJ Platform test harness (`intellijPlatformTesting.testIde`) so the full suite can be discovered and executed together; tests that require a live IntelliJ `Application` self-skip when one is not bootstrapped, while real-CLI tests (e.g. Debug mode, model routing) run.
 
 Model-switch troubleshooting:
 
@@ -194,6 +211,13 @@ Integration tests (manual-only, `CURSORJ_INTEGRATION=1`) additionally cover:
 - reconnect recovery after ACP process exit
 - canary test for agent model-routing behavior (detects if/when the agent fixes model routing)
 - optional check whether a workspace `SKILL.md` appears in ACP `available_commands_update` (skipped if the agent does not advertise it)
+- **Debug mode (simulated)**: ACP rejects mode id `debug`; Debug keeps the session on `agent`; `DebugLogServer` evidence posted over HTTP is readable by the agent via fs tools; a Debug-prefixed workflow prompt completes and shows instrumentation / reproduce / evidence behavior. These tests talk to `agent acp` over raw JSON-RPC (same approach as the max-mode diagnostic) and do not require an IntelliJ Application.
+
+To run only the Debug-mode integration suite:
+
+```bash
+CURSORJ_INTEGRATION=1 ./gradlew integrationTest --tests "com.cursorj.integration.DebugModeIntegrationTest"
+```
 
 Thin IntelliJ fixture-based tests for PSI symbol/reference behavior are still recommended as a final integration safety net when targeting parity-level confidence across IDE/platform updates.
 

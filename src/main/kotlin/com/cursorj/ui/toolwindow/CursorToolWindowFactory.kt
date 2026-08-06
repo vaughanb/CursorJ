@@ -6,6 +6,7 @@ import com.cursorj.acp.MaxModeManager
 import com.cursorj.acp.AcpProcessManager
 import com.cursorj.context.ActiveFileProvider
 import com.cursorj.context.SelectionProvider
+import com.cursorj.debug.DebugLogServer
 import com.cursorj.history.PromptHistoryManager
 import com.cursorj.history.PromptHistoryStore
 import com.cursorj.history.ChatHistoryIndexManager
@@ -71,6 +72,8 @@ class CursorJService(
     val promptHistoryManager = PromptHistoryManager(PromptHistoryStore(machineLocalProjectDir))
     val chatTranscriptManager = ChatTranscriptManager(ChatTranscriptStore(machineLocalProjectDir))
     val chatHistoryIndexManager = ChatHistoryIndexManager(ChatHistoryStore(machineLocalProjectDir))
+    /** Runtime-evidence sink for simulated Debug mode (log file + optional localhost HTTP). */
+    val debugLogServer = DebugLogServer(project.basePath)
 
     lateinit var tabManager: SessionTabManager
         private set
@@ -111,6 +114,7 @@ class CursorJService(
             CursorJConnectionStatus.updateIndexing(null)
         }
         Disposer.register(this, workspaceIndexOrchestrator)
+        Disposer.register(this, debugLogServer)
         DumbService.getInstance(project).runWhenSmart {
             if (project.isDisposed || serviceDisposed) return@runWhenSmart
             workspaceIndexOrchestrator.start()

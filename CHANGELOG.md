@@ -6,11 +6,17 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Debug mode (simulated)**: a fourth mode in the chat dropdown that reproduces Cursor's Debug workflow (hypothesize → instrument → reproduce → analyze runtime evidence → targeted fix → clean up). Because ACP has no `debug` session mode, CursorJ keeps the session in `agent`, injects a Debug prompt prefix, and provisions a per-session log file under `<project>/.cursorj/debug/` plus a localhost token-gated HTTP log sink. Post-turn actions: **I reproduced it**, **Clean up**, and **View logs**. Manual real-agent integration tests (`DebugModeIntegrationTest`, gated by `CURSORJ_INTEGRATION=1`) cover ACP mode rejection, agent read-back of HTTP-captured evidence, and Debug-prefixed workflow behavior.
 - **Edit & resend**: an inline **Edit** affordance on your earlier messages loads the text back into the input; resending branches the conversation from that point by discarding later replies and replaying the prior turns as context into a fresh session (the agent exposes no native `session/fork`). `Esc` or **Cancel edit** abandons the edit. Backed by new `ChatTranscriptManager.buildCarryoverContext(list)` / `resetSession` APIs with unit tests.
-- Documented Cursor ACP limitations in the README (runtime model parameter tiers and Debug mode are not exposed by the agent), verified empirically against `agent acp`.
+- Documented Cursor ACP limitations in the README (runtime model parameter tiers; native Debug session mode is not exposed by the agent, so CursorJ simulates it).
+
+### Changed
+
+- **Integration test harness**: `integrationTest` now runs through the IntelliJ Platform test support (`intellijPlatformTesting.testIde`) so the whole suite can be discovered and executed together. Previously the full-suite run aborted during JUnit discovery (`NoClassDefFoundError: com.intellij.openapi.Disposable`) because the platform was absent from the task's runtime classpath. Tests requiring a live IntelliJ `Application` self-skip when one is not bootstrapped; real-CLI tests still run. It remains manual-only and excluded from `test`/`check`/`build`.
 
 ### Fixed
 
+- **Windows drag-and-drop of `file://` paths**: dropping/pasting a `file://` URI that wraps a Windows path (backslashes and a drive-letter "authority", e.g. the GNOME copied-files clipboard format) no longer silently fails. `DragDropProvider` now falls back to manual `file:` URI parsing when the strict `java.net.URI` parser rejects such paths.
 - **Faster IDE shutdown**: closing the IDE (or a project) no longer hangs ~5 seconds per open CursorJ tab. On teardown, `AgentConnection` now enters a shutdown path that cancels its coroutine scope and marks the connection as shutting down before its child disposables run, so disconnect handlers no longer schedule reconnect attempts during shutdown, and the ACP process is stopped with a short (500 ms) wait instead of the normal 5 s wait. `SessionTabManager` is now a `Disposable` whose coroutine scope is cancelled on dispose. Based on a contribution from @ghackett ([#2](https://github.com/vaughanb/CursorJ/pull/2)).
 
 ## [1.5.1] - 2026-06-16

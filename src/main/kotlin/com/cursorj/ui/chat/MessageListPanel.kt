@@ -1325,6 +1325,103 @@ class MessageListPanel {
         }
     }
 
+    private var debugActionsPanel: JComponent? = null
+
+    fun showDebugActions(
+        onReproduced: () -> Unit,
+        onCleanup: () -> Unit,
+        onViewLogs: () -> Unit,
+    ) {
+        hideDebugActions()
+        val viewLogsLabel = JLabel(CursorJBundle.message("chat.debug.viewLogs")).apply {
+            foreground = JBColor(Color(0x5890C8), Color(0x6B9BD2))
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            font = font.deriveFont(font.size2D - 1)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    onViewLogs()
+                }
+                override fun mouseEntered(e: MouseEvent) {
+                    text = "<html><u>${CursorJBundle.message("chat.debug.viewLogs")}</u></html>"
+                }
+                override fun mouseExited(e: MouseEvent) {
+                    text = CursorJBundle.message("chat.debug.viewLogs")
+                }
+            })
+        }
+        val cleanupLabel = JLabel(CursorJBundle.message("chat.debug.cleanup")).apply {
+            foreground = JBColor(Color(0x5890C8), Color(0x6B9BD2))
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            font = font.deriveFont(font.size2D - 1)
+            border = JBUI.Borders.emptyLeft(12)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    onCleanup()
+                }
+                override fun mouseEntered(e: MouseEvent) {
+                    text = "<html><u>${CursorJBundle.message("chat.debug.cleanup")}</u></html>"
+                }
+                override fun mouseExited(e: MouseEvent) {
+                    text = CursorJBundle.message("chat.debug.cleanup")
+                }
+            })
+        }
+        val buttonBg = JBColor(Color(0xE06C75), Color(0xC75B64))
+        val buttonHoverBg = JBColor(Color(0xE87A82), Color(0xD46870))
+        val reproducedButton = object : JLabel(CursorJBundle.message("chat.debug.reproduced"), SwingConstants.CENTER) {
+            private var hovering = false
+            init {
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) { onReproduced() }
+                    override fun mouseEntered(e: MouseEvent) { hovering = true; repaint() }
+                    override fun mouseExited(e: MouseEvent) { hovering = false; repaint() }
+                })
+            }
+            override fun paintComponent(g: Graphics) {
+                val g2 = g as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = if (hovering) buttonHoverBg else buttonBg
+                g2.fillRoundRect(0, 0, width, height, 6, 6)
+                super.paintComponent(g)
+            }
+        }.apply {
+            foreground = JBColor(Color(0x1A1A1A), Color(0x1A1A1A))
+            isOpaque = false
+            font = font.deriveFont(Font.BOLD)
+            border = JBUI.Borders.empty(4, 16)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        }
+        val leftLinks = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            add(viewLogsLabel)
+            add(cleanupLabel)
+        }
+        val wrapper = object : JPanel(BorderLayout()) {
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.empty(8, 8, 4, 8)
+            name = "debug-actions-panel"
+            add(leftLinks, BorderLayout.WEST)
+            add(reproducedButton, BorderLayout.EAST)
+        }
+        debugActionsPanel = wrapper
+        innerPanel.add(wrapper)
+        innerPanel.revalidate()
+        innerPanel.repaint()
+        scrollToBottom()
+    }
+
+    fun hideDebugActions() {
+        debugActionsPanel?.let {
+            innerPanel.remove(it)
+            debugActionsPanel = null
+            innerPanel.revalidate()
+            innerPanel.repaint()
+        }
+    }
+
     fun addStatusMessage(statusText: String) {
         clearStatusMessages()
         hideProgress()
