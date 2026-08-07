@@ -109,7 +109,7 @@ intellijPlatform {
                 <li>Chat history with search and restore; prompt history</li>
                 <li>Unified rules management for global user rules and project rules (<code>.cursor/rules/</code>)</li>
                 <li>Cursor Skills discovery and settings management; inline <code>/</code> and <code>@</code> completion in chat (merged with ACP slash commands) that keeps focus in the input</li>
-                <li>Agent, Plan, and Ask modes with native IntelliJ UI, including multiple-choice cards for agent questions</li>
+                <li>Agent, Plan, Ask, and simulated Debug modes with native IntelliJ UI, including multiple-choice cards for agent questions</li>
                 <li>Permission control with per-turn rollback via Local History</li>
             </ul>
             <p>Project home: <a href="$projectUrl">$projectUrl</a></p>
@@ -119,10 +119,16 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li><strong>Cursor Skills:</strong> Discover <code>SKILL.md</code> skills, manage them in settings, and use inline <code>/</code> and <code>@</code> completion in chat (ACP <code>available_commands_update</code> merged in) that keeps focus in the input so you can keep typing to filter.</li>
-                <li><strong>Interactive agent questions:</strong> Answer structured <code>cursor/ask_question</code> prompts and plan-mode multiple-choice questions using native chat cards.</li>
-                <li><strong>Central machine-local storage:</strong> SQLite indexes, chat history, transcripts, and prompt history now live under <code>~/.cursorj/projects/&lt;project&gt;-&lt;hash&gt;/</code>, with safe one-time migration from legacy workspace <code>.cursorj</code> folders.</li>
-                <li><strong>Richer tool-call activity labels:</strong> Chat now shows file names and line ranges for reads, search patterns/globs for searches, and URLs for web fetches instead of generic tool activity text.</li>
+                <li><strong>Debug mode (simulated):</strong> A fourth chat mode that reproduces Cursor's Debug workflow — hypothesize, add temporary instrumentation, reproduce, analyze runtime evidence, apply a targeted fix, then clean up. Because ACP exposes no native <code>debug</code> mode, CursorJ keeps the session in <code>agent</code>, injects a Debug workflow prompt, and captures runtime evidence via a per-session log file under <code>&lt;project&gt;/.cursorj/debug/</code> plus a localhost token-gated log sink. Post-turn actions offer <strong>I reproduced it</strong>, <strong>Clean up</strong>, and <strong>View logs</strong>.</li>
+                <li><strong>Edit &amp; resend:</strong> Edit one of your earlier messages to branch the conversation from that point — later replies are discarded and the prior turns are replayed as context into a fresh session.</li>
+                <li><strong>Fixed Windows drag-and-drop of <code>file://</code> paths:</strong> Dropping or pasting a <code>file://</code> URI that wraps a Windows path (e.g. the GNOME copied-files clipboard format) now resolves correctly instead of being dropped.</li>
+                <li><strong>Faster IDE shutdown:</strong> Closing the IDE (or a project) no longer hangs several seconds per open CursorJ tab.</li>
+            </ul>
+            <p><strong>Known Cursor ACP limitations</strong> (agent/protocol constraints, not plugin bugs):</p>
+            <ul>
+                <li><strong>No native Debug session mode:</strong> the agent advertises only <code>agent</code>, <code>plan</code>, and <code>ask</code> and rejects a <code>debug</code> mode id, so Debug is simulated locally rather than driven by the agent.</li>
+                <li><strong>No conversation forking:</strong> the agent does not advertise ACP <code>session/fork</code>, so Edit &amp; resend replays context into a new session instead of branching server-side.</li>
+                <li><strong>Model parameter tiers cannot be switched at runtime:</strong> each model is offered with a single baked-in parameter set, so toggles such as Composer Normal/Fast or Claude Opus effort levels are not selectable through ACP.</li>
             </ul>
         """.trimIndent()
     }
