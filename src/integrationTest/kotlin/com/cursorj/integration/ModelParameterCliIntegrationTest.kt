@@ -38,6 +38,11 @@ import kotlin.test.assertTrue
  * Each case spawns `agent acp` with `CURSOR_CONFIG_DIR` pointing at a scratch copy of `~/.cursor/cli-config.json`,
  * so the parameter changes it makes never touch the user's CLI defaults. The copy carries the user's auth info
  * and is deleted afterwards. Run with `CURSORJ_INTEGRATION=1 ./gradlew integrationTest --tests '*ModelParameter*'`.
+ *
+ * Besides the ACP-confirmed values, the first case runs `agent about` against the same config dir and checks that
+ * the CLI itself reports the model and effort chosen over ACP (its `Model` line, e.g. `Claude Opus 4.7 300K Medium`).
+ * That proves the selection reached the CLI's own state; whether the backend applies the effort for the account's
+ * plan is not observable without sending a prompt.
  */
 class ModelParameterCliIntegrationTest {
     private val json = Json {
@@ -48,7 +53,8 @@ class ModelParameterCliIntegrationTest {
     @Test
     fun `parameterized picker exposes a settable thought level option for a Claude model`() {
         assumeManualOnly()
-        withAgent(resolveAgentPath(), parameterizedModelPicker = true) { rpc, sessionId, initialOptions ->
+        val agentPath = resolveAgentPath()
+        withAgent(agentPath, parameterizedModelPicker = true) { rpc, sessionId, initialOptions, configDir ->
             val modelOption = modelOption(initialOptions)
             val modelIds = modelOption.options.map { it.value }
             assertTrue(
@@ -77,6 +83,16 @@ class ModelParameterCliIntegrationTest {
                     "(values=${effort.options.map { it.value }})",
             )
 
+            val modelName = modelOption.options.first { it.value == claudeModel }.name ?: claudeModel
+            val targetName = effort.options.first { it.value == target }.name ?: target
+            val aboutAfterEffort = agentAboutModelLine(agentPath, configDir)
+            assertTrue(
+                aboutAfterEffort.contains(modelName, ignoreCase = true) &&
+                    aboutAfterEffort.contains(targetName, ignoreCase = true),
+                "`agent about` should report $modelName at $targetName after the ACP change, got '$aboutAfterEffort'",
+            )
+            println("MODEL-PARAMS: agent about reports '$aboutAfterEffort'")
+
             val modelWithoutEffort = listOf("composer-2.5", "default").firstOrNull { it in modelIds }
             if (modelWithoutEffort == null) {
                 println("MODEL-PARAMS: no model without an effort option was offered; skipping the rejection check")
@@ -87,6 +103,13 @@ class ModelParameterCliIntegrationTest {
                 afterSecondSwitch.none { ConfigOptionUiSupport.isEffortSelector(it) },
                 "$modelWithoutEffort should expose no effort option, got ${afterSecondSwitch.map { it.id }}",
             )
+            val secondName = modelOption.options.first { it.value == modelWithoutEffort }.name ?: modelWithoutEffort
+            val aboutAfterSwitch = agentAboutModelLine(agentPath, configDir)
+            assertTrue(
+                aboutAfterSwitch.contains(secondName, ignoreCase = true),
+                "`agent about` should report $secondName after switching models, got '$aboutAfterSwitch'",
+            )
+            println("MODEL-PARAMS: agent about reports '$aboutAfterSwitch'")
             val error = assertFailsWith<AcpException> { setConfigOption(rpc, sessionId, effort.id, target) }
             assertTrue(
                 error.message.contains("Unknown model config option", ignoreCase = true),
@@ -98,7 +121,7 @@ class ModelParameterCliIntegrationTest {
     @Test
     fun `without the meta flag the agent stays in variants mode`() {
         assumeManualOnly()
-        withAgent(resolveAgentPath(), parameterizedModelPicker = false) { _, _, initialOptions ->
+        withAgent(resolveAgentPath(), parameterizedModelPicker = false) { _, _, initialOptions, _ ->
             val modelIds = modelOption(initialOptions).options.map { it.value }
             assertTrue(
                 modelIds.any { BRACKETED_VARIANT.containsMatchIn(it) },
@@ -114,7 +137,7 @@ class ModelParameterCliIntegrationTest {
     private fun withAgent(
         agentPath: String,
         parameterizedModelPicker: Boolean,
-        block: (rpc: JsonRpcWire, sessionId: String, configOptions: List<ConfigOption>) -> Unit,
+        block: (rpc: JsonRpcWire, sessionId: String, configOptions: List<ConfigOption>, configDir: File) -> Unit,
     ) {
         val userConfig = File(System.getProperty("user.home"), ".cursor/cli-config.json")
         assumeTrue(userConfig.isFile) { "cli-config.json not found at $userConfig" }
@@ -146,7 +169,7 @@ class ModelParameterCliIntegrationTest {
             )
             val result = json.decodeFromJsonElement(SessionNewResult.serializer(), sessionNew)
             assumeTrue(result.sessionId.isNotBlank()) { "session/new did not return a sessionId." }
-            block(rpc, result.sessionId, result.configOptions)
+            block(rpc, result.sessionId, result.configOptions, configDir)
         } finally {
             process?.let { stop(it) }
             deleteWithRetry(workspace)
@@ -170,6 +193,28 @@ class ModelParameterCliIntegrationTest {
         val option = options.firstOrNull { ConfigOptionUiSupport.isModelSelector(it) }
         assumeTrue(option != null) { "The agent exposed no model config option." }
         return option!!
+    }
+
+    /**
+     * Runs `agent about` against [configDir] and returns its `Model` line. The CLI builds that line from the same
+     * `cli-config.json` selection that ACP `session/set_config_option` writes, so it is the CLI's own report of
+     * the active model and parameters.
+     */
+    private fun agentAboutModelLine(agentPath: String, configDir: File): String {
+        val process = ProcessBuilder(buildAgentCommand(agentPath, "about"))
+            .apply { environment()["CURSOR_CONFIG_DIR"] = configDir.absolutePath }
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().readText()
+        if (!process.waitFor(60, TimeUnit.SECONDS)) {
+            stop(process)
+            throw IllegalStateException("`agent about` timed out")
+        }
+        val cleaned = output.replace(ANSI_ESCAPE, "")
+        return cleaned.lines()
+            .map { it.trim() }
+            .firstOrNull { ABOUT_MODEL_LINE.matches(it) }
+            ?: throw IllegalStateException("`agent about` printed no Model line:\n$cleaned")
     }
 
     /** `cmd.exe /c agent.cmd` leaves the node child running after the parent is killed; stop the whole tree. */
@@ -268,5 +313,9 @@ class ModelParameterCliIntegrationTest {
     private companion object {
         /** Variants-mode model ids look like `composer-2.5[fast=true]`. */
         val BRACKETED_VARIANT = Regex("""\[[^\]]*=[^\]]*]""")
+
+        /** `agent about` prints `Model               Claude Opus 4.7 300K Medium` (label, padding, value). */
+        val ABOUT_MODEL_LINE = Regex("""Model\s{2,}\S.*""")
+        val ANSI_ESCAPE = Regex("\u001B\\[[0-9;]*[A-Za-z]")
     }
 }
