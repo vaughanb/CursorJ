@@ -297,14 +297,13 @@ class AgentConnection(
     }
 
     /**
-     * Status-bar detail such as `Connected (Claude Opus 4.7 · Effort: High)`. The thought-level summary is
-     * appended when the agent exposes one, because in parameterized-picker mode the model name no longer
-     * encodes the effort tier.
+     * Status-bar detail such as `Connected (Claude Opus 4.7 300K Extra High)`: the model name plus Cursor's
+     * parameter suffix when the agent exposes parameters (the suffix is empty in variants mode).
      */
     fun connectedStatusDetail(): String? {
         val modelName = selectedModelDisplayName() ?: return null
-        val thoughtLevel = session?.configOptions?.let(ConfigOptionUiSupport::thoughtLevelSummary)
-        return if (thoughtLevel == null) "Connected ($modelName)" else "Connected ($modelName \u00B7 $thoughtLevel)"
+        val suffix = ConfigOptionUiSupport.variantSuffix(session?.configOptions.orEmpty())
+        return if (suffix.isBlank()) "Connected ($modelName)" else "Connected ($modelName $suffix)"
     }
 
     fun setPermissionPromptResolver(resolver: ((RequestPermissionParams) -> CompletableFuture<String>)?) {

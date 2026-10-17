@@ -188,7 +188,7 @@ class AgentConnectionSessionLoadTest {
     }
 
     @Test
-    fun `connectedStatusDetail appends the effort summary in parameterized picker mode`() {
+    fun `connectedStatusDetail appends Cursor's parameter suffix in parameterized picker mode`() {
         fixture(modelInfos = emptyList()).use { fixture ->
             val connection = fixture.connection
             setSession(
@@ -219,7 +219,7 @@ class AgentConnectionSessionLoadTest {
                     ),
                 ),
             )
-            assertEquals("Connected (Claude Opus 4.7 \u00B7 Effort: High)", connection.connectedStatusDetail())
+            assertEquals("Connected (Claude Opus 4.7 High)", connection.connectedStatusDetail())
         }
     }
 

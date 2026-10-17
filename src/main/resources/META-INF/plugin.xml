@@ -45,5 +45,15 @@
                 description="Focus the CursorJ tool window">
             <keyboard-shortcut keymap="$default" first-keystroke="alt C"/>
         </action>
+
+        <!-- Unbound by default (Ctrl+/ is the IDE's comment shortcut); assign shortcuts in Settings > Keymap. -->
+        <action id="CursorJ.OpenModelPicker"
+                class="com.cursorj.actions.OpenModelPickerAction"
+                text="Open CursorJ Model Picker"
+                description="Open the model and parameter picker of the active CursorJ chat"/>
+        <action id="CursorJ.CycleEffort"
+                class="com.cursorj.actions.CycleEffortAction"
+                text="Cycle CursorJ Effort Level"
+                description="Switch the active CursorJ chat to the next effort / reasoning level"/>
     </actions>
 </idea-plugin>

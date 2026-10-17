@@ -1,5 +1,6 @@
 package com.cursorj.acp
 
+import com.cursorj.acp.CursorConfigOptionFixtures as Fixtures
 import com.cursorj.acp.messages.ConfigOption
 import com.cursorj.acp.messages.ConfigOptionValue
 import kotlin.test.Test
@@ -160,34 +161,119 @@ class ConfigOptionUiSupportTest {
     }
 
     @Test
-    fun thoughtLevelSummary_describesTheEffortSelectorOnly() {
+    fun isContextOption_matchesSizeValuedSelectsOnly() {
         val testCases = mapOf(
-            "thinking toggle alone has no summary" to Pair(listOf(thinkingOption()), null),
-            "model config options alone have no summary" to Pair(listOf(contextOption(), fastOption()), null),
-            "effort without a current value has no summary" to
-                Pair(listOf(effortOption("effort", null, "low", "high")), null),
-            "effort uses the value name" to Pair(
-                listOf(
-                    thinkingOption(),
-                    ConfigOption(
-                        id = "effort",
-                        category = "thought_level",
-                        currentValue = "high",
-                        options = listOf(ConfigOptionValue("low", "Low"), ConfigOptionValue("high", "High")),
-                    ),
-                ),
-                "Effort: High",
-            ),
-            "reasoning falls back to the raw value" to
-                Pair(listOf(effortOption("reasoning", "extra-high", "low", "extra-high")), "Reasoning: extra-high"),
+            "300k/1m context" to Pair(Fixtures.contextOption(), true),
+            "272k/1m context" to Pair(Fixtures.contextOption("272k", listOf("272k" to "272K", "1m" to "1M")), true),
+            "fast toggle" to Pair(Fixtures.fastOption(), false),
+            "effort levels" to Pair(Fixtures.effortOption(), false),
+            "model selector with size-like values" to
+                Pair(ConfigOption(id = "model", category = "model", options = values("300k")), false),
+        )
+        for ((name, case) in testCases) {
+            val (option, expected) = case
+            assertEquals(expected, ConfigOptionUiSupport.isContextOption(option), name)
+        }
+    }
+
+    @Test
+    fun isAutoModelValue_matchesDefaultInBothPickerModes() {
+        assertTrue(ConfigOptionUiSupport.isAutoModelValue("default"))
+        assertTrue(ConfigOptionUiSupport.isAutoModelValue("default[]"))
+        assertFalse(ConfigOptionUiSupport.isAutoModelValue("claude-opus-4-7"))
+        assertFalse(ConfigOptionUiSupport.isAutoModelValue("composer-2.5[fast=true]"))
+    }
+
+    @Test
+    fun variantSuffix_followsCursorShortNameConvention() {
+        val unknownParameter = ConfigOption(
+            id = "verbosity",
+            name = "Verbosity",
+            category = "model_config",
+            currentValue = "terse",
+            options = listOf(ConfigOptionValue("terse", "Terse"), ConfigOptionValue("full", "Full")),
+        )
+        val testCases = mapOf(
+            "Opus 4.7 defaults" to Pair(Fixtures.opusOptions(), "300K Extra High"),
+            "Opus 4.7 1M low fast no thinking" to
+                Pair(Fixtures.opusOptions(context = "1m", effort = "low", fast = true, thinking = false), "1M Low Fast No Thinking"),
+            "GPT reasoning" to Pair(Fixtures.gptOptions(), "272K Medium"),
+            "Composer fast on" to Pair(Fixtures.composerOptions(fast = true), "Fast"),
+            "Composer fast off" to Pair(Fixtures.composerOptions(fast = false), ""),
+            "Auto has no parameters" to Pair(Fixtures.autoOptions(), ""),
+            "variants mode has no parameters" to Pair(Fixtures.variantsOptions(), ""),
+            "unknown parameter is appended as name: value" to
+                Pair(Fixtures.composerOptions(fast = true) + unknownParameter, "Fast Verbosity: Terse"),
         )
         for ((name, case) in testCases) {
             val (options, expected) = case
-            if (expected == null) {
-                assertNull(ConfigOptionUiSupport.thoughtLevelSummary(options), name)
-            } else {
-                assertEquals(expected, ConfigOptionUiSupport.thoughtLevelSummary(options), name)
-            }
+            assertEquals(expected, ConfigOptionUiSupport.variantSuffix(options), name)
+        }
+    }
+
+    @Test
+    fun currentModelLabel_andModelSummary_useTheModelValueName() {
+        assertEquals("Claude Opus 4.7", ConfigOptionUiSupport.currentModelLabel(Fixtures.opusOptions()))
+        assertEquals("Claude Opus 4.7 300K Extra High", ConfigOptionUiSupport.modelSummary(Fixtures.opusOptions()))
+        assertEquals("Auto", ConfigOptionUiSupport.modelSummary(Fixtures.autoOptions()))
+        assertEquals("Claude Opus 4.7", ConfigOptionUiSupport.modelSummary(Fixtures.variantsOptions()))
+        assertNull(ConfigOptionUiSupport.modelSummary(listOf(Fixtures.modeOption())))
+    }
+
+    @Test
+    fun pickerSections_orderThoughtLevelThenOptionsThenOtherSelects() {
+        val testCases = mapOf(
+            "Opus" to Pair(Fixtures.opusOptions(), listOf("Effort", null, "Context")),
+            "GPT" to Pair(Fixtures.gptOptions(), listOf("Reasoning", null, "Context")),
+            "Composer" to Pair(Fixtures.composerOptions(), listOf(null)),
+            "Auto" to Pair(Fixtures.autoOptions(), emptyList()),
+            "variants mode" to Pair(Fixtures.variantsOptions(), emptyList()),
+        )
+        for ((name, case) in testCases) {
+            val (options, expectedTitles) = case
+            assertEquals(expectedTitles, ConfigOptionUiSupport.pickerSections(options).map { it.title }, name)
+        }
+    }
+
+    @Test
+    fun pickerSections_carryLabelsSelectionAndDescriptions() {
+        val sections = ConfigOptionUiSupport.pickerSections(Fixtures.opusOptions())
+
+        val effort = sections[0]
+        assertEquals(PickerSection.Kind.RADIO, effort.kind)
+        assertEquals(Fixtures.EFFORT_DESCRIPTION, effort.description)
+        assertEquals(listOf("Low", "Medium", "High", "Extra High", "Max"), effort.items.map { it.label })
+        assertEquals(listOf("low", "medium", "high", "xhigh", "max"), effort.items.map { it.value })
+        assertEquals("xhigh", effort.items.single { it.selected }.value)
+
+        val switches = sections[1]
+        assertEquals(PickerSection.Kind.SWITCHES, switches.kind)
+        assertEquals(listOf("thinking", "fast"), switches.items.map { it.configId })
+        assertEquals(listOf("Thinking", "Fast"), switches.items.map { it.label })
+        assertEquals(listOf(true, false), switches.items.map { it.selected })
+        assertEquals(listOf("true", "true"), switches.items.map { it.value })
+        assertEquals(Fixtures.FAST_DESCRIPTION, switches.items[1].description)
+
+        val context = sections[2]
+        assertEquals(PickerSection.Kind.RADIO, context.kind)
+        assertEquals(listOf("300K", "1M"), context.items.map { it.label })
+        assertEquals("300k", context.items.single { it.selected }.value)
+    }
+
+    @Test
+    fun nextEffortSelection_stepsThroughAgentValuesAndWrapsAround() {
+        val testCases = mapOf(
+            "Opus xhigh -> max" to Pair(Fixtures.opusOptions(effort = "xhigh"), "effort" to "max"),
+            "Opus max wraps to low" to Pair(Fixtures.opusOptions(effort = "max"), "effort" to "low"),
+            "GPT medium -> high" to Pair(Fixtures.gptOptions(), "reasoning" to "high"),
+            "unknown current value starts at the first" to Pair(Fixtures.opusOptions(effort = "bogus"), "effort" to "low"),
+            "Composer has no effort" to Pair(Fixtures.composerOptions(), null),
+            "thinking toggle alone is not an effort selector" to
+                Pair(listOf(Fixtures.modeOption(), Fixtures.modelOption("claude-opus-4-7"), Fixtures.thinkingOption()), null),
+        )
+        for ((name, case) in testCases) {
+            val (options, expected) = case
+            assertEquals(expected, ConfigOptionUiSupport.nextEffortSelection(options), name)
         }
     }
 

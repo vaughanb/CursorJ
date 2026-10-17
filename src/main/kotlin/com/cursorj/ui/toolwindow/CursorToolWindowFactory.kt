@@ -16,6 +16,7 @@ import com.cursorj.history.ChatTranscriptStore
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
 import com.cursorj.storage.CentralStorage
 import com.cursorj.settings.CursorJSettings
+import com.cursorj.ui.chat.ChatPanel
 import com.cursorj.ui.statusbar.CursorJConnectionStatus
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -247,6 +248,10 @@ class CursorJService(
             modelReadyListeners.clear()
         }
     }
+
+    /** The selected tab's chat panel, or null before the tool window content exists. */
+    fun activeChatPanel(): ChatPanel? =
+        if (::tabManager.isInitialized) tabManager.getActiveChatPanel() else null
 
     fun onModelsReady(listener: () -> Unit) {
         if (modelsReady) {

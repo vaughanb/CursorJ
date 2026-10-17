@@ -10,7 +10,6 @@ import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.awt.RelativePoint
-import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
@@ -140,24 +139,16 @@ class InputPanel {
         }
     }
 
-    private val modelCombo = JComboBox<String>().apply {
-        minimumSize = Dimension(100, 26)
-        preferredSize = Dimension(130, 26)
-        font = font.deriveFont(font.size2D - 1)
-        isVisible = false
+    /** Cursor-style trigger (`Claude Opus 4.7  300K Extra High`) that opens the model picker. */
+    private val modelPickerTrigger = ModelPickerTrigger().apply {
+        setModel(CursorJBundle.message("chat.modelPicker.model"), "")
     }
 
-    private val maxModeToggle = JBCheckBox(CursorJBundle.message("chat.maxmode.label")).apply {
-        name = MAX_MODE_TOGGLE_NAME
-        font = font.deriveFont(font.size2D - 1)
-        isOpaque = false
-        toolTipText = CursorJBundle.message("chat.maxmode.tooltip")
-        isVisible = true
-    }
-
-    /** Mode, model, MAX and per-model parameter controls; wraps in narrow tool windows instead of clipping. */
+    /** Mode dropdown and model picker trigger; wraps in narrow tool windows instead of clipping. */
     private val configControlsRow = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 2)).apply {
         isOpaque = false
+        add(modeCombo)
+        add(modelPickerTrigger)
     }
 
     private val rollbackButton = JButton(CursorJBundle.message("chat.rollback.action")).apply {
@@ -169,9 +160,7 @@ class InputPanel {
         toolTipText = CursorJBundle.message("chat.rollback.action")
     }
 
-    private var modelValues: List<String> = emptyList()
-    private var lastModelSelectionValue: String? = null
-    private var updatingModelCombo = false
+    private var maxModeEnabled = false
     private var rollbackAvailable = false
     private var isProcessing = false
     private var lastKnownRootWidth = -1
@@ -479,32 +468,16 @@ class InputPanel {
             onModeChanged?.invoke(mode)
         }
 
-        modelCombo.addActionListener {
-            if (updatingModelCombo || updatingConfigWidgets) return@addActionListener
-            val idx = modelCombo.selectedIndex
-            if (idx in modelValues.indices) {
-                val selectedValue = modelValues[idx]
-                lastModelSelectionValue = selectedValue
-                onConfigOptionChanged?.invoke(modelConfigIdForEvents, selectedValue)
-            }
-        }
-
-        maxModeToggle.addActionListener {
-            if (updatingMaxMode || updatingConfigWidgets) return@addActionListener
-            onMaxModeToggled?.invoke(maxModeToggle.isSelected)
-        }
+        modelPickerTrigger.onActivate = { openModelPicker() }
     }
 
     private var updatingMode = false
-    private var updatingMaxMode = false
 
     /**
-     * Updates the MAX checkbox without firing [onMaxModeToggled].
+     * Records the MAX state shown by the picker's MAX Mode toggle without firing [onMaxModeToggled].
      */
     fun setMaxMode(enabled: Boolean) {
-        updatingMaxMode = true
-        maxModeToggle.isSelected = enabled
-        updatingMaxMode = false
+        maxModeEnabled = enabled
     }
 
     fun setMode(mode: ChatMode) {
@@ -530,124 +503,38 @@ class InputPanel {
     }
 
     private var configOptions: List<ConfigOption> = emptyList()
-    private var updatingConfigWidgets = false
-    private var modelConfigIdForEvents = "model"
 
+    private val modelPicker = ModelPickerPopup(
+        options = { configOptions },
+        maxModeEnabled = { maxModeEnabled },
+        itemsEnabled = { !isProcessing },
+        onConfigOptionChanged = { configId, value -> onConfigOptionChanged?.invoke(configId, value) },
+        onMaxModeToggled = { enabled -> onMaxModeToggled?.invoke(enabled) },
+    )
+
+    /** Model name currently shown on the picker trigger (`Claude Opus 4.7`). */
+    internal val modelPickerModelName: String get() = modelPickerTrigger.modelName
+
+    /** Parameter suffix currently shown on the picker trigger (`300K Extra High`; empty in variants mode). */
+    internal val modelPickerSuffix: String get() = modelPickerTrigger.suffix
+
+    /**
+     * Refreshes the picker trigger from the session's ACP config options: `<model> <suffix>` in
+     * parameterized-picker mode, the variant's display name alone in variants mode, and "Model" before a
+     * session exists. The popup itself reads the same options when it opens.
+     */
     fun updateConfigOptions(options: List<ConfigOption>) {
         configOptions = options
-        updatingConfigWidgets = true
-        configControlsRow.removeAll()
-        configControlsRow.add(modeCombo)
-
-        val row = ConfigOptionUiSupport.optionsForInputBar(options)
-        val hasModelInBar = row.any { ConfigOptionUiSupport.isModelSelector(it) && it.options.isNotEmpty() }
-        maxModeToggle.toolTipText = maxModeTooltipFor(row)
-        if (!hasModelInBar) {
-            configControlsRow.add(maxModeToggle)
-        }
-        var modelShown = false
-        for (opt in row) {
-            when {
-                ConfigOptionUiSupport.isModelSelector(opt) && !modelShown && opt.options.isNotEmpty() -> {
-                    modelConfigIdForEvents = opt.id
-                    updatingModelCombo = true
-                    val currentUiSelection = modelValues.getOrNull(modelCombo.selectedIndex)
-                    modelCombo.removeAllItems()
-                    modelValues = opt.options.map { it.value }
-                    opt.options.forEach { o -> modelCombo.addItem(o.name ?: o.value) }
-                    val preferredValue = when {
-                        !opt.currentValue.isNullOrBlank() && opt.currentValue in modelValues -> opt.currentValue
-                        !lastModelSelectionValue.isNullOrBlank() && lastModelSelectionValue in modelValues -> lastModelSelectionValue
-                        !currentUiSelection.isNullOrBlank() && currentUiSelection in modelValues -> currentUiSelection
-                        else -> modelValues.firstOrNull()
-                    }
-                    val selectedIdx = preferredValue?.let(modelValues::indexOf)?.coerceAtLeast(0) ?: 0
-                    modelCombo.selectedIndex = selectedIdx
-                    lastModelSelectionValue = modelValues.getOrNull(selectedIdx)
-                    val longestName = opt.options.maxOf { (it.name ?: it.value).length }
-                    modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 220), 26)
-                    modelCombo.name = configControlName(opt.id)
-                    configControlsRow.add(modelCombo)
-                    modelCombo.isVisible = true
-                    configControlsRow.add(maxModeToggle)
-                    modelShown = true
-                    updatingModelCombo = false
-                }
-                ConfigOptionUiSupport.isBooleanToggle(opt) -> {
-                    configControlsRow.add(createToggleControl(opt))
-                }
-                ConfigOptionUiSupport.isGenericSelect(opt) || opt.options.isNotEmpty() -> {
-                    configControlsRow.add(createSelectControl(opt))
-                }
-            }
-        }
-        if (!modelShown) {
-            modelCombo.isVisible = false
-        }
-        updatingConfigWidgets = false
+        val modelName = ConfigOptionUiSupport.currentModelLabel(options)
+            ?: CursorJBundle.message("chat.modelPicker.model")
+        modelPickerTrigger.setModel(modelName, ConfigOptionUiSupport.variantSuffix(options))
         rootPanel.revalidate()
         rootPanel.repaint()
     }
 
-    /** Checkbox for a boolean option (`Thinking`, `Fast`); the agent's description becomes the tooltip. */
-    private fun createToggleControl(opt: ConfigOption): JComponent {
-        val configId = opt.id
-        val checkBox = JBCheckBox(ConfigOptionUiSupport.labelFor(opt), ConfigOptionUiSupport.isToggleChecked(opt)).apply {
-            name = configControlName(configId)
-            font = font.deriveFont(font.size2D - 1)
-            isOpaque = false
-            toolTipText = descriptionTooltip(opt)
-        }
-        checkBox.addActionListener {
-            if (updatingConfigWidgets) return@addActionListener
-            val fresh = configOptions.firstOrNull { it.id == configId } ?: return@addActionListener
-            val (off, on) = ConfigOptionUiSupport.toggleOffOnValues(fresh)
-            onConfigOptionChanged?.invoke(configId, if (checkBox.isSelected) on else off)
-        }
-        return checkBox
-    }
-
-    /**
-     * Labeled combo (`Effort: [High]`) for a multi-valued option, so values such as "Medium" are not ambiguous
-     * between effort and context. Label and combo share one panel so they wrap together.
-     */
-    private fun createSelectControl(opt: ConfigOption): JComponent {
-        val configId = opt.id
-        val values = opt.options.map { it.value }
-        val tooltip = descriptionTooltip(opt)
-        val label = JLabel(ConfigOptionUiSupport.labelFor(opt) + ":").apply {
-            font = font.deriveFont(font.size2D - 1)
-            toolTipText = tooltip
-        }
-        val combo = JComboBox<String>().apply {
-            name = configControlName(configId)
-            minimumSize = Dimension(80, 26)
-            font = font.deriveFont(font.size2D - 1)
-            toolTipText = tooltip
-            opt.options.forEach { o -> addItem(o.name ?: o.value) }
-            selectedIndex = values.indexOf(opt.currentValue).coerceAtLeast(0)
-        }
-        combo.addActionListener {
-            if (updatingConfigWidgets) return@addActionListener
-            val i = combo.selectedIndex
-            if (i in values.indices) {
-                onConfigOptionChanged?.invoke(configId, values[i])
-            }
-        }
-        return JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
-            isOpaque = false
-            add(label)
-            add(combo)
-        }
-    }
-
-    private fun descriptionTooltip(opt: ConfigOption): String? =
-        opt.description?.trim()?.takeIf { it.isNotBlank() }
-
-    /** In parameterized-picker mode the `context` option can flip Max Mode on; say so on the MAX checkbox. */
-    private fun maxModeTooltipFor(row: List<ConfigOption>): String {
-        val parameterized = row.any { ConfigOptionUiSupport.isModelConfig(it) || ConfigOptionUiSupport.isThoughtLevel(it) }
-        return CursorJBundle.message(if (parameterized) "chat.maxmode.tooltip.parameterized" else "chat.maxmode.tooltip")
+    /** Opens the model picker under its trigger (also used by the `CursorJ.OpenModelPicker` action). */
+    fun openModelPicker() {
+        modelPicker.show(modelPickerTrigger)
     }
 
     fun setProcessing(processing: Boolean) {
@@ -1328,11 +1215,5 @@ class InputPanel {
 
     companion object {
         private const val visualLineEpsilonPx = 0.5
-
-        /** Swing component name of the MAX checkbox (for tests and UI automation). */
-        internal const val MAX_MODE_TOGGLE_NAME = "maxModeToggle"
-
-        /** Swing component name of the control bound to a config option, e.g. `config:effort`. */
-        internal fun configControlName(configId: String): String = "config:$configId"
     }
 }

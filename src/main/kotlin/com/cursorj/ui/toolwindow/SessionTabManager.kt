@@ -725,6 +725,8 @@ class SessionTabManager(
 
     fun getActiveConnection(): AgentConnection? = getActiveTab()?.connection
 
+    fun getActiveChatPanel(): ChatPanel? = getActiveTab()?.chatPanel
+
     /** Syncs every tab's MAX checkbox from a freshly read value (e.g. external `cli-config.json` edit). */
     internal fun syncAllChatPanelsMaxModeFromDisk(enabled: Boolean) {
         for (tab in tabs) {

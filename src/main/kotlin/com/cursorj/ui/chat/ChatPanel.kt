@@ -204,8 +204,25 @@ class ChatPanel(
         }
     }
 
+    /** Opens the model picker of this tab (keyboard action `CursorJ.OpenModelPicker`). */
+    fun openModelPicker() {
+        SwingUtilities.invokeLater {
+            inputPanel.openModelPicker()
+        }
+    }
+
+    /** Steps the current model's effort / reasoning level to the next value (keyboard action `CursorJ.CycleEffort`). */
+    fun cycleEffort() {
+        val next = ConfigOptionUiSupport.nextEffortSelection(session?.configOptions.orEmpty())
+        if (next == null) {
+            showStatus(CursorJBundle.message("chat.modelPicker.noEffort"))
+            return
+        }
+        handleConfigOptionChange(next.first, next.second)
+    }
+
     /**
-     * Updates the MAX checkbox to match a value read from disk without firing the user toggle callback
+     * Records the MAX state shown by the model picker from a value read from disk, without firing the user toggle callback
      * (used when `cli-config.json` changes outside CursorJ).
      */
     fun applyMaxModeFromDisk(enabled: Boolean) {
@@ -842,7 +859,7 @@ class ChatPanel(
                     return@launch
                 }
                 currentSession.setConfigOption(configId, value)
-                showConfigOptionChanged(currentSession, configId, value)
+                showModelStatus(currentSession)
             } catch (e: Exception) {
                 log.warn("setConfigOption failed", e)
                 val msg = e.message ?: e.javaClass.simpleName
@@ -853,17 +870,10 @@ class ChatPanel(
         }
     }
 
-    /** Status line such as `Effort: Medium` once the agent has confirmed a parameter change. */
-    private fun showConfigOptionChanged(currentSession: AcpSession, configId: String, requestedValue: String) {
-        val option = currentSession.configOptions.firstOrNull { it.id == configId } ?: return
-        val value = option.currentValue?.takeIf { it.isNotBlank() } ?: requestedValue
-        showStatus(
-            CursorJBundle.message(
-                "chat.config.option.changed",
-                ConfigOptionUiSupport.labelFor(option),
-                ConfigOptionUiSupport.valueLabelFor(option, value),
-            ),
-        )
+    /** Status line such as `Model: Claude Opus 4.7 300K Medium` once the agent has confirmed a parameter change. */
+    private fun showModelStatus(currentSession: AcpSession) {
+        val summary = ConfigOptionUiSupport.modelSummary(currentSession.configOptions) ?: return
+        showStatus(CursorJBundle.message("chat.modelPicker.status", summary))
     }
 
     private fun enableRunEverything(): Boolean {
