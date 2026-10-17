@@ -19,6 +19,7 @@ An IntelliJ plugin that brings Cursor's AI agent into JetBrains IDEs via the [Ag
 - **Rules**: Global user rules (injected into every prompt) and project rules (`.cursor/rules/`)
 - **Cursor Skills**: Discovers `SKILL.md` under `.cursor/skills/`, `.agents/skills/`, `.claude/skills/`, `.codex/skills/` (and `~/` equivalents); manage scaffolds in **Settings > Tools > CursorJ**; type `/` in chat for an inline command/skill completion list (merged with ACP slash commands) and `@` for skill file references; the popup keeps focus in the input so you can keep typing to filter, and `@` inserts a path reference so the agent receives `ResourceLinkContent` for the skill file
 - **Model Selection**: Choose from ACP-provided model options directly in the dropdown for reliable per-session switching
+- **Model Parameters**: Effort / reasoning level, thinking, context window and fast mode per model, shown next to the model dropdown and kept in sync with the Cursor CLI's `/model` picker (changes are CLI-wide; the 1M context option implies Max Mode)
 - **Mode Switching**: Switch between Agent, Plan, Ask, and Debug modes (Plan mode includes Build and View Plan, plus native multiple-choice cards for agent questions; Debug mode simulates Cursor's Debug workflow with runtime-evidence capture)
 - **Undo All (Rollback Last Turn)**: Revert files to the state before the most recent agent turn using Local History
 - **Chat History**: Searchable chat history grouped by time; restore previous chats; clear history
@@ -109,11 +110,11 @@ Cursor extension methods from the agent (for example `cursor/task` for subagents
 
 Some capabilities are constrained by what Cursor's agent exposes over the Agent Client Protocol. The following were verified empirically against the Cursor CLI agent (`agent acp`) and are **agent/protocol limitations, not plugin bugs**:
 
-- **Model parameter tiers cannot be switched at runtime.** The agent returns each model with a single, fixed parameter set baked into an opaque value (e.g. `composer-2.5[fast=true]`, `claude-opus-4-6[thinking=true,context=200k,effort=high]`). It accepts only the exact values it offers and rejects any hand-constructed alternative (e.g. `composer-2.5[fast=false]` or `…effort=medium`) with `Invalid model value`. Consequently, toggles such as **Composer Normal/Fast** or **Claude Opus Medium/High effort** are not selectable through ACP. Advertising the client `_meta.parameterizedModelPicker` capability makes this worse (the agent then omits parameters entirely), so CursorJ does not opt in.
+- **Model parameters depend on a Cursor extension, not core ACP.** The per-model effort / thinking / context / fast controls only appear because CursorJ sends `clientCapabilities._meta.parameterizedModelPicker: true` on `initialize` (an undocumented agent flag, verified on agent builds 2026.07.23 through 2026.10.16). Without it the agent offers each model as one opaque variant string (e.g. `claude-opus-4-7[thinking=true,context=300k,effort=xhigh,fast=false]`) and rejects any other value with `Invalid model value`. CursorJ falls back to that single-variant dropdown automatically if a future agent ignores the flag, and **Show per-model parameter controls** in settings turns the flag off. Parameter changes are global Cursor CLI state (the agent writes them to `~/.cursor/cli-config.json`), so they also become the defaults for `agent` in a terminal and for other CursorJ tabs, and choosing the 1M context option makes the agent turn Max Mode on.
 - **No native Debug session mode.** The agent advertises exactly three session modes — `agent`, `plan`, and `ask` — and rejects any other mode id (e.g. `debug`) with `Invalid mode ID: … Valid modes: agent, plan, ask`. CursorJ therefore keeps the ACP session in `agent` for Debug, and simulates Cursor's Debug workflow locally (see [Debug mode](#debug-mode) below).
 - **No native conversation forking.** The agent does not advertise the ACP `session/fork` capability. Editing an earlier message and resending is therefore implemented by starting a fresh session and replaying the prior conversation as context, rather than a server-side branch.
 
-To re-verify against a newer agent build, enable **ACP raw JSON debug logging** in settings and inspect the `session/new` response (the `modes` block and the `model` config option) along with any `session/set_config_option` / `session/set_mode` errors.
+To re-verify against a newer agent build, enable **ACP raw JSON debug logging** in settings and inspect the `initialize` request (`clientCapabilities._meta`) and the `session/new` response (the `modes` block, the `model` config option and any `thought_level` / `model_config` options) along with any `session/set_config_option` / `session/set_mode` errors. The manual `ModelParameterCliIntegrationTest` checks both picker modes against the installed agent.
 
 ## Project Indexing
 
@@ -134,7 +135,7 @@ Persistence details:
 
 Settings are available in **Settings > Tools > CursorJ**:
 
-- **Agent**: Path to agent binary (auto-detect from PATH when empty), default model
+- **Agent**: Path to agent binary (auto-detect from PATH when empty), default model, and whether to show per-model parameter controls (effort, thinking, context, fast) in chat (changing it reconnects open chats)
 - **Global User Rules**: Inject custom rules into every prompt
 - **Project Rules**: Manage rule files in `.cursor/rules/` from the same settings page (shown when an open project is available)
 - **Skills**: List, add, edit, and remove project skills (writes under `.cursor/skills/`); global skills remain read-only in the list
@@ -194,7 +195,8 @@ Current tests validate:
 - hybrid retrieval behavior in orchestrator (lexical + symbol + semantic fusion, disabled/timeout fallbacks)
 - ACP handler routing and serialization for indexing methods
 - freshness callback mapping (notify paths and attach-time event mapping via seams)
-- model config-option merge behavior (partial updates preserve prior option lists)
+- model config-option merge behavior (the agent's full option list is authoritative; the model dropdown keeps previously seen ids)
+- parameterized model picker support: `_meta` capability serialization, `thought_level` / `model_config` option classification, labeled parameter controls in the input bar, and the effort summary in the status bar
 - per-session config isolation (two sessions maintain independent model state)
 - model display-name mapping (session label > CLI label > raw id, case-insensitive)
 - `connectedStatusDetail` sources model from ACP-confirmed session config
@@ -205,6 +207,7 @@ Integration tests (manual-only, `CURSORJ_INTEGRATION=1`) additionally cover:
 - ACP process start/stop and model-list fetch against real agent CLI
 - AgentConnection connect/auth handshake and session creation
 - model switch via `session/set_config_option` with ACP-authoritative confirmation
+- parameterized model picker (`ModelParameterCliIntegrationTest`): a Claude model's `thought_level` option is listed, settable and confirmed by the agent, a parameter the current model lacks is rejected, and the agent stays in variants mode without the `_meta` flag; runs against a scratch `CURSOR_CONFIG_DIR` copy of `cli-config.json` so the user's CLI defaults are untouched
 - terminal and filesystem handler dispatch through ACP server request pipeline
 - index search handler with real lexical index and file-update propagation
 - per-session isolation with distinct session ids and independent model config
@@ -217,6 +220,12 @@ To run only the Debug-mode integration suite:
 
 ```bash
 CURSORJ_INTEGRATION=1 ./gradlew integrationTest --tests "com.cursorj.integration.DebugModeIntegrationTest"
+```
+
+To run only the model parameter integration test:
+
+```bash
+CURSORJ_INTEGRATION=1 ./gradlew integrationTest --tests "com.cursorj.integration.ModelParameterCliIntegrationTest"
 ```
 
 Thin IntelliJ fixture-based tests for PSI symbol/reference behavior are still recommended as a final integration safety net when targeting parity-level confidence across IDE/platform updates.

@@ -1,13 +1,17 @@
 package com.cursorj.acp
 
+import com.cursorj.acp.messages.ClientCapabilities
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
@@ -68,6 +72,50 @@ class AcpClientProtocolTest {
             }
             assertEquals(-32000, error.code)
             assertEquals("boom", error.message)
+        }
+    }
+
+    @Test
+    fun `handleResponse prefers the agent's error detail over the generic message`() = runBlocking {
+        val testCases = mapOf<String, Pair<JsonElement?, String>>(
+            "detail in data.message (Cursor)" to Pair(
+                buildJsonObject { put("message", "Invalid value for effort: bogus") },
+                "Invalid value for effort: bogus",
+            ),
+            "string data" to Pair(
+                JsonPrimitive("Unknown model config option: effort"),
+                "Unknown model config option: effort",
+            ),
+            "blank detail falls back" to Pair(buildJsonObject { put("message", "  ") }, "Invalid params"),
+            "no data" to Pair(null, "Invalid params"),
+        )
+        var nextId = 300
+        for ((name, case) in testCases) {
+            val (data, expectedMessage) = case
+            fixture().use { (client, _, _) ->
+                val id = nextId++
+                val deferred = CompletableDeferred<JsonElement>()
+                pendingRequests(client)[id] = deferred
+
+                invokePrivate(
+                    client,
+                    "handleResponse",
+                    buildJsonObject {
+                        put("id", id)
+                        putJsonObject("error") {
+                            put("code", -32602)
+                            put("message", "Invalid params")
+                            if (data != null) put("data", data)
+                        }
+                    },
+                )
+
+                val error = assertFailsWith<AcpException> {
+                    withTimeout(2_000) { deferred.await() }
+                }
+                assertEquals(-32602, error.code, name)
+                assertEquals(expectedMessage, error.message, name)
+            }
         }
     }
 
@@ -138,6 +186,32 @@ class AcpClientProtocolTest {
             val errorResponse = awaitResponseFromWriter(writerCapture)
             assertEquals(99, errorResponse["id"]?.jsonPrimitive?.intOrNull)
             assertEquals(-32601, errorResponse["error"]?.jsonObject?.get("code")?.jsonPrimitive?.intOrNull)
+        }
+    }
+
+    @Test
+    fun `initialize advertises the parameterized model picker only when requested`() = runBlocking {
+        val testCases = mapOf(
+            "disabled" to false,
+            "enabled" to true,
+        )
+        for ((name, enabled) in testCases) {
+            fixture().use { (client, writerCapture, _) ->
+                val request = launch { client.initialize(parameterizedModelPicker = enabled) }
+                try {
+                    val sent = awaitResponseFromWriter(writerCapture)
+                    assertEquals("initialize", sent["method"]?.jsonPrimitive?.content, name)
+                    val capabilities = sent["params"]?.jsonObject?.get("clientCapabilities")?.jsonObject
+                    val flag = capabilities?.get("_meta")?.jsonObject
+                        ?.get(ClientCapabilities.PARAMETERIZED_MODEL_PICKER_META_KEY)
+                        ?.jsonPrimitive
+                        ?.booleanOrNull
+                    assertEquals(if (enabled) true else null, flag, name)
+                } finally {
+                    request.cancel()
+                    request.join()
+                }
+            }
         }
     }
 

@@ -31,7 +31,21 @@ data class JsonRpcError(
     val code: Int,
     val message: String,
     val data: JsonElement? = null,
-)
+) {
+    /**
+     * The human-readable reason. Cursor answers invalid config values with the generic JSON-RPC
+     * `Invalid params` and puts the real reason in `data.message` (e.g. `Invalid value for effort: bogus`,
+     * `Unknown model config option: effort`), so that detail is preferred when present.
+     */
+    fun detailedMessage(): String {
+        val detail = when (val payload = data) {
+            is JsonObject -> (payload["message"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            is JsonPrimitive -> payload.takeIf { it.isString }?.content
+            else -> null
+        }?.trim()
+        return if (detail.isNullOrBlank()) message else detail
+    }
+}
 
 @Serializable
 data class JsonRpcServerRequest(
@@ -76,7 +90,30 @@ data class ClientCapabilities(
     val fs: FsCapabilities = FsCapabilities(),
     val terminal: Boolean = true,
     val editor: EditorCapabilities = EditorCapabilities(),
-)
+    /**
+     * ACP `_meta` extension point. Cursor reads the un-namespaced [PARAMETERIZED_MODEL_PICKER_META_KEY] here.
+     * Kept out of the wire payload while null, although [com.cursorj.acp.AcpClient] encodes defaults.
+     */
+    // experimental: @EncodeDefault is kotlinx.serialization ExperimentalSerializationApi. TODO revisit once it
+    // graduates; the alternative is `explicitNulls = false` on the client Json, which would change every message.
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    @SerialName("_meta")
+    val meta: JsonObject? = null,
+) {
+    companion object {
+        /** Cursor switches from one variant string per model to per-parameter config options when this is `true`. */
+        const val PARAMETERIZED_MODEL_PICKER_META_KEY = "parameterizedModelPicker"
+
+        /** Default capabilities, plus the Cursor parameterized-model-picker flag when [parameterizedModelPicker] is set. */
+        fun forInitialize(parameterizedModelPicker: Boolean): ClientCapabilities {
+            if (!parameterizedModelPicker) return ClientCapabilities()
+            return ClientCapabilities(
+                meta = buildJsonObject { put(PARAMETERIZED_MODEL_PICKER_META_KEY, true) },
+            )
+        }
+    }
+}
 
 @Serializable
 data class InitializeParams(

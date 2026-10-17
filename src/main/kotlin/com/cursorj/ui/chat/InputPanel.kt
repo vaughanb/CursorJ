@@ -148,13 +148,15 @@ class InputPanel {
     }
 
     private val maxModeToggle = JBCheckBox(CursorJBundle.message("chat.maxmode.label")).apply {
+        name = MAX_MODE_TOGGLE_NAME
         font = font.deriveFont(font.size2D - 1)
         isOpaque = false
         toolTipText = CursorJBundle.message("chat.maxmode.tooltip")
         isVisible = true
     }
 
-    private val configControlsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+    /** Mode, model, MAX and per-model parameter controls; wraps in narrow tool windows instead of clipping. */
+    private val configControlsRow = JPanel(WrapFlowLayout(FlowLayout.LEFT, 4, 2)).apply {
         isOpaque = false
     }
 
@@ -173,8 +175,9 @@ class InputPanel {
     private var rollbackAvailable = false
     private var isProcessing = false
     private var lastKnownRootWidth = -1
+    private var lastKnownConfigRowWidth = -1
 
-    private val westControlsPanel = JPanel(BorderLayout()).apply {
+    private val controlsPanel = JPanel(BorderLayout()).apply {
         isOpaque = false
     }
 
@@ -327,8 +330,9 @@ class InputPanel {
                 add(cancelButton)
             }
 
-            westControlsPanel.add(configControlsRow, BorderLayout.CENTER)
-            add(westControlsPanel, BorderLayout.WEST)
+            // CENTER (not WEST) so the row is bounded by the available width and can wrap.
+            controlsPanel.add(configControlsRow, BorderLayout.CENTER)
+            add(controlsPanel, BorderLayout.CENTER)
             add(rightControls, BorderLayout.EAST)
         }
 
@@ -453,6 +457,17 @@ class InputPanel {
             }
         })
 
+        configControlsRow.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) {
+                val width = configControlsRow.width
+                if (width <= 0 || width == lastKnownConfigRowWidth) return
+                lastKnownConfigRowWidth = width
+                // The wrapped height depends on the width that was just assigned; measure once more.
+                configControlsRow.revalidate()
+                rootPanel.revalidate()
+            }
+        })
+
         sendButton.addActionListener { doSend() }
         cancelButton.addActionListener { onCancel?.invoke() }
         rollbackButton.addActionListener { onRollback?.invoke() }
@@ -526,6 +541,7 @@ class InputPanel {
 
         val row = ConfigOptionUiSupport.optionsForInputBar(options)
         val hasModelInBar = row.any { ConfigOptionUiSupport.isModelSelector(it) && it.options.isNotEmpty() }
+        maxModeToggle.toolTipText = maxModeTooltipFor(row)
         if (!hasModelInBar) {
             configControlsRow.add(maxModeToggle)
         }
@@ -550,6 +566,7 @@ class InputPanel {
                     lastModelSelectionValue = modelValues.getOrNull(selectedIdx)
                     val longestName = opt.options.maxOf { (it.name ?: it.value).length }
                     modelCombo.preferredSize = Dimension((longestName * 8 + 40).coerceIn(100, 220), 26)
+                    modelCombo.name = configControlName(opt.id)
                     configControlsRow.add(modelCombo)
                     modelCombo.isVisible = true
                     configControlsRow.add(maxModeToggle)
@@ -557,38 +574,10 @@ class InputPanel {
                     updatingModelCombo = false
                 }
                 ConfigOptionUiSupport.isBooleanToggle(opt) -> {
-                    val configId = opt.id
-                    val cb = JBCheckBox(opt.name ?: opt.id, ConfigOptionUiSupport.isToggleChecked(opt)).apply {
-                        font = font.deriveFont(font.size2D - 1)
-                        isOpaque = false
-                    }
-                    cb.addActionListener {
-                        if (updatingConfigWidgets) return@addActionListener
-                        val fresh = configOptions.firstOrNull { it.id == configId } ?: return@addActionListener
-                        val (off, on) = ConfigOptionUiSupport.toggleOffOnValues(fresh)
-                        val v = if (cb.isSelected) on else off
-                        onConfigOptionChanged?.invoke(configId, v)
-                    }
-                    configControlsRow.add(cb)
+                    configControlsRow.add(createToggleControl(opt))
                 }
                 ConfigOptionUiSupport.isGenericSelect(opt) || opt.options.isNotEmpty() -> {
-                    val values = opt.options.map { it.value }
-                    val combo = JComboBox<String>().apply {
-                        minimumSize = Dimension(80, 26)
-                        font = font.deriveFont(font.size2D - 1)
-                        opt.options.forEach { o -> addItem(o.name ?: o.value) }
-                        val idx = values.indexOf(opt.currentValue).coerceAtLeast(0)
-                        selectedIndex = idx
-                    }
-                    val configId = opt.id
-                    combo.addActionListener {
-                        if (updatingConfigWidgets) return@addActionListener
-                        val i = combo.selectedIndex
-                        if (i in values.indices) {
-                            onConfigOptionChanged?.invoke(configId, values[i])
-                        }
-                    }
-                    configControlsRow.add(combo)
+                    configControlsRow.add(createSelectControl(opt))
                 }
             }
         }
@@ -598,6 +587,67 @@ class InputPanel {
         updatingConfigWidgets = false
         rootPanel.revalidate()
         rootPanel.repaint()
+    }
+
+    /** Checkbox for a boolean option (`Thinking`, `Fast`); the agent's description becomes the tooltip. */
+    private fun createToggleControl(opt: ConfigOption): JComponent {
+        val configId = opt.id
+        val checkBox = JBCheckBox(ConfigOptionUiSupport.labelFor(opt), ConfigOptionUiSupport.isToggleChecked(opt)).apply {
+            name = configControlName(configId)
+            font = font.deriveFont(font.size2D - 1)
+            isOpaque = false
+            toolTipText = descriptionTooltip(opt)
+        }
+        checkBox.addActionListener {
+            if (updatingConfigWidgets) return@addActionListener
+            val fresh = configOptions.firstOrNull { it.id == configId } ?: return@addActionListener
+            val (off, on) = ConfigOptionUiSupport.toggleOffOnValues(fresh)
+            onConfigOptionChanged?.invoke(configId, if (checkBox.isSelected) on else off)
+        }
+        return checkBox
+    }
+
+    /**
+     * Labeled combo (`Effort: [High]`) for a multi-valued option, so values such as "Medium" are not ambiguous
+     * between effort and context. Label and combo share one panel so they wrap together.
+     */
+    private fun createSelectControl(opt: ConfigOption): JComponent {
+        val configId = opt.id
+        val values = opt.options.map { it.value }
+        val tooltip = descriptionTooltip(opt)
+        val label = JLabel(ConfigOptionUiSupport.labelFor(opt) + ":").apply {
+            font = font.deriveFont(font.size2D - 1)
+            toolTipText = tooltip
+        }
+        val combo = JComboBox<String>().apply {
+            name = configControlName(configId)
+            minimumSize = Dimension(80, 26)
+            font = font.deriveFont(font.size2D - 1)
+            toolTipText = tooltip
+            opt.options.forEach { o -> addItem(o.name ?: o.value) }
+            selectedIndex = values.indexOf(opt.currentValue).coerceAtLeast(0)
+        }
+        combo.addActionListener {
+            if (updatingConfigWidgets) return@addActionListener
+            val i = combo.selectedIndex
+            if (i in values.indices) {
+                onConfigOptionChanged?.invoke(configId, values[i])
+            }
+        }
+        return JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
+            isOpaque = false
+            add(label)
+            add(combo)
+        }
+    }
+
+    private fun descriptionTooltip(opt: ConfigOption): String? =
+        opt.description?.trim()?.takeIf { it.isNotBlank() }
+
+    /** In parameterized-picker mode the `context` option can flip Max Mode on; say so on the MAX checkbox. */
+    private fun maxModeTooltipFor(row: List<ConfigOption>): String {
+        val parameterized = row.any { ConfigOptionUiSupport.isModelConfig(it) || ConfigOptionUiSupport.isThoughtLevel(it) }
+        return CursorJBundle.message(if (parameterized) "chat.maxmode.tooltip.parameterized" else "chat.maxmode.tooltip")
     }
 
     fun setProcessing(processing: Boolean) {
@@ -1278,5 +1328,11 @@ class InputPanel {
 
     companion object {
         private const val visualLineEpsilonPx = 0.5
+
+        /** Swing component name of the MAX checkbox (for tests and UI automation). */
+        internal const val MAX_MODE_TOGGLE_NAME = "maxModeToggle"
+
+        /** Swing component name of the control bound to a config option, e.g. `config:effort`. */
+        internal fun configControlName(configId: String): String = "config:$configId"
     }
 }

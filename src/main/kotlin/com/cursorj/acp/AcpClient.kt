@@ -79,8 +79,16 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         isConnected = true
     }
 
-    suspend fun initialize(): InitializeResult {
-        val params = InitializeParams()
+    /**
+     * Sends ACP `initialize`. [parameterizedModelPicker] advertises Cursor's `_meta.parameterizedModelPicker`
+     * extension, which makes the agent list plain model ids and expose each model's effort/thinking/context/fast
+     * parameters as separate config options (see `docs/plans/2026-10-17-effort-level-support.md`). An agent
+     * that ignores the flag simply answers in its single-variant mode.
+     */
+    suspend fun initialize(parameterizedModelPicker: Boolean = false): InitializeResult {
+        val params = InitializeParams(
+            clientCapabilities = ClientCapabilities.forInitialize(parameterizedModelPicker),
+        )
         val result = sendRequest("initialize", json.encodeToJsonElement(params))
         val initResult = json.decodeFromJsonElement<InitializeResult>(result)
         agentCapabilities = initResult.agentCapabilities
@@ -275,7 +283,7 @@ class AcpClient(private val parentDisposable: Disposable) : Disposable {
         val error = obj["error"]
         if (error != null && error !is JsonNull) {
             val rpcError = json.decodeFromJsonElement<JsonRpcError>(error)
-            deferred.completeExceptionally(AcpException(rpcError.code, rpcError.message))
+            deferred.completeExceptionally(AcpException(rpcError.code, rpcError.detailedMessage()))
         } else {
             deferred.complete(obj["result"] ?: JsonNull)
         }

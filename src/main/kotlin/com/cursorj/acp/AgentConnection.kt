@@ -11,6 +11,7 @@ import com.cursorj.handlers.PermissionHandler
 import com.cursorj.handlers.TerminalHandler
 import com.cursorj.indexing.WorkspaceIndexOrchestrator
 import com.cursorj.rollback.TurnRollbackManager
+import com.cursorj.settings.CursorJSettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -72,6 +73,8 @@ class AgentConnection(
     var onStatusChanged: ((String) -> Unit)? = null
     var onConnectionChanged: ((Boolean) -> Unit)? = null
     var onSelectedModelChanged: ((String?) -> Unit)? = null
+    /** Invoked on the EDT whenever the visible session's config options change (e.g. after an effort change). */
+    var onSessionConfigChanged: (() -> Unit)? = null
 
     private val visibleSessionUpdateHandler: NotificationHandler = { method, params ->
         if (method == "session/update") {
@@ -154,7 +157,7 @@ class AgentConnection(
             client.addNotificationHandler(cursorTaskNotificationHandler)
 
             log.info("Sending ACP initialize...")
-            client.initialize()
+            client.initialize(parameterizedModelPicker = parameterizedModelPickerEnabled())
             client.authenticate()
             log.info("ACP authenticated successfully")
 
@@ -293,9 +296,15 @@ class AgentConnection(
             ?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Status-bar detail such as `Connected (Claude Opus 4.7 · Effort: High)`. The thought-level summary is
+     * appended when the agent exposes one, because in parameterized-picker mode the model name no longer
+     * encodes the effort tier.
+     */
     fun connectedStatusDetail(): String? {
         val modelName = selectedModelDisplayName() ?: return null
-        return "Connected ($modelName)"
+        val thoughtLevel = session?.configOptions?.let(ConfigOptionUiSupport::thoughtLevelSummary)
+        return if (thoughtLevel == null) "Connected ($modelName)" else "Connected ($modelName \u00B7 $thoughtLevel)"
     }
 
     fun setPermissionPromptResolver(resolver: ((RequestPermissionParams) -> CompletableFuture<String>)?) {
@@ -422,7 +431,7 @@ class AgentConnection(
                 client.addNotificationHandler(visibleSessionUpdateHandler)
                 client.addNotificationHandler(cursorTaskNotificationHandler)
 
-                client.initialize()
+                client.initialize(parameterizedModelPicker = parameterizedModelPickerEnabled())
                 client.authenticate()
 
                 isConnected = true
@@ -465,9 +474,19 @@ class AgentConnection(
         }
     }
 
+    private fun notifySessionConfigChanged() {
+        SwingUtilities.invokeLater {
+            onSessionConfigChanged?.invoke()
+        }
+    }
+
+    private fun parameterizedModelPickerEnabled(): Boolean =
+        runCatching { CursorJSettings.instance.useParameterizedModelPicker }.getOrDefault(true)
+
     private fun attachModelTracking(targetSession: AcpSession, preferredModelId: String?) {
         syncSelectedModelFromSession(targetSession, preferredModelId)
         targetSession.addConfigListener { options ->
+            notifySessionConfigChanged()
             val modelId = modelIdFromConfigOptions(options) ?: return@addConfigListener
             setSelectedModel(modelId)
         }

@@ -12,11 +12,15 @@ import com.cursorj.acp.messages.ConfigOption
  * Typical shapes:
  * - `type: "toggle"` with `currentValue` `"true"` / `"false"`
  * - `type: "select"` with two options (on/off, enabled/disabled, etc.)
+ * - Cursor's parameterized model picker: `thought_level` options (`effort`, `reasoning` or
+ *   `reasoning_effort` depending on the model, plus the boolean `thinking`) and `model_config`
+ *   options (`context`, `fast`). Classification is by category because the ids vary per model.
  */
 object ConfigOptionUiSupport {
 
     private val TRUTHY = setOf("true", "1", "yes", "on", "enabled")
     private val FALSY = setOf("false", "0", "no", "off", "disabled")
+    private val THOUGHT_LEVEL_IDS = setOf("effort", "reasoning", "reasoning_effort", "thinking", "thought_level")
 
     fun isModelSelector(opt: ConfigOption): Boolean =
         opt.category == "model" || opt.id == "model"
@@ -83,4 +87,36 @@ object ConfigOptionUiSupport {
     /** Config rows for the input bar, preserving agent-provided order (ACP recommends this). */
     fun optionsForInputBar(agentOrder: List<ConfigOption>): List<ConfigOption> =
         agentOrder.filter { !isModeSelector(it) }
+
+    /** ACP `thought_level` category, with the known Cursor ids as a fallback when no category is sent. */
+    fun isThoughtLevel(opt: ConfigOption): Boolean =
+        opt.category.equals("thought_level", ignoreCase = true) || opt.id.lowercase() in THOUGHT_LEVEL_IDS
+
+    /** ACP `model_config` category (Cursor: `context`, `fast`); the spec places these next to the model selector. */
+    fun isModelConfig(opt: ConfigOption): Boolean =
+        opt.category.equals("model_config", ignoreCase = true)
+
+    /** The multi-valued thought-level selector (effort/reasoning), as opposed to the boolean `thinking` toggle. */
+    fun isEffortSelector(opt: ConfigOption): Boolean =
+        isThoughtLevel(opt) && !isBooleanToggle(opt)
+
+    /** Display label: the agent-provided `name`, else the id title-cased (`reasoning_effort` -> `Reasoning Effort`). */
+    fun labelFor(opt: ConfigOption): String =
+        opt.name?.trim()?.takeIf { it.isNotBlank() } ?: titleCaseId(opt.id)
+
+    /** Display label for one of [opt]'s values: its `name` when provided, otherwise the raw value. */
+    fun valueLabelFor(opt: ConfigOption, value: String): String =
+        opt.options.firstOrNull { it.value == value }?.name?.trim()?.takeIf { it.isNotBlank() } ?: value
+
+    /** Status text such as `Effort: High` for the effort selector's current value, or null when there is none. */
+    fun thoughtLevelSummary(options: List<ConfigOption>): String? {
+        val effort = options.firstOrNull { isEffortSelector(it) } ?: return null
+        val current = effort.currentValue?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return "${labelFor(effort)}: ${valueLabelFor(effort, current)}"
+    }
+
+    private fun titleCaseId(id: String): String =
+        id.split('_', '-', ' ')
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { part -> part.replaceFirstChar { it.uppercaseChar() } }
 }

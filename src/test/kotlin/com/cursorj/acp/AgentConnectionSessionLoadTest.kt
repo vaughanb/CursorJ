@@ -187,6 +187,42 @@ class AgentConnectionSessionLoadTest {
         }
     }
 
+    @Test
+    fun `connectedStatusDetail appends the effort summary in parameterized picker mode`() {
+        fixture(modelInfos = emptyList()).use { fixture ->
+            val connection = fixture.connection
+            setSession(
+                connection,
+                AcpSession(
+                    sessionId = "session-effort",
+                    client = connection.client,
+                    rollbackManager = TurnRollbackManager(NoopLocalHistoryGateway()),
+                    initialConfigOptions = listOf(
+                        ConfigOption(
+                            id = "model",
+                            category = "model",
+                            currentValue = "claude-opus-4-7",
+                            options = listOf(ConfigOptionValue(value = "claude-opus-4-7", name = "Claude Opus 4.7")),
+                        ),
+                        ConfigOption(
+                            id = "thinking",
+                            category = "thought_level",
+                            currentValue = "true",
+                            options = listOf(ConfigOptionValue("false"), ConfigOptionValue("true")),
+                        ),
+                        ConfigOption(
+                            id = "effort",
+                            category = "thought_level",
+                            currentValue = "high",
+                            options = listOf(ConfigOptionValue("low", "Low"), ConfigOptionValue("high", "High")),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals("Connected (Claude Opus 4.7 \u00B7 Effort: High)", connection.connectedStatusDetail())
+        }
+    }
+
     private class AgentConnectionFixture(
         val connection: AgentConnection,
         private val disposable: com.intellij.openapi.Disposable,

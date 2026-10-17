@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.7.0] - Unreleased
+
+### Added
+
+- **Model parameter controls (effort, thinking, context, fast)**: CursorJ now advertises Cursor's `_meta.parameterizedModelPicker` ACP extension on `initialize`, so the agent lists plain model ids and exposes each model's parameters as separate ACP config options (`thought_level` / `model_config` categories; the effort option is `effort`, `reasoning` or `reasoning_effort` depending on the model). The chat input bar renders them next to the model dropdown as labeled combos and checkboxes with the agent's descriptions as tooltips (including the "6x more expensive" warning on Fast), applies changes with `session/set_config_option` without a reconnect, confirms each change with a status line (`Effort: Medium`), and the status bar shows the current effort (`Connected (Claude Opus 4.7 · Effort: High)`). The agent persists changes to `~/.cursor/cli-config.json`, so they also apply to the Cursor CLI's `/model` picker, and choosing 1M context turns Max Mode on automatically (the MAX tooltip says so). A new **Settings > Tools > CursorJ > Agent** checkbox turns the controls off, which reconnects open chats and restores the previous single-variant dropdown. Manual integration test `ModelParameterCliIntegrationTest` (gated by `CURSORJ_INTEGRATION=1`; runs against a scratch copy of `cli-config.json` via `CURSOR_CONFIG_DIR`) covers both picker modes.
+
+### Changed
+
+- `AcpSession` accepts the ACP-spec `config_option_update` session update in addition to the `config_options_update` name it matched before.
+- The chat input's control row (Mode, Model, MAX and the parameter controls) wraps in a narrow tool window instead of clipping.
+
+### Fixed
+
+- Stale config options after a model switch: the `session/set_config_option` response is now treated as the complete option list, so options the new model does not support (e.g. Effort after switching to Composer) disappear instead of lingering and failing with `Unknown model config option`.
+- `WrapFlowLayout` reported a preferred height one vertical gap too short, clipping the bottom of the last wrapped row.
+- ACP error details: the agent reports invalid config values as the generic JSON-RPC `Invalid params` with the actual reason in `error.data.message` (e.g. `Invalid value for effort: bogus`, `Unknown model config option: effort`). `AcpClient` now surfaces that detail, so the chat status line shows the real reason instead of `Invalid params`.
+
 ## [1.6.0] - 2026-08-07
 
 ### Added

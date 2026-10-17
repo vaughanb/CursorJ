@@ -71,6 +71,8 @@ class SessionTabManager(
     private var startupRestoreTotal = 0
     private var startupRestoreFinished = 0
     private var startupRestoreSucceeded = 0
+    @Volatile
+    private var lastKnownParameterizedModelPicker = CursorJSettings.instance.useParameterizedModelPicker
 
     private val accentColor = JBColor(Color(0x4083C9), Color(0x4A88C7))
     private val arrowFg = JBColor(Color(0x999999), Color(0x888888))
@@ -215,6 +217,27 @@ class SessionTabManager(
                 updateScrollButtons()
             }
         })
+
+        // The owning service outlives this manager and is already registered with Disposer.
+        CursorJSettings.instance.addChangeListener(service) { onSettingsChanged() }
+    }
+
+    /**
+     * Settings fire once per property on Apply, so this runs often; only a change of the parameterized model
+     * picker flag needs work, and that needs every tab's agent to re-run ACP `initialize` (same flow as MAX).
+     */
+    private fun onSettingsChanged() {
+        val enabled = CursorJSettings.instance.useParameterizedModelPicker
+        if (enabled == lastKnownParameterizedModelPicker) return
+        lastKnownParameterizedModelPicker = enabled
+        val reconnectedStatus = CursorJBundle.message(
+            if (enabled) "chat.modelParams.reconnected.on" else "chat.modelParams.reconnected.off",
+        )
+        for (tab in tabs.toList()) {
+            if (tab.isDisposed) continue
+            tab.chatPanel.showStatus(CursorJBundle.message("chat.modelParams.reconnecting"))
+            reconnectTab(tab.chatPanel, reconnectedStatus)
+        }
     }
 
     private fun updateScrollButtons() {
@@ -502,10 +525,11 @@ class SessionTabManager(
     }
 
     /**
-     * Reconnects the agent process (e.g. after changing `~/.cursor/cli-config.json` max mode).
-     * Disposes the current [AgentConnection] and runs the same connect flow as a new tab.
+     * Reconnects the agent process (e.g. after changing `~/.cursor/cli-config.json` max mode or the
+     * parameterized model picker setting). Disposes the current [AgentConnection] and runs the same connect
+     * flow as a new tab. [reconnectedStatus] replaces the default MAX-mode "chat restored" line when given.
      */
-    fun reconnectTab(chatPanel: ChatPanel) {
+    fun reconnectTab(chatPanel: ChatPanel, reconnectedStatus: String? = null) {
         val entry = tabs.find { it.chatPanel === chatPanel } ?: return
         scope.launch {
             try {
@@ -513,7 +537,12 @@ class SessionTabManager(
                 entry.connection?.let { Disposer.dispose(it) }
                 entry.connection = null
                 entry.session = null
-                connectEagerly(entry, restoreSessionId = null, reloadUiFromTranscriptAfter = true)
+                connectEagerly(
+                    entry,
+                    restoreSessionId = null,
+                    reloadUiFromTranscriptAfter = true,
+                    reconnectedStatus = reconnectedStatus,
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -527,6 +556,7 @@ class SessionTabManager(
         entry: TabEntry,
         restoreSessionId: String? = null,
         reloadUiFromTranscriptAfter: Boolean = false,
+        reconnectedStatus: String? = null,
     ) {
         entry.chatPanel.showStatus("Connecting to Cursor agent...")
 
@@ -543,6 +573,9 @@ class SessionTabManager(
                     updateStatusBar()
                 }
                 conn.onSelectedModelChanged = { _ ->
+                    updateStatusBar()
+                }
+                conn.onSessionConfigChanged = {
                     updateStatusBar()
                 }
 
@@ -664,8 +697,8 @@ class SessionTabManager(
 
                 if (reloadUiFromTranscriptAfter && conn.isConnected) {
                     entry.chatPanel.reloadConversationFromLocalTranscript {
-                        val suffix =
-                            if (MaxModeManager.isMaxModeEnabled()) {
+                        val suffix = reconnectedStatus
+                            ?: if (MaxModeManager.isMaxModeEnabled()) {
                                 CursorJBundle.message("chat.maxmode.reconnected.maxOn")
                             } else {
                                 CursorJBundle.message("chat.maxmode.reconnected.maxOff")

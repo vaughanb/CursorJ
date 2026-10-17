@@ -9,6 +9,7 @@ import java.awt.Insets
 /**
  * [FlowLayout] variant that reports a wrapped preferred height based on the target width.
  * Standard [FlowLayout] uses unbounded width for preferred size, so wrapped chip rows get clipped.
+ * Like [FlowLayout], the reported height includes one `vgap` above the first row and one below the last.
  */
 internal class WrapFlowLayout(
     align: Int = LEFT,
@@ -56,7 +57,7 @@ internal class WrapFlowLayout(
 
             return Dimension(
                 insets.left + insets.right + widestRow.coerceAtMost(maxWidth),
-                insets.top + insets.bottom + totalHeight.coerceAtLeast(0),
+                insets.top + insets.bottom + totalHeight.coerceAtLeast(0) + vgap * 2,
             )
         }
     }

@@ -49,6 +49,19 @@ class CursorJSettingsTest {
     }
 
     @Test
+    fun `parameterized model picker defaults to on and notifies listeners when toggled`() {
+        val settings = CursorJSettings()
+        var notifications = 0
+        settings.addChangeListener { notifications += 1 }
+        assertTrue(settings.useParameterizedModelPicker)
+
+        settings.useParameterizedModelPicker = false
+
+        assertFalse(settings.useParameterizedModelPicker)
+        assertEquals(1, notifications)
+    }
+
+    @Test
     fun `approved permission keys are normalized and sorted`() {
         val settings = CursorJSettings()
         settings.setApprovedPermissionKeys(setOf("  shell:npm  ", "fs/read_text_file", "shell:npm"))

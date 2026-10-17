@@ -1,6 +1,9 @@
 package com.cursorj.acp.messages
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -56,6 +59,30 @@ class AcpMessagesSerializationTest {
         assertTrue(params.clientCapabilities.editor.getOpenFiles)
         assertTrue(params.clientCapabilities.editor.findSymbol)
         assertEquals("cursorj", params.clientInfo.name)
+    }
+
+    @Test
+    fun `client capabilities carry the parameterized model picker meta flag only when requested`() {
+        val testCases = mapOf(
+            "disabled omits _meta entirely" to Pair(false, null),
+            "enabled sets parameterizedModelPicker" to Pair(true, true),
+        )
+        for ((name, case) in testCases) {
+            val (enabled, expectedFlag) = case
+            val params = InitializeParams(clientCapabilities = ClientCapabilities.forInitialize(enabled))
+
+            val encoded = json.encodeToJsonElement(InitializeParams.serializer(), params).jsonObject
+
+            val capabilities = encoded.getValue("clientCapabilities").jsonObject
+            assertEquals(expectedFlag == null, "_meta" !in capabilities, name)
+            val flag = capabilities["_meta"]?.jsonObject
+                ?.get(ClientCapabilities.PARAMETERIZED_MODEL_PICKER_META_KEY)
+                ?.jsonPrimitive
+                ?.booleanOrNull
+            assertEquals(expectedFlag, flag, name)
+            assertTrue(capabilities.getValue("fs").jsonObject.isNotEmpty(), name)
+            assertEquals(params, json.decodeFromJsonElement(InitializeParams.serializer(), encoded), name)
+        }
     }
 
     @Test

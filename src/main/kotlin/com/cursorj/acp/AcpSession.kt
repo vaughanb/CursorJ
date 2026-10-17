@@ -342,7 +342,8 @@ class AcpSession(
                     val newMode = obj["modeId"]?.jsonPrimitive?.contentOrNull
                     newMode?.let { mode = SessionMode.fromValue(it) }
                 }
-                "config_options_update" -> {
+                // ACP names this `config_option_update`; the plural form is kept for agents that used it.
+                "config_option_update", "config_options_update" -> {
                     val options = obj["configOptions"]?.let {
                         try { json.decodeFromJsonElement<List<ConfigOption>>(it) } catch (_: Exception) { null }
                     }
@@ -1000,31 +1001,20 @@ class AcpSession(
         return incoming.copy(options = mergedOptions)
     }
 
+    /**
+     * The incoming payload is the complete option list (both the `session/set_config_option` result and the
+     * `config_option_update` notification carry every option), so it is authoritative for membership and
+     * order: options absent from it are dropped. Only the model selector's option list is unioned with the
+     * previously seen one (see [mergeConfigOption]). An empty payload carries no information and is ignored.
+     */
     private fun mergeConfigOptions(incoming: List<ConfigOption>): List<ConfigOption> {
-        if (_configOptions.isEmpty()) return incoming
         if (incoming.isEmpty()) return _configOptions.toList()
 
-        val incomingById = incoming.associateBy { it.id }
-        val merged = mutableListOf<ConfigOption>()
-        val seenIds = mutableSetOf<String>()
-
-        for (existing in _configOptions) {
-            val replacement = incomingById[existing.id]
-            if (replacement != null) {
-                merged += mergeConfigOption(existing, replacement)
-                seenIds += existing.id
-            } else {
-                merged += existing
-                seenIds += existing.id
-            }
+        val existingById = _configOptions.associateBy { it.id }
+        return incoming.map { option ->
+            val existing = existingById[option.id]
+            if (existing == null) option else mergeConfigOption(existing, option)
         }
-
-        for (option in incoming) {
-            if (seenIds.add(option.id)) {
-                merged += option
-            }
-        }
-        return merged
     }
 
     fun canRollbackLastTurn(): Boolean {

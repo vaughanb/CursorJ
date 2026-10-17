@@ -39,6 +39,7 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         var protectExternalFileWrites: Boolean = true,
         var enableAcpRawLogging: Boolean = false,
         var showTokenUsage: Boolean = true,
+        var useParameterizedModelPicker: Boolean = true,
         var runEverythingConfirmationAcknowledged: Boolean = false,
         var savedSessionIds: MutableList<String> = mutableListOf(),
         var indexExcludePatterns: String = "",
@@ -220,6 +221,17 @@ class CursorJSettings : PersistentStateComponent<CursorJSettings.State> {
         get() = synchronized(stateLock) { myState.showTokenUsage }
         set(value) {
             synchronized(stateLock) { myState.showTokenUsage = value }
+            fireSettingsChanged()
+        }
+
+    /**
+     * Advertises Cursor's `_meta.parameterizedModelPicker` ACP extension on `initialize`, which exposes per-model
+     * parameter controls (effort, thinking, context, fast) in chat. Changing it requires reconnecting open chats.
+     */
+    var useParameterizedModelPicker: Boolean
+        get() = synchronized(stateLock) { myState.useParameterizedModelPicker }
+        set(value) {
+            synchronized(stateLock) { myState.useParameterizedModelPicker = value }
             fireSettingsChanged()
         }
 

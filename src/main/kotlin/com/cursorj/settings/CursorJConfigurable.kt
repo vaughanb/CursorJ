@@ -24,6 +24,7 @@ import javax.swing.JPanel
 class CursorJConfigurable : Configurable {
     private var agentPathField: TextFieldWithBrowseButton? = null
     private var defaultModelField: JBTextField? = null
+    private var parameterizedModelPickerCheckbox: JBCheckBox? = null
     private var globalUserRulesListPanel: GlobalUserRulesListPanel? = null
     private var projectRulesListPanel: ProjectRulesListPanel? = null
     private var skillsListPanel: SkillsListPanel? = null
@@ -63,6 +64,11 @@ class CursorJConfigurable : Configurable {
                 "JTextField.placeholderText",
                 CursorJBundle.message("settings.default.model.placeholder"),
             )
+        }
+        parameterizedModelPickerCheckbox = JBCheckBox(
+            CursorJBundle.message("settings.agent.parameterizedModelPicker"),
+        ).apply {
+            toolTipText = CursorJBundle.message("settings.agent.parameterizedModelPicker.tooltip")
         }
         globalUserRulesListPanel = GlobalUserRulesListPanel()
         val globalRulesDescription = JBLabel(
@@ -149,6 +155,7 @@ class CursorJConfigurable : Configurable {
                 1,
                 false,
             )
+            .addComponent(parameterizedModelPickerCheckbox!!, 1)
             .addComponent(TitledSeparator(CursorJBundle.message("settings.section.rules")), 1)
             .addComponent(TitledSeparator(CursorJBundle.message("settings.rules.global.title")), 1)
             .addComponent(globalRulesDescription, 1)
@@ -228,6 +235,7 @@ class CursorJConfigurable : Configurable {
         val settings = CursorJSettings.instance
         return (agentPathField?.text ?: "") != displayAgentPath(settings) ||
             defaultModelField?.text != settings.defaultModel ||
+            parameterizedModelPickerCheckbox?.isSelected != settings.useParameterizedModelPicker ||
             readGlobalUserRules() != settings.getGlobalUserRules() ||
             autoAttachCheckbox?.isSelected != settings.autoAttachActiveFile ||
             projectIndexingCheckbox?.isSelected != settings.enableProjectIndexing ||
@@ -251,6 +259,7 @@ class CursorJConfigurable : Configurable {
         settings.agentPath = agentPathField?.text?.trim().orEmpty()
         val defaultModel = defaultModelField?.text?.trim().orEmpty()
         settings.defaultModel = defaultModel
+        settings.useParameterizedModelPicker = parameterizedModelPickerCheckbox?.isSelected ?: true
         settings.setGlobalUserRules(readGlobalUserRules())
         settings.autoAttachActiveFile = autoAttachCheckbox?.isSelected ?: true
         settings.enableProjectIndexing = projectIndexingCheckbox?.isSelected ?: true
@@ -280,6 +289,7 @@ class CursorJConfigurable : Configurable {
         val settings = CursorJSettings.instance
         agentPathField?.text = displayAgentPath(settings)
         defaultModelField?.text = settings.defaultModel
+        parameterizedModelPickerCheckbox?.isSelected = settings.useParameterizedModelPicker
         globalUserRulesListPanel?.setRules(settings.getGlobalUserRules())
         autoAttachCheckbox?.isSelected = settings.autoAttachActiveFile
         projectIndexingCheckbox?.isSelected = settings.enableProjectIndexing
@@ -345,6 +355,7 @@ class CursorJConfigurable : Configurable {
     override fun disposeUIResources() {
         agentPathField = null
         defaultModelField = null
+        parameterizedModelPickerCheckbox = null
         globalUserRulesListPanel = null
         projectRulesListPanel = null
         skillsListPanel = null

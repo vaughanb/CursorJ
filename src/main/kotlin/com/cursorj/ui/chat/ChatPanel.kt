@@ -842,6 +842,7 @@ class ChatPanel(
                     return@launch
                 }
                 currentSession.setConfigOption(configId, value)
+                showConfigOptionChanged(currentSession, configId, value)
             } catch (e: Exception) {
                 log.warn("setConfigOption failed", e)
                 val msg = e.message ?: e.javaClass.simpleName
@@ -850,6 +851,19 @@ class ChatPanel(
                 }
             }
         }
+    }
+
+    /** Status line such as `Effort: Medium` once the agent has confirmed a parameter change. */
+    private fun showConfigOptionChanged(currentSession: AcpSession, configId: String, requestedValue: String) {
+        val option = currentSession.configOptions.firstOrNull { it.id == configId } ?: return
+        val value = option.currentValue?.takeIf { it.isNotBlank() } ?: requestedValue
+        showStatus(
+            CursorJBundle.message(
+                "chat.config.option.changed",
+                ConfigOptionUiSupport.labelFor(option),
+                ConfigOptionUiSupport.valueLabelFor(option, value),
+            ),
+        )
     }
 
     private fun enableRunEverything(): Boolean {

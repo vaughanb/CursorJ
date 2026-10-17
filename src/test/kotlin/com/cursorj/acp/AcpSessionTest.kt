@@ -843,6 +843,103 @@ class AcpSessionTest {
         }
     }
 
+    @Test
+    fun `config options absent from a full payload are dropped`() = withSession { session ->
+        session.handleSessionUpdate(configOptionsUpdate("config_options_update", opusConfigOptions()))
+        assertEquals(
+            listOf("mode", "model", "thinking", "context", "effort", "fast"),
+            session.configOptions.map { it.id },
+        )
+
+        session.handleSessionUpdate(configOptionsUpdate("config_options_update", composerConfigOptions()))
+
+        assertEquals(listOf("mode", "model", "fast"), session.configOptions.map { it.id })
+        assertNull(session.configOptions.firstOrNull { it.id == "effort" })
+        assertEquals("composer-2.5", session.getConfigOption("model")?.currentValue)
+        assertEquals("true", session.configOptions.firstOrNull { it.id == "fast" }?.currentValue)
+    }
+
+    @Test
+    fun `config option updates are accepted under both notification names`() {
+        val testCases = mapOf(
+            "spec singular name" to "config_option_update",
+            "legacy plural name" to "config_options_update",
+        )
+        for ((name, updateType) in testCases) {
+            withSession { session ->
+                val snapshots = mutableListOf<List<ConfigOption>>()
+                session.addConfigListener { snapshots.add(it) }
+
+                session.handleSessionUpdate(configOptionsUpdate(updateType, composerConfigOptions()))
+
+                assertEquals(listOf("mode", "model", "fast"), session.configOptions.map { it.id }, name)
+                assertEquals(1, snapshots.size, name)
+            }
+        }
+    }
+
+    @Test
+    fun `empty config option payload keeps the current options`() = withSession { session ->
+        session.handleSessionUpdate(configOptionsUpdate("config_option_update", composerConfigOptions()))
+
+        session.handleSessionUpdate(configOptionsUpdate("config_option_update", emptyList()))
+
+        assertEquals(listOf("mode", "model", "fast"), session.configOptions.map { it.id })
+    }
+
+    private fun configOptionsUpdate(type: String, options: List<ConfigOption>) = update(
+        type,
+        extra = buildJsonObject {
+            put("configOptions", Json.encodeToJsonElement(ListSerializer(ConfigOption.serializer()), options))
+        },
+    )
+
+    /** Option set Cursor returns for Claude Opus 4.7 in parameterized-picker mode (ids and values as observed). */
+    private fun opusConfigOptions(): List<ConfigOption> = listOf(
+        modeOption(),
+        modelOption("claude-opus-4-7"),
+        ConfigOption(id = "thinking", category = "thought_level", currentValue = "true", options = booleanValues()),
+        ConfigOption(
+            id = "context",
+            category = "model_config",
+            currentValue = "300k",
+            options = listOf(ConfigOptionValue("300k"), ConfigOptionValue("1m")),
+        ),
+        ConfigOption(
+            id = "effort",
+            category = "thought_level",
+            currentValue = "xhigh",
+            options = listOf("low", "medium", "high", "xhigh", "max").map { ConfigOptionValue(it) },
+        ),
+        ConfigOption(id = "fast", category = "model_config", currentValue = "false", options = booleanValues()),
+    )
+
+    /** Option set after switching the same session to Composer 2.5: only `fast` remains. */
+    private fun composerConfigOptions(): List<ConfigOption> = listOf(
+        modeOption(),
+        modelOption("composer-2.5"),
+        ConfigOption(id = "fast", category = "model_config", currentValue = "true", options = booleanValues()),
+    )
+
+    private fun modeOption() = ConfigOption(
+        id = "mode",
+        category = "mode",
+        currentValue = "agent",
+        options = listOf("agent", "plan", "ask").map { ConfigOptionValue(it) },
+    )
+
+    private fun modelOption(current: String) = ConfigOption(
+        id = "model",
+        category = "model",
+        currentValue = current,
+        options = listOf(
+            ConfigOptionValue("claude-opus-4-7", "Claude Opus 4.7"),
+            ConfigOptionValue("composer-2.5", "Composer 2.5"),
+        ),
+    )
+
+    private fun booleanValues() = listOf(ConfigOptionValue("false"), ConfigOptionValue("true"))
+
     private fun createTempDirWithCursorPlan(initialContent: String): Pair<File, File> {
         val root = Files.createTempDirectory("cursorj-acp-plan").toFile()
         val plansDir = File(root, ".cursor/plans").apply { mkdirs() }
