@@ -40,9 +40,8 @@ import kotlin.test.assertTrue
  * and is deleted afterwards. Run with `CURSORJ_INTEGRATION=1 ./gradlew integrationTest --tests '*ModelParameter*'`.
  *
  * Besides the ACP-confirmed values, the first case runs `agent about` against the same config dir and checks that
- * the CLI itself reports the model and effort chosen over ACP (its `Model` line, e.g. `Claude Opus 4.7 300K Medium`).
- * That proves the selection reached the CLI's own state; whether the backend applies the effort for the account's
- * plan is not observable without sending a prompt.
+ * the CLI itself reports the model and effort chosen over ACP (its `Model` line, e.g. `Claude Opus 4.7 300K Medium`),
+ * which confirms the selection reached the CLI's own state.
  */
 class ModelParameterCliIntegrationTest {
     private val json = Json {

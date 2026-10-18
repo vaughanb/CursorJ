@@ -127,7 +127,7 @@ intellijPlatform {
             <p><strong>Known Cursor ACP limitations</strong> (agent/protocol constraints, not plugin bugs):</p>
             <ul>
                 <li><strong>Model parameters rely on a Cursor extension:</strong> the per-model sections appear because CursorJ sends <code>_meta.parameterizedModelPicker</code> on <code>initialize</code> (verified on agent builds 2026.07.23 through 2026.10.16). If an agent ignores it, the picker lists the agent's single-variant model strings instead.</li>
-                <li><strong>Plan-dependent enforcement:</strong> the agent accepts and reports any offered effort or Fast value, but Cursor documents those controls for Premium and higher plans; ACP gives no signal about whether the backend applied them.</li>
+                <li><strong>Plan-dependent availability:</strong> effort and Fast selection follow your Cursor plan (Cursor documents these controls for Premium and higher plans).</li>
                 <li><strong>No native Debug session mode:</strong> the agent advertises only <code>agent</code>, <code>plan</code>, and <code>ask</code> and rejects a <code>debug</code> mode id, so Debug is simulated locally rather than driven by the agent.</li>
                 <li><strong>No conversation forking:</strong> the agent does not advertise ACP <code>session/fork</code>, so Edit &amp; resend replays context into a new session instead of branching server-side.</li>
             </ul>
