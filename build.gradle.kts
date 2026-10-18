@@ -110,6 +110,7 @@ intellijPlatform {
                 <li>Unified rules management for global user rules and project rules (<code>.cursor/rules/</code>)</li>
                 <li>Cursor Skills discovery and settings management; inline <code>/</code> and <code>@</code> completion in chat (merged with ACP slash commands) that keeps focus in the input</li>
                 <li>Agent, Plan, Ask, and simulated Debug modes with native IntelliJ UI, including multiple-choice cards for agent questions</li>
+                <li>Cursor-style model picker with per-model effort / reasoning level, thinking, context window and Fast settings, kept in sync with the Cursor CLI</li>
                 <li>Permission control with per-turn rollback via Local History</li>
             </ul>
             <p>Project home: <a href="$projectUrl">$projectUrl</a></p>
@@ -119,16 +120,16 @@ intellijPlatform {
         changeNotes = """
             <h3>${pluginVersion.get()}</h3>
             <ul>
-                <li><strong>Debug mode (simulated):</strong> A fourth chat mode that reproduces Cursor's Debug workflow — hypothesize, add temporary instrumentation, reproduce, analyze runtime evidence, apply a targeted fix, then clean up. Because ACP exposes no native <code>debug</code> mode, CursorJ keeps the session in <code>agent</code>, injects a Debug workflow prompt, and captures runtime evidence via a per-session log file under <code>&lt;project&gt;/.cursorj/debug/</code> plus a localhost token-gated log sink. Post-turn actions offer <strong>I reproduced it</strong>, <strong>Clean up</strong>, and <strong>View logs</strong>.</li>
-                <li><strong>Edit &amp; resend:</strong> Edit one of your earlier messages to branch the conversation from that point — later replies are discarded and the prior turns are replayed as context into a fresh session.</li>
-                <li><strong>Fixed Windows drag-and-drop of <code>file://</code> paths:</strong> Dropping or pasting a <code>file://</code> URI that wraps a Windows path (e.g. the GNOME copied-files clipboard format) now resolves correctly instead of being dropped.</li>
-                <li><strong>Faster IDE shutdown:</strong> Closing the IDE (or a project) no longer hangs several seconds per open CursorJ tab.</li>
+                <li><strong>Model picker with per-model parameters:</strong> The prompt bar's model dropdown and MAX checkbox are replaced by one compact Cursor-style trigger (<code>Claude Opus 4.7&nbsp; 300K Extra High</code>). It opens a picker with a <strong>Model</strong> submenu (Auto first, MAX Mode where the model has no context option, a type-to-filter model list) followed by the current model's parameters as sections in Cursor's order: <strong>Effort</strong> / <strong>Reasoning</strong>, <strong>Options</strong> (Thinking, Fast) and <strong>Context</strong>. Changes apply over ACP without a reconnect, stay in sync with the Cursor CLI's <code>/model</code> picker, and choosing 1M context turns Max Mode on. A checkbox in <strong>Settings &gt; Tools &gt; CursorJ</strong> turns the parameters off.</li>
+                <li><strong>Keyboard actions:</strong> <em>Open CursorJ Model Picker</em> and <em>Cycle CursorJ Effort Level</em>, unbound by default (assign shortcuts in Settings &gt; Keymap).</li>
+                <li><strong>Fixed:</strong> config options no longer linger after a model switch (e.g. Effort after switching to Composer); ACP errors now show the agent's actual reason instead of a bare <em>Invalid params</em>; wrapped control rows no longer clip their last line.</li>
             </ul>
             <p><strong>Known Cursor ACP limitations</strong> (agent/protocol constraints, not plugin bugs):</p>
             <ul>
+                <li><strong>Model parameters rely on a Cursor extension:</strong> the per-model sections appear because CursorJ sends <code>_meta.parameterizedModelPicker</code> on <code>initialize</code> (verified on agent builds 2026.07.23 through 2026.10.16). If an agent ignores it, the picker lists the agent's single-variant model strings instead.</li>
+                <li><strong>Plan-dependent enforcement:</strong> the agent accepts and reports any offered effort or Fast value, but Cursor documents those controls for Premium and higher plans; ACP gives no signal about whether the backend applied them.</li>
                 <li><strong>No native Debug session mode:</strong> the agent advertises only <code>agent</code>, <code>plan</code>, and <code>ask</code> and rejects a <code>debug</code> mode id, so Debug is simulated locally rather than driven by the agent.</li>
                 <li><strong>No conversation forking:</strong> the agent does not advertise ACP <code>session/fork</code>, so Edit &amp; resend replays context into a new session instead of branching server-side.</li>
-                <li><strong>Model parameter tiers cannot be switched at runtime:</strong> each model is offered with a single baked-in parameter set, so toggles such as Composer Normal/Fast or Claude Opus effort levels are not selectable through ACP.</li>
             </ul>
         """.trimIndent()
     }
